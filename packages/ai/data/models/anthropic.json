@@ -120,6 +120,52 @@
     },
     {
         "type": "chat",
+        "id": "claude-fable-5-2",
+        "name": "Claude Fable 5.2",
+        "api": "anthropic-messages",
+        "provider": "anthropic",
+        "baseUrl": "https://api.anthropic.com",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": null,
+            "xhigh": "xhigh",
+            "max": "max"
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 8.0,
+            "output": 40.0,
+            "cacheRead": 0.2,
+            "cacheWrite": 10.0
+        },
+        "contextWindow": 1000000,
+        "maxTokens": 128000,
+        "compat": {
+            "forceAdaptiveThinking": true,
+            "supportsStrictTools": true
+        },
+        "inputLimits": {
+            "maxRequestBytes": 33554432,
+            "images": {
+                "maxPerRequest": 600,
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        },
+        "promptCache": {
+            "short": 300,
+            "long": 3600
+        }
+    },
+    {
+        "type": "chat",
         "id": "claude-haiku-4-5",
         "name": "Claude Haiku 4.5 (latest)",
         "api": "anthropic-messages",

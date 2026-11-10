@@ -346,7 +346,7 @@ final class ModelsTest extends TestCase
     {
         // Pinned from upstream's published catalogue (`amazon-bedrock.json`, pi-ai 1.1.0), as models.dev
         // lists Bedrock at the last `generate-models.php`.
-        $this->assertCount(197, self::of(Models::AMAZON_BEDROCK));
+        $this->assertCount(202, self::of(Models::AMAZON_BEDROCK));
 
         $opus = Models::find(Models::AMAZON_BEDROCK, 'global.anthropic.claude-opus-4-6-v1');
         $this->assertNotNull($opus);

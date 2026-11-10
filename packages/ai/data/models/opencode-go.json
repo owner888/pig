@@ -84,49 +84,6 @@
     },
     {
         "type": "chat",
-        "id": "crouton-alpha-free",
-        "name": "Crouton Alpha Free",
-        "api": "openai-responses",
-        "provider": "opencode-go",
-        "baseUrl": "https://opencode.ai/inference/go/openai/v1",
-        "reasoning": true,
-        "thinkingLevelMap": {
-            "off": null,
-            "minimal": "minimal",
-            "low": "low",
-            "medium": "medium",
-            "high": "high",
-            "xhigh": "xhigh",
-            "max": "max"
-        },
-        "input": [
-            "text",
-            "image"
-        ],
-        "cost": {
-            "input": 0.0,
-            "output": 0.0,
-            "cacheRead": 0.0,
-            "cacheWrite": 0.0
-        },
-        "contextWindow": 1048576,
-        "maxTokens": 270000,
-        "compat": {
-            "sessionAffinityFormat": "openai-nosession"
-        },
-        "inputLimits": {
-            "images": {
-                "resize": {
-                    "maxWidth": 2000,
-                    "maxHeight": 2000,
-                    "maxBytes": 4718592,
-                    "jpegQuality": 80
-                }
-            }
-        }
-    },
-    {
-        "type": "chat",
         "id": "deepseek-v4-pro",
         "name": "DeepSeek V4 Pro",
         "api": "openai-completions",
