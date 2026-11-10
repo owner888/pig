@@ -112,6 +112,13 @@ final readonly class OpenAiCompat
      * @param bool|null   $nonNullAssistantContent a replayed assistant turn with no text (one that only
      *        called tools) sends `""` rather than `null` content — upstream's
      *        `requiresNonNullAssistantContent` (#8118), for endpoints that reject a null; `false` by default
+     * @param bool|null   $toolsWithToolHistory a request with no tools sends `"tools": []` when the
+     *        conversation holds tool calls or results — upstream's `requiresToolsWithToolHistory`
+     *        (#11891), for proxies in front of Anthropic such as older LiteLLM versions; `false` by
+     *        default, which leaves the field out (vLLM 0.20 and later refuse an empty array)
+     * @param string|null $promptCacheKeyMode upstream's (#9442): `auto` (default) keeps each API's rule
+     *        for `prompt_cache_key`, `enabled` sends it whenever caching is on, for compatible proxies,
+     *        and `disabled` never sends it, for proxies that reject it
      * @param bool|null   $supportsMidConvoEffort upstream's `OpenAIResponsesCompat.supportsMidConvoEffort`
      *        (Responses; default false): "thinking level changes are sent as configuration_update input
      *        items instead of changing reasoning.effort, so a change keeps the prompt cache" — ignored
@@ -151,6 +158,8 @@ final readonly class OpenAiCompat
         public ?bool $supportsAdditionalTools = null,
         public ?bool $supportsMidConvoEffort = null,
         public ?bool $nonNullAssistantContent = null,
+        public ?bool $toolsWithToolHistory = null,
+        public ?string $promptCacheKeyMode = null,
     ) {
     }
 
@@ -215,6 +224,9 @@ final readonly class OpenAiCompat
             supportsMidConvoEffort: $explicit->supportsMidConvoEffort,
             // Upstream detects `false` for every endpoint; only a `compat` block turns it on.
             nonNullAssistantContent: $explicit->nonNullAssistantContent ?? false,
+            toolsWithToolHistory: $explicit->toolsWithToolHistory ?? $detected->toolsWithToolHistory,
+            // The model's own, as upstream's `promptCacheKeyMode: model.compat.promptCacheKeyMode`.
+            promptCacheKeyMode: $explicit->promptCacheKeyMode,
         );
     }
 
@@ -332,6 +344,7 @@ final readonly class OpenAiCompat
             supportsThinkingTokenBudget: false,
             supportsMidConvoSystemMessages: false,
             supportsMidConvoToolAdditions: false,
+            toolsWithToolHistory: false,
         );
     }
 }

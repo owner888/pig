@@ -32,6 +32,8 @@ final class SkillInvocationMessageComponent extends Container
         private bool $expanded = false,
         private readonly string $expandKey = 'ctrl+o',
         int $outputPad = 1,
+        /** @var list<\Closure(string, array<string, mixed>): mixed> the Markdown transformers, run on the content as `custom` */
+        private readonly array $transformers = [],
     ) {
         $this->box = new Box($outputPad, 1, static fn (string $text): string => Themes::theme()->bg('customMessageBg', $text));
         $this->addChild(new Spacer(1));
@@ -74,7 +76,7 @@ final class SkillInvocationMessageComponent extends Container
 
             $header = "**{$this->skillBlock->name}**\n\n";
             $this->box->addChild(new Markdown(
-                $header . $this->skillBlock->content,
+                $header . MarkdownTransform::apply($this->transformers, $this->skillBlock->content, 'custom'),
                 0,
                 0,
                 Themes::getMarkdownTheme(),

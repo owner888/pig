@@ -244,8 +244,11 @@ final class AzureOpenAiResponses
         ];
 
         // `prompt_cache_key: clampOpenAIPromptCacheKey(options?.sessionId)` — whatever the cache
-        // retention says, and left out of the JSON when there is no session.
-        $promptCacheKey = OpenAiPromptCache::clampOpenAIPromptCacheKey($options?->sessionId);
+        // retention says, and left out of the JSON when there is no session or the compat's
+        // `promptCacheKeyMode` is `disabled` (#9442).
+        $promptCacheKey = (self::compat($model)?->promptCacheKeyMode ?? 'auto') === 'disabled'
+            ? null
+            : OpenAiPromptCache::clampOpenAIPromptCacheKey($options?->sessionId);
 
         if ($promptCacheKey !== null) {
             $params['prompt_cache_key'] = $promptCacheKey;

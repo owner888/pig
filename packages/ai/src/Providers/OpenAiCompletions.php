@@ -1031,13 +1031,17 @@ final class OpenAiCompletions
             'stream' => true,
         ];
 
-        // Upstream: `prompt_cache_key` — the session id, cut to 64 code points — for OpenAI's own
-        // endpoint unless caching is off, and anywhere for `long` where the endpoint takes long
-        // retention; `prompt_cache_retention: "24h"` for that second case. An undefined key is left
-        // out of the JSON, which is what null does here.
-        if ($options?->sessionId !== null
-            && ((str_contains($model->baseUrl, 'api.openai.com') && $cacheRetention !== 'none')
-                || ($cacheRetention === 'long' && $supportsLongCacheRetention))) {
+        // Upstream: `prompt_cache_key` — the session id, cut to 64 code points — unless caching is
+        // off: in `auto`, for OpenAI's own endpoint, and anywhere for `long` where the endpoint takes
+        // long retention; always with `enabled`, never with `disabled` (#9442).
+        // `prompt_cache_retention: "24h"` for `long` there. An undefined key is left out of the JSON,
+        // which is what null does here.
+        $promptCacheKeyMode = $compat->promptCacheKeyMode ?? 'auto';
+        $supportsPromptCacheKey = $promptCacheKeyMode === 'enabled'
+            || ($promptCacheKeyMode === 'auto'
+                && (str_contains($model->baseUrl, 'api.openai.com') || ($cacheRetention === 'long' && $supportsLongCacheRetention)));
+
+        if ($options?->sessionId !== null && $cacheRetention !== 'none' && $supportsPromptCacheKey) {
             $body['prompt_cache_key'] = mb_substr($options->sessionId, 0, self::PROMPT_CACHE_KEY_MAX_LENGTH);
         }
 
@@ -1069,9 +1073,10 @@ final class OpenAiCompletions
             if ($compat->zaiToolStream) {
                 $body['tool_stream'] = true;
             }
-        } elseif ($this->hasToolHistory($context->messages)) {
-            // A conversation holding tool calls is rejected by some proxies unless the
-            // tools field is present, even with nothing in it.
+        } elseif ($compat->toolsWithToolHistory === true && $this->hasToolHistory($context->messages)) {
+            // A conversation holding tool calls is rejected by some proxies unless the tools field
+            // is present, even with nothing in it; others (vLLM 0.20+) reject the empty array, so
+            // it is sent only where the model's compat asks (upstream #11891).
             $body['tools'] = [];
         }
 

@@ -68,6 +68,7 @@ final class ModelResolver
         'cloudflare-ai-gateway' => 'workers-ai/@cf/moonshotai/kimi-k2.7-code',
         'qwen-token-plan' => 'qwen3.8-max',
         'qwen-token-plan-cn' => 'qwen3.8-max',
+        'qwen-token-plan-individual-cn' => 'qwen3.8-max',
         'qwen-token-plan-individual' => 'qwen3.8-max',
         'xiaomi' => 'mimo-v2.6-pro',
         'xiaomi-token-plan-cn' => 'mimo-v2.6-pro',

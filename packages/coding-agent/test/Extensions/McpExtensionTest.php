@@ -1341,6 +1341,25 @@ final class McpExtensionTest extends TestCase
         $this->assertSame(['box', 'glass', 'query', 'ss'], ToolSearch::tokenize('boxes glasses queries ss'));
     }
 
+    public function testADocumentFollowsLocalRefsOnceAndLeavesUnreferencedDefinitionsOut(): void
+    {
+        // Upstream #11850: Pydantic and FastMCP put nested models in `$defs`; a word only there
+        // could not be found. A recursive definition is read once, an unused one not at all.
+        $document = ToolSearch::document('inspect', [
+            'description' => 'Inspect records',
+            'inputSchema' => [
+                'type' => 'object',
+                'properties' => ['options' => ['$ref' => '#/$defs/options'], 'again' => ['$ref' => '#/$defs/options']],
+                '$defs' => [
+                    'options' => ['properties' => ['mode' => ['description' => 'reconciliation'], 'child' => ['$ref' => '#/$defs/options']]],
+                    'unused' => ['description' => 'orphaned'],
+                ],
+            ],
+        ]);
+
+        $this->assertSame('Inspect records options mode reconciliation child again', $document['text']);
+    }
+
     public function testBm25RanksTheDocumentThatSaysItMostAndKeepsOrderOnTies(): void
     {
         $documents = [

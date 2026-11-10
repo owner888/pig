@@ -134,7 +134,8 @@ final class ToolSearch
     public static function document(string $name, array $tool, ?string $namespace = null, ?string $namespaceDescription = null): array
     {
         $parts = [(string) ($tool['description'] ?? '')];
-        self::schemaText($tool['inputSchema'] ?? null, $parts);
+        $seen = ['#' => true];
+        self::schemaText($tool['inputSchema'] ?? null, $tool['inputSchema'] ?? null, $parts, $seen);
 
         return [
             'name' => $name,
@@ -143,11 +144,28 @@ final class ToolSearch
         ];
     }
 
-    /** @param list<string> $parts */
-    private static function schemaText(mixed $schema, array &$parts): void
+    /**
+     * Descriptions and property names, recursively, following local `$ref`s into `$root` (upstream
+     * #11850: MCP servers put their models in `$defs`). `$seen` holds the references already
+     * followed, so a recursive or shared definition is read once, and a definition nothing refers to
+     * is not read at all.
+     *
+     * @param list<string> $parts
+     * @param array<string, true> $seen
+     */
+    private static function schemaText(mixed $schema, mixed $root, array &$parts, array &$seen): void
     {
         if (!is_array($schema) || array_is_list($schema)) {
             return;
+        }
+
+        if (is_string($schema['$ref'] ?? null) && !isset($seen[$schema['$ref']])) {
+            $target = Declarations::resolveSchemaRef($schema['$ref'], $root);
+
+            if (is_array($target)) {
+                $seen[$schema['$ref']] = true;
+                self::schemaText($target, $root, $parts, $seen);
+            }
         }
 
         if (is_string($schema['description'] ?? null)) {
@@ -157,16 +175,16 @@ final class ToolSearch
         if (is_array($schema['properties'] ?? null) && !array_is_list($schema['properties'])) {
             foreach ($schema['properties'] as $property => $definition) {
                 $parts[] = (string) $property;
-                self::schemaText($definition, $parts);
+                self::schemaText($definition, $root, $parts, $seen);
             }
         }
 
-        self::schemaText($schema['items'] ?? null, $parts);
+        self::schemaText($schema['items'] ?? null, $root, $parts, $seen);
 
         foreach (['anyOf', 'oneOf', 'allOf'] as $key) {
             if (is_array($schema[$key] ?? null)) {
                 foreach ($schema[$key] as $variant) {
-                    self::schemaText($variant, $parts);
+                    self::schemaText($variant, $root, $parts, $seen);
                 }
             }
         }

@@ -130,7 +130,7 @@ final class Declarations
                 return 'mixed';
             }
 
-            $target = self::resolveRef($ref, $context['root']);
+            $target = self::resolveSchemaRef($ref, $context['root']);
 
             if ($target === null) {
                 return 'mixed';
@@ -211,7 +211,12 @@ final class Declarations
         return 'mixed';
     }
 
-    private static function resolveRef(string $ref, mixed $root): mixed
+    /**
+     * The subschema a local `$ref` (`#`, `#/$defs/Item`) names in `$root`, or null for a remote
+     * reference or one that names nothing — upstream's `resolveSchemaRef()` (#11850). Segments are
+     * URI-decoded and JSON Pointer unescaped (`~1` is `/`, `~0` is `~`).
+     */
+    public static function resolveSchemaRef(string $ref, mixed $root): mixed
     {
         if ($ref !== '#' && !str_starts_with($ref, '#/')) {
             return null;

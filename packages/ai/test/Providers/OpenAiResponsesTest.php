@@ -689,6 +689,15 @@ final class OpenAiResponsesTest extends TestCase
         $this->assertDoesNotMatchRegularExpression('/^session[-_]id:/mi', $head);
     }
 
+    public function testAProxyThatRejectsThePromptCacheKeyIsSentNone(): void
+    {
+        // Upstream #9442: `promptCacheKeyMode: "disabled"`; the affinity headers still go.
+        [$head, $body] = $this->capture($this->model(compat: new OpenAiCompat(promptCacheKeyMode: 'disabled')), new Context([new UserMessage('hi')]), new OpenAiOptions(apiKey: 'test-key', sessionId: 's1'));
+
+        $this->assertArrayNotHasKey('prompt_cache_key', $body);
+        $this->assertStringContainsString('x-client-request-id: s1', $head);
+    }
+
     public function testLongRetentionIsTwentyFourHoursOrAThirtyMinuteExplicitCache(): void
     {
         [, $body] = $this->capture($this->model(), new Context([new UserMessage('hi')]), new OpenAiOptions(apiKey: 'sk-test', cacheRetention: 'long'));

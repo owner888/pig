@@ -412,9 +412,9 @@ final class OpenAiResponses
             'stream' => true,
         ];
 
-        // Upstream: `prompt_cache_key: cacheRetention === "none" ? undefined :
-        // clampOpenAIPromptCacheKey(options?.sessionId)` — the session id, cut to 64 code points.
-        if ($cacheRetention !== 'none' && $options?->sessionId !== null) {
+        // Upstream: `prompt_cache_key` — the session id, cut to 64 code points — unless caching is
+        // off or the compat's `promptCacheKeyMode` is `disabled` (#9442).
+        if ($cacheRetention !== 'none' && ($compat?->promptCacheKeyMode ?? 'auto') !== 'disabled' && $options?->sessionId !== null) {
             $body['prompt_cache_key'] = OpenAiPromptCache::clampOpenAIPromptCacheKey($options->sessionId);
         }
 

@@ -73,7 +73,7 @@ final class Models
      *
      * **And every provider of `CATALOGUE_PROVIDERS` that serves another maker's models**: the gateways
      * (OpenRouter, Vercel's AI Gateway, OpenCode Zen and Go), the hosts (Together, Fireworks, Baseten,
-     * Hugging Face, NVIDIA), the Token Plans (Qwen's three, which serve GLM, DeepSeek and Kimi as well,
+     * Hugging Face, NVIDIA), the Token Plans (Qwen's four, which serve GLM, DeepSeek and Kimi as well,
      * and Xiaomi's), and the China endpoints of a maker whose own endpoint is here too (MiniMax,
      * Moonshot, z.ai). So `kimi-k2.6` is Moonshot's, `glm-5.3` z.ai's, `mimo-v2.5-pro` Xiaomi's, and
      * `openrouter/moonshotai/kimi-k2.6` OpenRouter's. The makers' own — DeepSeek, Ant Ling, Meta,
@@ -101,6 +101,7 @@ final class Models
         'qwen-token-plan',
         'qwen-token-plan-cn',
         'qwen-token-plan-individual',
+        'qwen-token-plan-individual-cn',
         'together',
         'vercel-ai-gateway',
         'xiaomi-token-plan-ams',

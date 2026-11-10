@@ -79,7 +79,7 @@ final class AssistantMessageComponent extends Container
     private ?AssistantMessage $lastMessage = null;
 
     /**
-     * @param list<Closure(string, array{role: string, isStreaming: bool}): string> $transformers
+     * @param list<Closure(string, array<string, mixed>): mixed> $transformers
      */
     public function __construct(
         ?AssistantMessage $message = null,
@@ -169,9 +169,7 @@ final class AssistantMessageComponent extends Container
                 // line between the sentence and the tool it describes reads as a gap.
                 $saidText = trim($block->text);
                 $isStreaming = $message->stopReason === null;
-                foreach ($this->transformers as $transformer) {
-                    $saidText = $transformer($saidText, ['role' => 'assistant', 'isStreaming' => $isStreaming]);
-                }
+                $saidText = MarkdownTransform::apply($this->transformers, $saidText, 'assistant', $isStreaming);
 
                 $parts = self::extractInlineThinking($saidText);
                 foreach ($parts as $part) {
@@ -280,7 +278,7 @@ final class AssistantMessageComponent extends Container
         ));
 
         if ($thought instanceof Markdown) {
-            $thought->setText($thinking);
+            $thought->setText(MarkdownTransform::apply($this->transformers, $thinking, 'assistant-thinking', $this->lastMessage?->stopReason === null));
         }
 
         // Only above something: a thought that ends the message leaves no hole under it.

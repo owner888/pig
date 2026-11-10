@@ -310,6 +310,25 @@ final class SlashCommandsTest extends TestCase
         $this->assertSame([''], SlashCommands::arguments('""'));
     }
 
+    public function testAnApostropheInsideAWordIsText(): void
+    {
+        // #11873: a quote opens only at the start of an argument; one that never closes is text.
+        $this->assertSame(['why', "doesn't", 'the', "user's", 'cache', 'work'], SlashCommands::arguments("why doesn't the user's cache work"));
+        $this->assertSame(["'tis", 'the', 'season'], SlashCommands::arguments("'tis the season"));
+        $this->assertSame(['a', '"b'], SlashCommands::arguments('a "b'));
+    }
+
+    public function testABackslashEscapesOnlyTheOpenQuote(): void
+    {
+        $this->assertSame(['quoted "text"'], SlashCommands::arguments('"quoted \\"text\\""'));
+        $this->assertSame(["it's here"], SlashCommands::arguments("'it\\'s here'"));
+        // Paths keep their backslashes.
+        $this->assertSame(['C:\\dir\\file'], SlashCommands::arguments('"C:\\dir\\file"'));
+        $this->assertSame(['\\\\server\\share'], SlashCommands::arguments("'\\\\server\\share'"));
+        // One that ends in a backslash reads `\"` as an escaped quote, never closes, and is kept as typed.
+        $this->assertSame(['"C:\\dir\\"'], SlashCommands::arguments('"C:\\dir\\"'));
+    }
+
     public function testAnArgumentThatLooksLikeAPlaceholderIsNotSubstitutedAgain(): void
     {
         $commands = [new PromptTemplate('echo', 'd', 'Say: $@ and $1', '(user)')];

@@ -49,6 +49,10 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 - Claude Fable 5.2 (and Mythos 5.2) uses per-message effort and mid-conversation system messages as 5.1 does, on Anthropic and through OpenRouter, and a request its safety classifiers refuse is answered by Claude Opus 5 through server-side fallback (upstream 0d1793c2).
 - MCP sign-in identifies pig with its Client ID Metadata Document, `https://pigagent.dev/oauth/client.json`, when the authorization server supports documents for public clients, instead of registering a client with every server; elsewhere it registers as before. An authorization server that sends no `iss` gets a document and callback path of its own (`/oauth/<id>/client.json`, `/callback/<id>`). `oauth.clientRegistration` chooses: `auto` (default), `dcr` to always register, `cimd` to always use the document. `oauth.clientName` sets the registered client's name (default `pig`) and makes `auto` register. `pig mcp add` takes `--oauth-client-registration` and `--oauth-client-name` (upstream 908aa7b7).
+- Qwen Token Plan Individual CN provider, `qwen-token-plan-individual-cn`: the Individual plan's models on the China endpoint, with `QWEN_TOKEN_PLAN_CN_API_KEY` (upstream #7989).
+- `models.json` compat `promptCacheKeyMode` for OpenAI Completions and Responses: `auto` (default) keeps each API's rule, `enabled` sends `prompt_cache_key` to a compatible proxy whenever caching is on, `disabled` never sends it (upstream #9442).
+- `registerMarkdownTransformer($transformer, ['messageTypes' => [...]])` chooses the surfaces a transformer runs on: besides the default `user`, `assistant` and `assistant-thinking`, `custom` (custom messages without a renderer, expanded skill blocks), `summary` (expanded branch and compaction summaries) and `changelog` (What's New, `/changelog`, Extension Updates). The context names the surface as `messageType`; thinking blocks now go through transformers too; a transformer that throws is skipped; an extension has one transformer, and registering again replaces it (upstream #11756).
+- A tool, message or entry renderer's options have `keyText($action)` and `keyHint($action, $description)`, which name the keys as the person bound them (upstream #11630).
 
 ### Changed
 
@@ -62,6 +66,10 @@ Every release entry strictly follows upstream pi's format with version date and 
 - OpenAI Responses sends the session id as `session-id` instead of `session_id` (upstream #11793).
 - The skills hint in the system prompt says to resolve a skill's relative paths against its directory, names `bash` as the reader when there is no `read` tool, and names no tool when the reader is reachable only through another one (codemode). With neither `read` nor `bash` active, the skills are left out of the prompt (upstream 705d047c, #8552, c30840c2).
 - A llama.cpp server that cannot be reached is named with the cause (`Could not reach llama.cpp server at http://…: …`) instead of `fetch failed` (upstream #11779).
+- OpenAI Completions no longer sends `"tools": []` when a request has no tools but the conversation has tool calls, which vLLM 0.20+ rejects; `compat.requiresToolsWithToolHistory: true` restores it for proxies that need it, such as older LiteLLM (upstream #11891).
+- Prompt template arguments: a quote starts quoting only at the start of an argument, so `doesn't` keeps its apostrophe; an unclosed quote is text; inside quotes, a backslash before the same quote keeps it (`"the \"fast\" path"`), other backslashes stay as typed (upstream #11873).
+- `pig update` lists the packages it changed with their versions (`composer:vendor/name 1.2.0 -> 1.3.0`, a git package's commits), says when they are already up to date, says when nothing was updated because of warnings, and says the packages were skipped in offline mode instead of claiming they were updated (upstream #11707, #11711).
+- Fullscreen Kitty images are drawn after the rows they cover on every Kitty terminal, not only WezTerm, so terminals that keep images in cells (Orca's xterm.js) show the whole image (upstream #11890).
 
 ### Fixed
 
@@ -79,6 +87,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 - `pig config` uses the keys from `keybindings.json` (upstream #11788).
 - Alacritty is recognised by `TERM` or `ALACRITTY_WINDOW_ID` too, for hyperlinks (upstream #11777).
 - An MCP token refresh no longer registers an OAuth client or prepares a browser sign-in when it cannot refresh, which could spoil a sign-in in progress; a pasted redirect URL must be on the sign-in's own redirect URI, and a code is exchanged only by the sign-in that asked for it.
+- `tool_search` and the codemode `resolves to` summary follow local `$ref`s into `$defs`, so a word only in an MCP server's nested model is found and its fields are named (upstream #11850).
 
 ## [2.0.1] - 2026-11-10
 

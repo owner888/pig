@@ -767,6 +767,7 @@ final class InteractiveMode
                         $this->expanded,
                         $expandKey,
                         $this->outputPad,
+                        $this->markdownTransformers(),
                     ));
                     if ($skillBlock->userMessage !== null) {
                         $this->chat->addChild(new UserMessageComponent(
@@ -801,14 +802,14 @@ final class InteractiveMode
             }
 
             if ($message instanceof CompactionEntry) {
-                $this->chat->addChild(new CompactionComponent($message, $this->expanded, $this->outputPad, $this->keybindings->keyText('app.tools.expand')));
+                $this->chat->addChild(new CompactionComponent($message, $this->expanded, $this->outputPad, $this->keybindings->keyText('app.tools.expand'), $this->markdownTransformers()));
                 $this->addSummaryCostNotice($message);
 
                 continue;
             }
 
             if ($message instanceof BranchSummaryEntry) {
-                $this->chat->addChild(new BranchSummaryComponent($message, $this->expanded, $this->outputPad, $this->keybindings->keyText('app.tools.expand')));
+                $this->chat->addChild(new BranchSummaryComponent($message, $this->expanded, $this->outputPad, $this->keybindings->keyText('app.tools.expand'), $this->markdownTransformers()));
                 $this->addSummaryCostNotice($message);
 
                 continue;
@@ -1644,11 +1645,13 @@ final class InteractiveMode
      */
     private function markdownTransformers(): array
     {
-        $this->mermaidTransformer ??= MermaidTransformer::create(
+        // Diagrams in user and assistant text and in summaries the model wrote; not in thinking or
+        // the other surfaces (upstream's).
+        $this->mermaidTransformer ??= MarkdownTransform::only(MermaidTransformer::create(
             fn (): string => $this->settings->mermaidRenderingMode(),
             // The text's room: the terminal less the padding either side of a message.
             fn (): int => max(1, $this->tui->terminal->columns() - 2 * $this->outputPad),
-        );
+        ), ['user', 'assistant', 'summary']);
 
         return [$this->mermaidTransformer, ...($this->extensionRunner?->markdownTransformers() ?? [])];
     }
@@ -2555,7 +2558,7 @@ final class InteractiveMode
 
         // The transcript above is left where it is: it is what was said, and the summary
         // is a note about it, not a replacement for anyone's memory of reading it.
-        $this->chat->addChild(new CompactionComponent($summary, $this->expanded, $this->outputPad, $this->keybindings->keyText('app.tools.expand')));
+        $this->chat->addChild(new CompactionComponent($summary, $this->expanded, $this->outputPad, $this->keybindings->keyText('app.tools.expand'), $this->markdownTransformers()));
         $this->addSummaryCostNotice($summary);
         $this->footer->invalidate();
         $this->tui->requestRender();
@@ -5336,7 +5339,7 @@ final class InteractiveMode
         $this->say('Went back — anything you say now starts a new branch');
 
         if ($jump->summary !== null) {
-            $this->chat->addChild(new BranchSummaryComponent($jump->summary, $this->expanded, $this->outputPad, $this->keybindings->keyText('app.tools.expand')));
+            $this->chat->addChild(new BranchSummaryComponent($jump->summary, $this->expanded, $this->outputPad, $this->keybindings->keyText('app.tools.expand'), $this->markdownTransformers()));
             $this->addSummaryCostNotice($jump->summary);
         }
 
@@ -7005,7 +7008,7 @@ final class InteractiveMode
         // Upstream's spacer between the title and the notes, on top of the markdown's own top
         // padding: two blank rows, as `/changelog` draws it.
         $this->chat->addChild(new Spacer(1));
-        $this->chat->addChild(new Markdown($markdown, 1, 1, Themes::getMarkdownTheme()));
+        $this->chat->addChild(new Markdown(MarkdownTransform::apply($this->markdownTransformers(), $markdown, 'changelog'), 1, 1, Themes::getMarkdownTheme()));
     }
 
     /**
@@ -7023,7 +7026,7 @@ final class InteractiveMode
         // Upstream's spacer between the title and the notes, on top of the markdown's own top
         // padding: two blank rows, as `/changelog` and the post-upgrade block both draw it.
         $this->chat->addChild(new Spacer(1));
-        $this->chat->addChild(new Markdown($markdown, 1, 1, Themes::getMarkdownTheme()));
+        $this->chat->addChild(new Markdown(MarkdownTransform::apply($this->markdownTransformers(), $markdown, 'changelog'), 1, 1, Themes::getMarkdownTheme()));
         $this->chat->addChild(new Rule(static fn (string $text): string => Themes::theme()->fg('border', $text)));
         $this->tui->requestRender();
     }
@@ -8017,6 +8020,7 @@ final class InteractiveMode
                     $this->expanded,
                     $expandKey,
                     $this->outputPad,
+                    $this->markdownTransformers(),
                 ));
                 if ($skillBlock->userMessage !== null) {
                     $this->chat->addChild(new UserMessageComponent(
@@ -8421,7 +8425,7 @@ final class InteractiveMode
         $this->hideLoader();
 
         if ($event->summary !== null) {
-            $this->chat->addChild(new CompactionComponent($event->summary, $this->expanded, $this->outputPad, $this->keybindings->keyText('app.tools.expand')));
+            $this->chat->addChild(new CompactionComponent($event->summary, $this->expanded, $this->outputPad, $this->keybindings->keyText('app.tools.expand'), $this->markdownTransformers()));
             $this->addSummaryCostNotice($event->summary);
 
             return;
@@ -8479,7 +8483,7 @@ final class InteractiveMode
             }
         }
 
-        $this->chat->addChild(new CustomMessageComponent($message, $this->expanded, $this->outputPad));
+        $this->chat->addChild(new CustomMessageComponent($message, $this->expanded, $this->outputPad, $this->markdownTransformers()));
     }
 
     /** @param array<string, mixed> $arguments */

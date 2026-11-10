@@ -594,7 +594,7 @@ final class OpenAiCompletionsTest extends TestCase
         $this->assertSame('read', $body['tools'][0]['function']['name']);
     }
 
-    public function testAConversationWithToolCallsSendsAToolsFieldEvenWithNoTools(): void
+    public function testAnEmptyToolsFieldGoesOutWithToolHistoryOnlyWhereTheCompatAsks(): void
     {
         $context = new Context([
             new UserMessage('hi'),
@@ -602,9 +602,13 @@ final class OpenAiCompletionsTest extends TestCase
             new ToolResultMessage('c1', 'read', [new TextContent('<?php')]),
         ]);
 
+        // Upstream #11891: vLLM 0.20+ refuses `"tools": []`, so with no tools the field is left out.
         $this->send($context);
+        $this->assertArrayNotHasKey('tools', $this->server->receivedJson());
 
-        // Some proxies reject the conversation outright without it, even empty.
+        // Some proxies in front of Anthropic (older LiteLLM) reject the conversation without it.
+        $this->server = new CannedServer();
+        $this->send($context, $this->model(compat: new OpenAiCompat(toolsWithToolHistory: true)));
         $this->assertSame([], $this->server->receivedJson()['tools']);
     }
 
@@ -1838,6 +1842,34 @@ final class OpenAiCompletionsTest extends TestCase
         $body = $this->sendWith($this->model(compat: new OpenAiCompat(supportsLongCacheRetention: false)), new OpenAiOptions(apiKey: 'test-key', cacheRetention: 'long', sessionId: 's1'))[1];
         $this->assertArrayNotHasKey('prompt_cache_key', $body);
         $this->assertArrayNotHasKey('prompt_cache_retention', $body);
+    }
+
+    public function testTheTwoNewCompatKeysAreReadFromAndWrittenToModelsJson(): void
+    {
+        $compat = \Pig\Ai\ModelJson::compat(['requiresToolsWithToolHistory' => true, 'promptCacheKeyMode' => 'enabled'], \Pig\Ai\Api::OpenAiCompletions);
+
+        $this->assertInstanceOf(OpenAiCompat::class, $compat);
+        $this->assertTrue($compat->toolsWithToolHistory);
+        $this->assertSame('enabled', $compat->promptCacheKeyMode);
+        $this->assertNull(\Pig\Ai\ModelJson::compat(['promptCacheKeyMode' => 'sometimes'], \Pig\Ai\Api::OpenAiCompletions)?->promptCacheKeyMode);
+    }
+
+    public function testThePromptCacheKeyModeOverridesWhereTheKeyGoes(): void
+    {
+        // Upstream #9442: `enabled` sends it to a compatible proxy whenever caching is on; `disabled`
+        // never sends it, even to OpenAI's own endpoint.
+        $this->server = new CannedServer();
+        $body = $this->sendWith($this->model(compat: new OpenAiCompat(promptCacheKeyMode: 'enabled')), new OpenAiOptions(apiKey: 'test-key', sessionId: 's1'))[1];
+        $this->assertSame('s1', $body['prompt_cache_key']);
+        $this->assertArrayNotHasKey('prompt_cache_retention', $body);
+
+        $this->server = new CannedServer();
+        $body = $this->sendWith($this->model(compat: new OpenAiCompat(promptCacheKeyMode: 'enabled')), new OpenAiOptions(apiKey: 'test-key', cacheRetention: 'none', sessionId: 's1'))[1];
+        $this->assertArrayNotHasKey('prompt_cache_key', $body);
+
+        $this->server = new CannedServer();
+        $body = $this->sendWith($this->model(compat: new OpenAiCompat(promptCacheKeyMode: 'disabled')), new OpenAiOptions(apiKey: 'test-key', sessionId: 's1'), '/api.openai.com/v1')[1];
+        $this->assertArrayNotHasKey('prompt_cache_key', $body);
     }
 
     public function testTheSessionGoesOutAsHeadersOnlyWhereTheCompatSaysSo(): void

@@ -39,6 +39,8 @@ final class CompactionComponent extends Container
         int $outputPad = 1,
         /** `keyText("app.tools.expand")`, for the collapsed line. */
         private readonly string $expandKey = 'ctrl+o',
+        /** @var list<\Closure(string, array<string, mixed>): mixed> the Markdown transformers, run on the summary as `summary` */
+        private readonly array $transformers = [],
     ) {
         $this->box = new Box($outputPad, 1, static fn (string $text): string => Themes::theme()->bg('customMessageBg', $text));
         $this->label = new Text('', 0, 0);
@@ -85,7 +87,7 @@ final class CompactionComponent extends Container
         $this->box->addChild(new Spacer(1));
 
         if ($expanded) {
-            $this->body->setText('**' . $this->line() . "**\n\n" . $this->summary->summary);
+            $this->body->setText('**' . $this->line() . "**\n\n" . MarkdownTransform::apply($this->transformers, $this->summary->summary, 'summary'));
             $this->box->addChild($this->body);
 
             return;

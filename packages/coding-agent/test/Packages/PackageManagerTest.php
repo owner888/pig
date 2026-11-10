@@ -367,9 +367,23 @@ final class PackageManagerTest extends TestCase
         $this->commit(['extensions/a.php' => '<?php // two']);
 
         $this->assertTrue($following->hasAvailableUpdate($installed));
+        $results = [];
+        $following->setProgressCallback(static function (string $type, string $action, string $source, ?string $message) use (&$results): void {
+            if ($type === 'result') {
+                $results[] = $message;
+            }
+        });
+        $second = substr(trim((string) shell_exec('git -C ' . escapeshellarg($this->work) . ' rev-parse HEAD')), 0, 7);
         $following->update("git:{$repo}");
         $this->assertSame('<?php // two', file_get_contents("{$installed}/extensions/a.php"));
         $this->assertFalse($following->hasAvailableUpdate($installed));
+        // Upstream #11707: what changed, with the commits either side.
+        $this->assertSame(["git:{$repo} " . substr($pinned, 0, 7) . " -> {$second}"], $results);
+
+        // Nothing new: nothing reported.
+        $results = [];
+        $following->update("git:{$repo}");
+        $this->assertSame([], $results);
 
         // The same repository pinned to the first commit: one identity, one directory, and
         // `update` reconciles the checkout to the configured ref rather than past it.

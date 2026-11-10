@@ -376,8 +376,36 @@ final class PackageCommands
 
         if ($target['type'] === 'all' || $target['type'] === 'extensions') {
             $one = $target['source'] ?? null;
+            // Upstream's (#11707, #11711): the packages that changed, each with its versions, and
+            // "up to date" only when the update looked and nothing warned.
+            $updated = [];
+            $warnings = 0;
+            $manager->setProgressCallback(static function (string $type, string $action, string $packageSource, ?string $message) use (&$updated, &$warnings): void {
+                if ($type === 'result' && $action === 'update' && $message !== null) {
+                    $updated[] = $message;
+                } elseif ($type === 'start' && $message !== null) {
+                    echo Style::dim($message), "\n";
+                } elseif ($type === 'progress' && $message !== null) {
+                    $warnings++;
+                    echo Style::yellow($message), "\n";
+                }
+            });
             $manager->update($one);
-            echo Style::green($one !== null ? "Updated {$one}" : 'Updated packages'), "\n";
+
+            if (PackageManager::offline()) {
+                echo Style::yellow('Skipped package updates (offline mode)'), "\n";
+            } elseif ($updated === [] && $warnings > 0) {
+                echo Style::yellow($one !== null ? "{$one} was not updated, see the warnings above" : 'No packages were updated, see the warnings above'), "\n";
+            } elseif ($updated === []) {
+                echo Style::green($one !== null ? "{$one} is already up to date" : 'Packages are already up to date'), "\n";
+            } else {
+                $count = count($updated);
+                echo Style::green("Updated {$count} package" . ($count === 1 ? '' : 's') . ':'), "\n";
+
+                foreach ($updated as $line) {
+                    echo "  {$line}\n";
+                }
+            }
 
             // pig's own half of `--extensions`: the bundled extensions' copies under
             // `~/.pig/agent/extensions`, which are not packages and have no other updater.

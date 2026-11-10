@@ -1211,6 +1211,7 @@ final class BuiltinCatalog
         'qwen-token-plan' => [self::QWEN_TOKEN_PLAN_MODELS, ['openai-completions' => 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1']],
         'qwen-token-plan-cn' => [self::QWEN_TOKEN_PLAN_CN_MODELS, ['openai-completions' => 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1']],
         'qwen-token-plan-individual' => [self::QWEN_TOKEN_PLAN_INDIVIDUAL_MODELS, ['openai-completions' => 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1']],
+        'qwen-token-plan-individual-cn' => [self::QWEN_TOKEN_PLAN_INDIVIDUAL_CN_MODELS, ['openai-completions' => 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1']],
         'together' => [self::TOGETHER_MODELS, ['openai-completions' => 'https://api.together.ai/v1']],
         'vercel-ai-gateway' => [self::VERCEL_AI_GATEWAY_MODELS, ['anthropic-messages' => 'https://ai-gateway.vercel.sh']],
         'xiaomi' => [self::XIAOMI_MODELS, ['openai-completions' => 'https://api.xiaomimimo.com/v1']],
@@ -1258,7 +1259,7 @@ final class BuiltinCatalog
     ];
 
     /** Upstream's generator `QWEN_TOKEN_PLAN_PROVIDER_IDS`. */
-    private const array QWEN_TOKEN_PLAN_PROVIDER_IDS = ['qwen-token-plan', 'qwen-token-plan-cn', 'qwen-token-plan-individual'];
+    private const array QWEN_TOKEN_PLAN_PROVIDER_IDS = ['qwen-token-plan', 'qwen-token-plan-cn', 'qwen-token-plan-individual', 'qwen-token-plan-individual-cn'];
 
     /** Upstream's generator `OPENCODE_GO_GLM52_THINKING_LEVEL_MAP`. */
     private const array OPENCODE_GO_GLM52_THINKING_LEVEL_MAP = ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'max' => 'max'];
@@ -2299,6 +2300,12 @@ final class BuiltinCatalog
         // <<< generated
     ];
 
+    /** Upstream #7989: the Individual plan's models on the China endpoint, from `alibaba-token-plan-cn`. */
+    private const array QWEN_TOKEN_PLAN_INDIVIDUAL_CN_MODELS = [
+        // >>> generated from models.dev — rewritten by scripts/generate-models.php
+        // <<< generated
+    ];
+
     /**
      * Together AI: models.dev's `together` entry, deprecated models left out, each row's map
      * `getTogetherThinkingLevelMap()`'s.
@@ -2916,7 +2923,7 @@ final class BuiltinCatalog
                 ? new OpenAiCompat(developerRole: false, reasoningContentOnAssistantMessages: true)
                 : null,
             // `qwenTokenPlanCompat`, without `supportsReasoningEffort` for a model with no level map.
-            'qwen-token-plan', 'qwen-token-plan-cn', 'qwen-token-plan-individual' => new OpenAiCompat(
+            'qwen-token-plan', 'qwen-token-plan-cn', 'qwen-token-plan-individual', 'qwen-token-plan-individual-cn' => new OpenAiCompat(
                 store: false,
                 developerRole: false,
                 reasoningEffort: isset($row['thinkingLevelMap']),

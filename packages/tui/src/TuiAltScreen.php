@@ -2152,9 +2152,8 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
                 break;
             }
         }
-        $isWezTerm = Env::isSet('WEZTERM_PANE') || strtolower((string) getenv('TERM_PROGRAM')) === 'wezterm';
         $imageCellsNeedRedraw = false;
-        if (!$imageAnchorsNeedRedraw && $isWezTerm && $this->imageProtocol === ImageProtocol::Kitty && in_array(true, $changedRows, true)) {
+        if (!$imageAnchorsNeedRedraw && $this->imageProtocol === ImageProtocol::Kitty && in_array(true, $changedRows, true)) {
             foreach ($screen as $row => $line) {
                 $placementRows = TerminalImage::getKittyImagePlacementRows($line);
                 if ($placementRows === null) {
@@ -2193,10 +2192,12 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
         $buffer .= $preparedKittyScreen['evictedImageDeletion'];
 
         $unchanged = fn (int $row): bool => !$fullRedraw && !$imagesNeedRedraw && ($screen[$row] ?? '') === ($this->previousScreen[$row] ?? null);
-        // WezTerm erases intersecting Kitty image cells when a later row write touches a covered row.
-        // Draw image placements after every clear and text write so nothing later intersects them; preserve
-        // the existing interleaved output for text-only frames and every other terminal.
-        $drawKittyImagesLast = $redrawImages && $this->imageProtocol === ImageProtocol::Kitty && $isWezTerm
+        // Some terminals store Kitty images in the cells they cover (WezTerm, xterm.js's image addon in
+        // Orca), so clearing or writing a covered row erases that part of the image. Draw placements
+        // after every clear and text write so nothing later intersects them; terminals that keep images
+        // on a layer of their own (Kitty, Ghostty) show the same. Text-only frames keep the interleaved
+        // output (upstream #11890, which made this WezTerm's alone no more).
+        $drawKittyImagesLast = $redrawImages && $this->imageProtocol === ImageProtocol::Kitty
             && array_filter($screen, TerminalImage::isImageLine(...)) !== [];
         if ($drawKittyImagesLast) {
             for ($row = 0; $row < $height; $row++) {

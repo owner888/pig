@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Extensions;
 
+use Pig\CodingAgent\Keybindings;
+use Pig\CodingAgent\Theme\Themes;
+use Pig\Tui\Keybindings as TuiKeybindings;
+
 /**
  * How a result is being shown, for a tool drawing it itself.
  *
@@ -20,6 +24,10 @@ namespace Pig\CodingAgent\Extensions;
  *
  * `$outputPad` is upstream's `context.outputPad` (#10557): "Horizontal padding configured by the
  * outputPad setting" — the blank column either side, for a renderer that lays out its own lines.
+ *
+ * `keyText()` and `keyHint()` are upstream's `KeybindingHints` (#11630), which every render context
+ * carries — a tool's, a message renderer's and an entry renderer's: the keys bound to an action as
+ * the person set them, so a renderer's `(ctrl+o to expand)` names the key that actually expands.
  */
 final readonly class ToolRenderResultOptions
 {
@@ -31,5 +39,21 @@ final readonly class ToolRenderResultOptions
         public ?int $durationMs = null,
         public int $outputPad = 1,
     ) {
+    }
+
+    /** The keys bound to `$keybinding` (`app.tools.expand`, say), joined by `/`; empty when none is. */
+    public function keyText(string $keybinding): string
+    {
+        $keybindings = TuiKeybindings::getKeybindings();
+
+        return $keybindings instanceof Keybindings
+            ? $keybindings->keyText($keybinding)
+            : implode('/', $keybindings->getKeys($keybinding));
+    }
+
+    /** The keys dim and the description muted after them, as pig draws its own hints. */
+    public function keyHint(string $keybinding, string $description): string
+    {
+        return Themes::theme()->fg('dim', $this->keyText($keybinding)) . Themes::theme()->fg('muted', " {$description}");
     }
 }

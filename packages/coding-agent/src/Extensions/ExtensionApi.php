@@ -13,6 +13,7 @@ use Pig\Ai\ImageContent;
 use Pig\Ai\Model;
 use Pig\Ai\TextContent;
 use Pig\CodingAgent\Auth;
+use Pig\CodingAgent\Interactive\MarkdownTransform;
 use Pig\CodingAgent\Extensions\ToolDefinition;
 use Pig\CodingAgent\Extensions\ToolRenderResultOptions;
 use Pig\CodingAgent\Extensions\ExecResult;
@@ -169,7 +170,7 @@ final class ExtensionApi
     /** @var array<string, array{key: string, handler: Closure, description: string}> */
     private array $shortcuts = [];
 
-    /** @var list<Closure(string, array{role: string, isStreaming: bool}): string> */
+    /** @var list<Closure(string, array<string, mixed>): mixed> */
     private array $markdownTransformers = [];
 
     /** @var list<Closure(string, Closure(): ?array): ?array> */
@@ -1098,18 +1099,31 @@ final class ExtensionApi
     }
 
     /**
-     * Transform user and assistant Markdown before it is rendered in the transcript.
-     * Upstream's `registerMarkdownTransformer()`.
+     * Transform Markdown before it is rendered. Upstream's `registerMarkdownTransformer()`.
      *
-     * @param callable(string, array{role: string, isStreaming: bool}): string $transformer
+     * Without options it runs on the transcript's user, assistant and thinking Markdown;
+     * `messageTypes` lists the surfaces instead (upstream #11756): `user`, `assistant`,
+     * `assistant-thinking`, `custom` (custom messages without a renderer, expanded skill blocks),
+     * `summary` (expanded branch and compaction summaries), `changelog` (What's New, `/changelog`,
+     * Extension Updates). The transformer is handed the Markdown and
+     * `{messageType, isStreaming, role}` (`role` is `messageType`, the name pig used first).
+     * An extension has one transformer, as upstream's: registering again replaces it.
+     *
+     * @param callable(string, array{messageType: string, isStreaming: bool, role: string}): string $transformer
+     * @param array{messageTypes?: list<string>} $options
      */
-    public function registerMarkdownTransformer(callable $transformer): void
+    public function registerMarkdownTransformer(callable $transformer, array $options = []): void
     {
-        $this->markdownTransformers[] = Closure::fromCallable($transformer);
+        $this->markdownTransformers = [MarkdownTransform::only(
+            Closure::fromCallable($transformer),
+            array_values($options['messageTypes'] ?? MarkdownTransform::DEFAULT_MESSAGE_TYPES),
+        )];
     }
 
     /**
-     * @return list<Closure(string, array{role: string, isStreaming: bool}): string>
+     * Each registered transformer, already limited to its surfaces.
+     *
+     * @return list<Closure(string, array<string, mixed>): mixed>
      * @internal
      */
     public function markdownTransformers(): array

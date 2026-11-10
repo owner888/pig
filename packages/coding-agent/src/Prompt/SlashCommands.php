@@ -190,39 +190,49 @@ final class SlashCommands
         // `''`) is kept as an argument and the ones after it keep their positions (#10867).
         $hasToken = false;
         $quote = null;
+        // Where the open quote started, so an unclosed one can be read again as text (#11873).
+        $quoteStart = 0;
+        $length = strlen($text);
 
-        foreach (str_split($text) as $character) {
+        for ($i = 0; $i < $length; $i++) {
+            $character = $text[$i];
+
             if ($quote !== null) {
-                if ($character === $quote) {
+                if ($character === '\\' && ($text[$i + 1] ?? null) === $quote) {
+                    // A backslash before the open quote's character keeps it as text:
+                    // `"say \"hi\""` is `say "hi"`. Every other backslash stays as typed.
+                    $current .= $quote;
+                    $i++;
+                } elseif ($character === $quote) {
                     $quote = null;
                 } else {
                     $current .= $character;
                 }
-
-                continue;
-            }
-
-            if ($character === '"' || $character === "'") {
+            } elseif (($character === '"' || $character === "'") && !$hasToken) {
+                // A quote opens only at the start of an argument, so `doesn't` keeps its apostrophe.
                 $quote = $character;
+                $quoteStart = $i;
                 $hasToken = true;
-
-                continue;
-            }
-
-            // Upstream's `/\s/`, for the bytes it can be: a newline separates two arguments as a
-            // space does.
-            if (in_array($character, [' ', "\t", "\n", "\r", "\v", "\f"], true)) {
+            } elseif (in_array($character, [' ', "\t", "\n", "\r", "\v", "\f"], true)) {
+                // Upstream's `/\s/`, for the bytes it can be: a newline separates two arguments as a
+                // space does.
                 if ($hasToken) {
                     $arguments[] = $current;
                     $current = '';
                     $hasToken = false;
                 }
-
-                continue;
+            } else {
+                $current .= $character;
+                $hasToken = true;
             }
 
-            $current .= $character;
-            $hasToken = true;
+            if ($quote !== null && $i === $length - 1) {
+                // An unclosed quote is text: the quote kept, and the rest read again from after it.
+                // `$current` was empty when it opened, since a quote opens only a new argument.
+                $quote = null;
+                $current = $text[$quoteStart];
+                $i = $quoteStart;
+            }
         }
 
         if ($hasToken) {

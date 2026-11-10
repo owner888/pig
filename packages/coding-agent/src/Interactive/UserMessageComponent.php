@@ -35,13 +35,11 @@ final class UserMessageComponent extends Container
     private readonly Markdown $markdown;
 
     /**
-     * @param list<Closure(string, array{role: string, isStreaming: bool}): string> $transformers
+     * @param list<Closure(string, array<string, mixed>): mixed> $transformers
      */
     public function __construct(string $text, array $transformers = [], int $outputPad = 1)
     {
-        foreach ($transformers as $transformer) {
-            $text = $transformer($text, ['role' => 'user', 'isStreaming' => false]);
-        }
+        $text = MarkdownTransform::apply($transformers, $text, 'user');
 
         $this->addChild(new Spacer(1));
         $this->markdown = new Markdown(

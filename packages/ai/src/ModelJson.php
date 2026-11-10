@@ -54,6 +54,8 @@ final class ModelJson
         'supportsToolSearch' => 'supportsToolSearch',
         'supportsAdditionalTools' => 'supportsAdditionalTools',
         'supportsMidConvoEffort' => 'supportsMidConvoEffort',
+        'toolsWithToolHistory' => 'requiresToolsWithToolHistory',
+        'promptCacheKeyMode' => 'promptCacheKeyMode',
     ];
 
     /** pi's `AnthropicMessagesCompat` keys, by `AnthropicMessagesCompat` property. */
@@ -299,6 +301,8 @@ final class ModelJson
             supportsAdditionalTools: $flag('supportsAdditionalTools'),
             supportsMidConvoEffort: $flag('supportsMidConvoEffort'),
             nonNullAssistantContent: $flag('requiresNonNullAssistantContent'),
+            toolsWithToolHistory: $flag('requiresToolsWithToolHistory'),
+            promptCacheKeyMode: in_array($compat['promptCacheKeyMode'] ?? null, ['auto', 'enabled', 'disabled'], true) ? $compat['promptCacheKeyMode'] : null,
         );
     }
 

@@ -188,9 +188,31 @@ return static function (ExtensionApi $pig): void {
      * fields for a union of objects, the type when it holds no object shape, and otherwise a pointer to
      * `describe_tool()`: the whole type of a large schema would go out with every request (#11501).
      */
+    // Upstream's `followRef()` (#11850): the subschema a chain of local `$ref`s names in `$root`, so
+    // an MCP output schema with its models in `$defs` still shows field names. A remote, missing or
+    // cyclic reference stops at the schema holding it.
+    $followRef = static function (mixed $schema, mixed $root): mixed {
+        $seen = [];
+
+        while (is_array($schema) && is_string($schema['$ref'] ?? null) && !isset($seen[$schema['$ref']])) {
+            $target = Declarations::resolveSchemaRef($schema['$ref'], $root);
+
+            if ($target === null) {
+                break;
+            }
+
+            $seen[$schema['$ref']] = true;
+            $schema = $target;
+        }
+
+        return $schema;
+    };
     // Upstream's `describeFields()`: an object schema's field names, an object-typed field's own
     // `$depth` levels deep, and a `const` field's value (`{ action: "start", id }`); null otherwise.
-    $describeFields = static function (mixed $schema, int $depth) use (&$describeFields): ?string {
+    // Local `$ref`s resolve against `$root`.
+    $describeFields = static function (mixed $schema, mixed $root, int $depth) use (&$describeFields, $followRef): ?string {
+        $schema = $followRef($schema, $root);
+
         if (!is_array($schema) || ($schema['type'] ?? null) !== 'object' || !is_array($schema['properties'] ?? null)) {
             return null;
         }
@@ -199,9 +221,10 @@ return static function (ExtensionApi $pig): void {
         $fields = [];
 
         foreach ($schema['properties'] as $name => $field) {
-            $nested = is_array($field) && array_key_exists('const', $field)
-                ? json_encode($field['const'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)
-                : ($depth > 0 ? $describeFields($field, $depth - 1) : null);
+            $resolved = $followRef($field, $root);
+            $nested = is_array($resolved) && array_key_exists('const', $resolved)
+                ? json_encode($resolved['const'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)
+                : ($depth > 0 ? $describeFields($field, $root, $depth - 1) : null);
             $fields[] = $name . (in_array((string) $name, $required, true) ? '' : '?') . ($nested !== null && $nested !== '' ? ": {$nested}" : '');
         }
 
@@ -209,14 +232,15 @@ return static function (ExtensionApi $pig): void {
     };
     // Upstream's `describeUnionFields()`: each variant's fields, when every variant of an
     // `anyOf` / `oneOf` is an object.
-    $describeUnionFields = static function (mixed $schema) use ($describeFields): ?string {
+    $describeUnionFields = static function (mixed $schema, mixed $root) use ($describeFields, $followRef): ?string {
+        $schema = $followRef($schema, $root);
         $variants = is_array($schema) ? ($schema['anyOf'] ?? $schema['oneOf'] ?? null) : null;
 
         if (!is_array($variants) || $variants === []) {
             return null;
         }
 
-        $described = array_map(static fn (mixed $variant): ?string => $describeFields($variant, 0), array_values($variants));
+        $described = array_map(static fn (mixed $variant): ?string => $describeFields($variant, $root, 0), array_values($variants));
 
         return in_array(null, $described, true) ? null : implode(' | ', $described);
     };
@@ -227,7 +251,7 @@ return static function (ExtensionApi $pig): void {
             return 'a string';
         }
 
-        $fields = $describeFields($schema, 1) ?? $describeUnionFields($schema);
+        $fields = $describeFields($schema, $schema, 1) ?? $describeUnionFields($schema, $schema);
 
         if ($fields !== null) {
             return "`{$fields}`";

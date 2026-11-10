@@ -527,6 +527,69 @@ PHP);
         $this->assertStringContainsString('[assistant] HELLO ASSISTANT', $asstRender);
     }
 
+    public function testAMarkdownTransformerRunsOnTheSurfacesItAskedFor(): void
+    {
+        // Upstream #11756: by default user, assistant and thinking; `messageTypes` opts into
+        // custom messages, skill blocks, summaries and the changelog, or out of the defaults.
+        $plain = new ExtensionApi('/work', 'plain.php', 'plain');
+        $plain->registerMarkdownTransformer(static fn (string $text, array $ctx): string => "[{$ctx['messageType']}] {$text}");
+        $surfaces = new ExtensionApi('/work', 'surfaces.php', 'surfaces');
+        // One per extension, as upstream's: registering again replaces the first.
+        $surfaces->registerMarkdownTransformer(static fn (string $text): string => "replaced {$text}", ['messageTypes' => ['custom']]);
+        $surfaces->registerMarkdownTransformer(
+            static fn (string $text, array $ctx): string => "<{$ctx['messageType']}> {$text}",
+            ['messageTypes' => ['custom', 'summary', 'changelog']],
+        );
+        // One that throws costs its own change and nothing else.
+        $broken = new ExtensionApi('/work', 'broken.php', 'broken');
+        $broken->registerMarkdownTransformer(static function (): string {
+            throw new \RuntimeException('broken');
+        }, ['messageTypes' => ['custom']]);
+        $transformers = (new ExtensionRunner(array_map(
+            static fn (ExtensionApi $api): LoadedExtension => new LoadedExtension($api->name . '.php', $api->name . '.php', $api->name, $api),
+            [$plain, $surfaces, $broken],
+        )))->markdownTransformers();
+        $this->assertCount(3, $transformers);
+        $render = static fn (\Pig\Tui\Component $component): string => \Pig\Tui\Ansi::strip(implode("\n", $component->render(100)));
+
+        $this->assertStringContainsString('[user] hi', $render(new \Pig\CodingAgent\Interactive\UserMessageComponent('hi', $transformers)));
+        $thinking = new AssistantMessage([new \Pig\Ai\ThinkingContent('pondering'), new TextContent('said')], Api::AnthropicMessages, 'anthropic', 'test', new Usage(), StopReason::Stop);
+        $assistant = $render(new \Pig\CodingAgent\Interactive\AssistantMessageComponent($thinking, false, $transformers));
+        $this->assertStringContainsString('[assistant-thinking] pondering', $assistant);
+        $this->assertStringContainsString('[assistant] said', $assistant);
+
+        $custom = new \Pig\CodingAgent\Interactive\CustomMessageComponent(new \Pig\CodingAgent\Session\CustomMessage('note', [new TextContent('from a hook')]), transformers: $transformers);
+        $this->assertStringContainsString('<custom> from a hook', $render($custom));
+        $this->assertStringNotContainsString('[custom]', $render($custom));
+        $this->assertStringNotContainsString('replaced', $render($custom));
+
+        $skill = new \Pig\CodingAgent\Interactive\SkillInvocationMessageComponent(new \Pig\CodingAgent\Prompt\SkillBlock('review', '/s/SKILL.md', 'Read the diff.'), true, transformers: $transformers);
+        $this->assertStringContainsString('<custom> Read the diff.', $render($skill));
+
+        $summary = new \Pig\CodingAgent\Interactive\BranchSummaryComponent(new \Pig\CodingAgent\Session\BranchSummaryEntry('what happened'), true, transformers: $transformers);
+        $this->assertStringContainsString('<summary> what happened', $render($summary));
+        $this->assertStringContainsString('Branch Summary', $render($summary), 'pig\'s header is not handed over');
+    }
+
+    public function testARendersOptionsNameTheKeysAsThePersonBoundThem(): void
+    {
+        // Upstream #11630: `keyText()` and `keyHint()` on every render context.
+        $home = sys_get_temp_dir() . '/pig-keys-' . bin2hex(random_bytes(4));
+        mkdir($home);
+        file_put_contents($home . '/keybindings.json', json_encode(['app.tools.expand' => 'ctrl+e']));
+        \Pig\Tui\Keybindings::setKeybindings(\Pig\CodingAgent\Keybindings::load($home)->tuiKeybindings());
+
+        try {
+            $options = new \Pig\CodingAgent\Extensions\ToolRenderResultOptions();
+            $this->assertSame('ctrl+e', $options->keyText('app.tools.expand'));
+            $this->assertSame('ctrl+e to expand', \Pig\Tui\Ansi::strip($options->keyHint('app.tools.expand', 'to expand')));
+        } finally {
+            \Pig\Tui\Keybindings::reset();
+            unlink($home . '/keybindings.json');
+            rmdir($home);
+        }
+    }
+
     public function testRegisterToolRendererResolvesInOnionOrder(): void
     {
         $api1 = new ExtensionApi('/work', 'ext1.php', 'ext1');

@@ -265,7 +265,7 @@ final class ExtensionRunner
         return $renderers;
     }
 
-    /** @return list<Closure(string, array{role: string, isStreaming: bool}): string> */
+    /** @return list<Closure(string, array<string, mixed>): mixed> each already limited to its surfaces */
     public function markdownTransformers(): array
     {
         $transformers = [];

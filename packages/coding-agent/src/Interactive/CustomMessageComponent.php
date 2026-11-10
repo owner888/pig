@@ -42,6 +42,8 @@ final class CustomMessageComponent extends Container
         private readonly CustomMessage $message,
         bool $expanded = false,
         int $outputPad = 1,
+        /** @var list<\Closure(string, array<string, mixed>): mixed> the Markdown transformers, run on the text as `custom` */
+        private readonly array $transformers = [],
     ) {
         // A hook's message is usually output it just captured, so it is no more pig's own
         // words than a tool's result is — and this was the one of the three that had no
@@ -79,7 +81,7 @@ final class CustomMessageComponent extends Container
         $this->box->addChild($this->heading);
         $this->box->addChild(new Spacer(1));
         $this->box->addChild(new Markdown(
-            $this->text,
+            MarkdownTransform::apply($this->transformers, $this->text, 'custom'),
             0,
             0,
             Themes::getMarkdownTheme(),

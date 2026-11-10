@@ -132,6 +132,8 @@ const DIRECT = [
     'qwen-token-plan' => ['QWEN_TOKEN_PLAN_MODELS', Api::OpenAiCompletions, 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1'],
     'qwen-token-plan-cn' => ['QWEN_TOKEN_PLAN_CN_MODELS', Api::OpenAiCompletions, 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1'],
     'qwen-token-plan-individual' => ['QWEN_TOKEN_PLAN_INDIVIDUAL_MODELS', Api::OpenAiCompletions, 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1'],
+    // Upstream #7989: the Individual plan's catalog on the China endpoint.
+    'qwen-token-plan-individual-cn' => ['QWEN_TOKEN_PLAN_INDIVIDUAL_CN_MODELS', Api::OpenAiCompletions, 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1'],
     'together' => ['TOGETHER_MODELS', Api::OpenAiCompletions, 'https://api.together.ai/v1'],
     'xiaomi' => ['XIAOMI_MODELS', Api::OpenAiCompletions, 'https://api.xiaomimimo.com/v1'],
     'xiaomi-token-plan-ams' => ['XIAOMI_TOKEN_PLAN_AMS_MODELS', Api::OpenAiCompletions, 'https://token-plan-ams.xiaomimimo.com/v1'],
@@ -159,6 +161,7 @@ const SOURCE = [
     'qwen-token-plan' => 'alibaba-token-plan',
     'qwen-token-plan-individual' => 'alibaba-token-plan',
     'qwen-token-plan-cn' => 'alibaba-token-plan-cn',
+    'qwen-token-plan-individual-cn' => 'alibaba-token-plan-cn',
 ];
 
 /**
@@ -928,9 +931,9 @@ function rowsFor(array $catalogue, string $provider, array $nvidiaIds = []): arr
             $id = $live;
         }
 
-        if (in_array($provider, ['qwen-token-plan', 'qwen-token-plan-cn', 'qwen-token-plan-individual'], true)
+        if (in_array($provider, ['qwen-token-plan', 'qwen-token-plan-cn', 'qwen-token-plan-individual', 'qwen-token-plan-individual-cn'], true)
             && (in_array($id, QWEN_TOKEN_PLAN_EXCLUDED_MODEL_IDS, true)
-                || ($provider === 'qwen-token-plan-individual' && !in_array($id, QWEN_TOKEN_PLAN_INDIVIDUAL_MODEL_IDS, true)))) {
+                || (str_starts_with($provider, 'qwen-token-plan-individual') && !in_array($id, QWEN_TOKEN_PLAN_INDIVIDUAL_MODEL_IDS, true)))) {
             continue;
         }
 
@@ -1005,7 +1008,7 @@ function rowsFor(array $catalogue, string $provider, array $nvidiaIds = []): arr
             // output_config.effort and reject thinking.type="disabled" (no "none" effort, so off is
             // null)" — `BuiltinCatalog` gives such a row `forceAdaptiveThinking` (upstream #11121).
             'minimax', 'minimax-cn' => getEffortThinkingLevelMap($reasoningOptions),
-            'qwen-token-plan', 'qwen-token-plan-cn', 'qwen-token-plan-individual' => getEffortThinkingLevelMap($reasoningOptions)
+            'qwen-token-plan', 'qwen-token-plan-cn', 'qwen-token-plan-individual', 'qwen-token-plan-individual-cn' => getEffortThinkingLevelMap($reasoningOptions)
                 ?? (in_array($id, QWEN_TOKEN_PLAN_REASONING_EFFORT_FALLBACK_MODEL_IDS, true) ? QWEN_TOKEN_PLAN_FALLBACK_THINKING_LEVEL_MAP : null),
             default => null,
         };
@@ -2289,13 +2292,18 @@ function assertImages(array $rows): void
     }
 }
 
-/** Replace what lies between one table's markers, and nothing else in the file. */
+/**
+ * Replace what lies between one table's markers, and nothing else in the file. A table with nothing
+ * between them yet (a provider just added) is filled too: the newline before the closing marker
+ * is optional, so the match cannot run on into the next table's block.
+ */
 function splice(string $source, string $constant, string $rows): string
 {
     $pattern = '/(private const array ' . preg_quote($constant, '/')
-        . " = \\[\n        \\/\\/ >>> generated[^\n]*\n)(.*?)(\n        \\/\\/ <<< generated\n)/s";
+        . " = \\[\n        \\/\\/ >>> generated[^\n]*\n)(.*?)\n?(        \\/\\/ <<< generated\n)/s";
+    $body = $rows === '' ? '' : str_replace('$', '\\$', $rows) . "\n";
 
-    $replaced = preg_replace($pattern, '${1}' . str_replace('$', '\\$', $rows) . '${3}', $source, 1, $count);
+    $replaced = preg_replace($pattern, '${1}' . $body . '${3}', $source, 1, $count);
 
     if ($replaced === null || $count !== 1) {
         fail("could not find the generated block for {$constant} — are its markers still there?");

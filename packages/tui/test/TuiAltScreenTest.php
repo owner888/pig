@@ -59,8 +59,6 @@ final class TuiAltScreenTest extends TestCase
     /** @var list<TuiAltScreen> */
     private array $started = [];
 
-    private string|false $weztermPane = false;
-
     #[\Override]
     protected function setUp(): void
     {
@@ -68,7 +66,6 @@ final class TuiAltScreenTest extends TestCase
         Keybindings::reset();
         // The environment this runs in must not decide which image protocol the tests see.
         TerminalImage::setCapabilities(new TerminalCapabilities(null, false, false));
-        $this->weztermPane = getenv('WEZTERM_PANE');
     }
 
     #[\Override]
@@ -79,7 +76,6 @@ final class TuiAltScreenTest extends TestCase
         }
         Keybindings::reset();
         TerminalImage::resetCapabilitiesCache();
-        putenv($this->weztermPane === false ? 'WEZTERM_PANE' : "WEZTERM_PANE={$this->weztermPane}");
     }
 
     private function start(TuiAltScreen $tui): void
@@ -1234,10 +1230,10 @@ final class TuiAltScreenTest extends TestCase
         return false;
     }
 
-    public function testRedrawsWezTermKittyImagesAfterWritesToCoveredRows(): void
+    public function testRedrawsKittyImagesAfterWritesToCoveredRows(): void
     {
-        // Regression test for #10319: a scrollbar update below an unchanged image anchor erased its cells.
-        putenv('WEZTERM_PANE=1');
+        // Regression test for #10319: a scrollbar update below an unchanged image anchor erased its
+        // cells — on every Kitty terminal, not only WezTerm, since Orca's xterm.js does it too (#11890).
         TerminalImage::setCapabilities(new TerminalCapabilities(ImageProtocol::Kitty, true, true));
         $terminal = new FakeTerminal(20, 4);
         $imageId = 10319;

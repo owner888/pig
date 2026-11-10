@@ -78,6 +78,29 @@ final class PackageCommandsTest extends TestCase
         $this->assertNull(PackageCommands::parse(['list'])['projectTrustOverride']);
     }
 
+    public function testUpdatingOfflineSaysThePackagesWereSkippedNotThatTheyAreUpToDate(): void
+    {
+        // Upstream #11711: "up to date" only when the update looked.
+        $home = sys_get_temp_dir() . '/pig-update-' . bin2hex(random_bytes(4));
+        mkdir($home);
+        file_put_contents("{$home}/settings.json", json_encode(['packages' => ['git:github.com/user/repo']]));
+        putenv('PIG_OFFLINE=1');
+
+        try {
+            ob_start();
+            $code = PackageCommands::main(['update', 'git:github.com/user/repo'], $home, $home);
+            $out = (string) ob_get_clean();
+        } finally {
+            putenv('PIG_OFFLINE');
+            unlink("{$home}/settings.json");
+            @rmdir($home);
+        }
+
+        $this->assertSame(0, $code);
+        $this->assertStringContainsString('Skipped package updates (offline mode)', $out);
+        $this->assertStringNotContainsString('up to date', $out);
+    }
+
     public function testHelpPrintsTheUsage(): void
     {
         ob_start();

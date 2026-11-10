@@ -64,7 +64,8 @@ final class PackageManager
      * Told what is happening, for a CLI that prints it — upstream's `setProgressCallback()`.
      *
      * @param (Closure(string, string, string, ?string): void)|null $callback type (`start` /
-     *        `progress` / `complete` / `error`), action (`install` / `remove` / `update` / `pull`), source, message
+     *        `progress` / `complete` / `error`, and `result` for a package an update changed),
+     *        action (`install` / `remove` / `update` / `pull`), source, message
      */
     public function setProgressCallback(?Closure $callback): void
     {
@@ -731,6 +732,10 @@ final class PackageManager
      * Upstream's `update()`: every configured git package, or the one named. A pinned ref is
      * reconciled — the checkout moved to it if the setting changed — and never advanced.
      *
+     * Each package that changed is reported afterwards as a `result` event, upstream's (#11707):
+     * `composer:vendor/name 1.2.0 -> 1.3.0`, `git:github.com/user/repo (project) a1b2c3d -> e4f5a6b`,
+     * in the order the packages are configured.
+     *
      * @throws PackageError when a named source matches nothing
      */
     public function update(?string $source = null): void
@@ -760,6 +765,8 @@ final class PackageManager
             return;
         }
 
+        $updated = [];
+
         foreach ($targets as ['source' => $sourceString, 'scope' => $scope]) {
             $parsed = PackageSource::parse($sourceString);
 
@@ -768,9 +775,15 @@ final class PackageManager
             // constraint when there is one, the newest release when there is not.
             if ($parsed instanceof ComposerSource) {
                 if (!$parsed->pinned()) {
+                    $from = $this->installedComposerVersion($parsed, $scope);
                     $this->withProgress('update', $sourceString, "Updating {$sourceString}...", function () use ($parsed, $scope): void {
                         $this->installComposer($parsed, $scope);
                     });
+                    $to = $this->installedComposerVersion($parsed, $scope);
+
+                    if ($from !== $to) {
+                        $updated[] = [$sourceString, $scope, $from, $to];
+                    }
                 }
 
                 continue;
@@ -780,10 +793,38 @@ final class PackageManager
                 continue;
             }
 
+            $installedPath = $this->gitInstallPath($parsed, $scope);
+            $head = fn (): ?string => is_dir($installedPath) ? (($line = $this->capture(['git', 'rev-parse', 'HEAD'], $installedPath)) !== null ? substr(trim($line), 0, 7) : null) : null;
+            $from = $head();
             $this->withProgress('update', $sourceString, "Updating {$sourceString}...", function () use ($parsed, $scope): void {
                 $this->updateGit($parsed, $scope);
             });
+            $to = $head();
+
+            if ($from !== $to) {
+                $updated[] = [$sourceString, $scope, $from, $to];
+            }
         }
+
+        foreach ($updated as [$sourceString, $scope, $from, $to]) {
+            $where = $scope === 'project' ? ' (project)' : '';
+            $this->progress('result', 'update', $sourceString, "{$sourceString}{$where} " . ($from ?? '(none)') . ' -> ' . ($to ?? '(none)'));
+        }
+    }
+
+    /** The version Composer installed of `$source` in `$scope`, from `vendor/composer/installed.json`; null when there is none. */
+    private function installedComposerVersion(ComposerSource $source, string $scope): ?string
+    {
+        $path = $this->composerInstallRoot($scope) . '/vendor/composer/installed.json';
+        $installed = is_file($path) ? json_decode((string) file_get_contents($path), true) : null;
+
+        foreach ((is_array($installed) ? ($installed['packages'] ?? $installed) : []) as $package) {
+            if (is_array($package) && ($package['name'] ?? null) === $source->name) {
+                return is_string($package['pretty_version'] ?? null) ? $package['pretty_version'] : ($package['version'] ?? null);
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -1385,7 +1426,7 @@ final class PackageManager
     }
 
     /** Upstream's `isOfflineModeEnabled()`: `PIG_OFFLINE` (upstream's `PI_OFFLINE`) is `1`, `true` or `yes`. */
-    private static function offline(): bool
+    public static function offline(): bool
     {
         return in_array(strtolower((string) getenv('PIG_OFFLINE')), ['1', 'true', 'yes'], true);
     }

@@ -36,7 +36,7 @@ final class MermaidTransformer
             $current = $mode();
             $streaming = (bool) ($context['isStreaming'] ?? false);
 
-            // Upstream also skips `assistant-thinking`; pig hands thinking to no transformer.
+            // The surfaces (user, assistant, summary) are chosen where it is registered, `InteractiveMode`.
             if ($current === 'off' || ($streaming && $current !== 'streaming')) {
                 return $markdown;
             }

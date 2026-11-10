@@ -771,8 +771,19 @@ PHP));
         ]]);
         $entries = $tool('entries', ['type' => 'array', 'items' => ['type' => 'object', 'properties' => ['id' => ['type' => 'string'], 'size' => ['type' => 'integer']], 'required' => ['id', 'size']]]);
         $count = $tool('count', ['type' => 'number']);
+        // Upstream #11850: an MCP server's models in `$defs`, reached through `$ref`, and a cycle.
+        $refs = $tool('refs', [
+            'type' => 'object',
+            'properties' => ['structuredContent' => ['$ref' => '#/$defs/Result'], 'kind' => ['$ref' => '#/$defs/Kind']],
+            'required' => ['kind'],
+            '$defs' => [
+                'Result' => ['type' => 'object', 'properties' => ['rows' => ['type' => 'array'], 'next' => ['$ref' => '#/$defs/Result']], 'required' => ['rows']],
+                'Kind' => ['const' => 'table'],
+            ],
+        ]);
 
-        $descriptions = ($codemode->prepareLoadout)([$process, $entries, $count])['descriptions'];
+        $descriptions = ($codemode->prepareLoadout)([$process, $entries, $count, $refs])['descriptions'];
+        $this->assertSame('refs tool' . "\n\nCodemode: `\$tools->refs([...])` resolves to `{ structuredContent?: { rows, next? }, kind: \"table\" }`.", $descriptions['refs']);
 
         $this->assertSame('process tool' . "\n\nCodemode: `\$tools->process([...])` resolves to `{ action: \"start\", process } | { action: \"list\", processes, truncated? }`.", $descriptions['process']);
         $this->assertSame('entries tool' . "\n\nCodemode: `\$tools->entries([...])` resolves to a value; `describe_tool(\"entries\")` shows its type.", $descriptions['entries']);

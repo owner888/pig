@@ -308,6 +308,7 @@ final class Stream
             'qwen-token-plan' => ['QWEN_TOKEN_PLAN_API_KEY'],
             'qwen-token-plan-cn' => ['QWEN_TOKEN_PLAN_CN_API_KEY'],
             'qwen-token-plan-individual' => ['QWEN_TOKEN_PLAN_API_KEY'],
+            'qwen-token-plan-individual-cn' => ['QWEN_TOKEN_PLAN_CN_API_KEY'],
             'nvidia' => ['NVIDIA_API_KEY'],
             'deepseek' => ['DEEPSEEK_API_KEY'],
             'vercel-ai-gateway' => ['AI_GATEWAY_API_KEY'],
