@@ -43,6 +43,22 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [2.0.8] - 2026-11-11
+
+### New Features
+
+- **Behavioral and documentation-lift evaluation harness (`packages/evals`)** — Ported upstream's `packages/evals` (`Pig\Evals\`): `Plan` (`plan.ts`), `Report` (`report.ts`), `Harness` (`harness.ts`), `Judge`, `AcmeServer` (`acme-server.ts`), `ConfiguredRuntime` (`configured-runtime.ts`), `RecordingTerminal`, `Cli` (`cli.ts`), and the seven eval suites (`SmokeEval`, `DocumentationAuditEval`, `ExtensionsDocsEval`, `ModelsDocsEval`, `OpenAiProviderDocsEval`, `CustomProviderDocsEval`, `TuiDocsEval`), runnable via `php scripts/eval.php --host` and `php scripts/eval.php --docs`.
+
+### Added
+
+- `AgentToolResult::$terminate`: returning `terminate: true` from every tool call in a batch ends the agent loop after the tool results are recorded without starting another model turn, matching upstream's batch early-termination rule.
+- `Config::readmePath()`, `Config::docsPath()`, `Config::examplesPath()`, and `Config::changelogPath()`.
+- `Auth::apiKey()` and `ConfiguredApiKeyAuth::resolve()` accept request-scoped environment variables (`SimpleStreamOptions::$env`), forwarded by `ModelRegistry::streamSimple()`.
+
+### Fixed
+
+- `$ctx->ui->setFooter()` now replaces the built-in footer while a custom footer is set and restores the built-in footer when cleared or on `/reload`, and passes the built-in `FooterComponent` (`getGitBranch()`, `getExtensionStatuses()`, `getAvailableProviderCount()`, `onBranchChange()`) as the third argument to the factory.
+
 ## [2.0.7] - 2026-11-11
 
 ### Changed

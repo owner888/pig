@@ -418,8 +418,8 @@ final class AgentLoop
                     // Upstream's: "A "length" stop means the output was cut off by the token limit, so
                     // every tool call in the message may carry truncated arguments. Fail them all
                     // instead of executing potentially borked calls."
-                    [$toolResults, $steeringAfterTools] = $message->stopReason === StopReason::Length
-                        ? [self::failToolCallsFromTruncatedMessage($toolCalls, $emit), null]
+                    [$toolResults, $steeringAfterTools, $terminate] = $message->stopReason === StopReason::Length
+                        ? [self::failToolCallsFromTruncatedMessage($toolCalls, $emit), null, false]
                         : self::executeToolCalls(
                             $context,
                             $message,
@@ -432,6 +432,8 @@ final class AgentLoop
                         $context->append($result);
                         $newMessages[] = $result;
                     }
+
+                    $hasMoreToolCalls = !$terminate;
                 }
 
                 $lastCompletedTurn = new PrepareNextTurnContext($message, $toolResults, $context, $newMessages);
@@ -665,7 +667,7 @@ final class AgentLoop
      * @param list<ToolCall>|null       $toolCalls     the message's calls when null; `resume()` passes those without a result
      * @param string|null               $interruptedId `resume()`'s call that may have half run, run again only if its tool is `Safe`
      * @param AgentToolResult|null      $soFar         what that call had printed, put ahead of the `interrupted` notice
-     * @return array{0: list<ToolResultMessage>, 1: list<mixed>|null}
+     * @return array{0: list<ToolResultMessage>, 1: list<mixed>|null, 2: bool}
      */
     private static function executeToolCalls(
         AgentContext $context,
@@ -680,6 +682,7 @@ final class AgentLoop
         $toolCalls ??= $message->toolCalls();
         $results = [];
         $steering = null;
+        $allTerminated = $toolCalls !== [];
 
         foreach ($toolCalls as $index => $toolCall) {
             $emit(new ToolExecutionStartEvent($toolCall->id, $toolCall->name, $toolCall->arguments));
@@ -734,6 +737,10 @@ final class AgentLoop
                 $isError = true;
             }
 
+            if ($result->terminate !== true) {
+                $allTerminated = false;
+            }
+
             $emit(new ToolExecutionEndEvent($toolCall->id, $toolCall->name, $result, $isError, $durationMs));
 
             $results[] = self::toolResult($toolCall, $result, $isError, $emit, durationMs: $durationMs, nestedCallsOf: $config->nestedCallsOf);
@@ -751,6 +758,7 @@ final class AgentLoop
             $steering = $queued;
 
             foreach (array_slice($toolCalls, $index + 1) as $skipped) {
+                $allTerminated = false;
                 $results[] = self::toolResult(
                     $skipped,
                     new AgentToolResult([new TextContent('Skipped due to queued user message.')]),
@@ -763,7 +771,7 @@ final class AgentLoop
             break;
         }
 
-        return [$results, $steering];
+        return [$results, $steering, $allTerminated];
     }
 
     /**

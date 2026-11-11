@@ -1095,9 +1095,28 @@ final class InteractiveMode
         $widgetsAboveSlot = new Container();
         $widgetsAboveSlot->addChild($this->widgetsAbove);
         $widgetsAboveSlot->addChild(new Spacer(1));
-        $footerSlot = new Container();
-        $footerSlot->addChild($this->footer);
-        $footerSlot->addChild($this->customFooter);
+        $footerSlot = new class ($this->footer, $this->customFooter) implements Component {
+            public function __construct(
+                private readonly FooterComponent $footer,
+                private readonly Container $customFooter,
+            ) {
+            }
+
+            #[\Override]
+            public function invalidate(): void
+            {
+                $this->footer->invalidate();
+                $this->customFooter->invalidate();
+            }
+
+            #[\Override]
+            public function render(int $width): array
+            {
+                return $this->customFooter->children() !== []
+                    ? $this->customFooter->render($width)
+                    : $this->footer->render($width);
+            }
+        };
 
         $this->viewport = ChatViewport::create(
             document: $document,
@@ -4365,6 +4384,12 @@ final class InteractiveMode
         // `session_start` if they still want it.
         $this->autocompleteWrappers = [];
         $this->setCustomEditorComponent(null);
+        $this->ui->setFooter(null);
+        $this->ui->setHeader(null);
+        $this->widgetsAbove->clear();
+        $this->widgetsBelow->clear();
+        $this->footer->clearStatuses();
+        $this->footer->invalidate();
 
         // 4. Reload the extensions, and the runner with them. The runner being replaced hears
         // `session_shutdown` first and the new one `session_start`, as upstream's do across a

@@ -306,14 +306,31 @@ Still untested against a real endpoint: Groq, xAI, Cerebras, z.ai, Mistral and C
 protocol code rests on canned servers alone. And none of this is a one-off: the numbers here are
 worth re-running rather than quoting, which is what the script is for.
 
-## `scripts/eval.php`: does the agent still do the task
+## `packages/evals` and `scripts/eval.php`: does the agent still do the task
 
 The suite says the code does what upstream's does; `test/live.php` says the providers accept what
-pig sends. Neither says whether a prompt, a tool description or a model change made the agent better
-or worse at a task — that is what `evals/` is for, and it is pig's own, not upstream's (pi has no
-eval harness).
+pig sends. Neither says whether a prompt, a tool description, documentation or a model change made
+the agent better or worse at a task — that is what `packages/evals` (ported from upstream's
+`packages/evals`) and `evals/` are for.
 
-A case is `evals/<name>/CASE.md`: frontmatter with the assertions, the prompt below it, and an
+`packages/evals` (`Pig\Evals\`) ports upstream's behavioral and documentation-lift eval harness:
+
+- `Plan` (`plan.ts`) discovers `<eval set> > <case>` identities and expands them into alternating
+  `without_docs` and `with_docs` tasks per repetition.
+- `Report` (`report.ts`) reads task reports, persists session JSONL artifacts, pairs `without_docs`
+  (control) and `with_docs` (treatment) runs, and formats pass-rate lift and efficiency deltas.
+- `Harness` (`harness.ts`) runs an isolated `AgentSession` over `prompt` and `reload` steps,
+  enforcing the `with_docs` / `without_docs` system-prompt invariants and recording transcript
+  events, token/cost telemetry and the session snapshot.
+- `AcmeServer` (`acme-server.ts`) and `ConfiguredRuntime` (`configured-runtime.ts`) provide the
+  loopback OpenAI-compatible and custom NDJSON streaming fixture servers and `ModelRegistry` probes.
+- Seven eval suites under `Pig\Evals\Evals\`: `SmokeEval`, `DocumentationAuditEval`,
+  `ExtensionsDocsEval`, `ModelsDocsEval`, `OpenAiProviderDocsEval`, `CustomProviderDocsEval`, and
+  `TuiDocsEval` (with `RecordingTerminal` and `ContextFooterJudge`), reachable via
+  `php scripts/eval.php --host` and `php scripts/eval.php --docs`.
+
+Alongside `packages/evals`, `scripts/eval.php` also runs `evals/<name>/CASE.md`: frontmatter with
+the assertions, the prompt below it, and an
 optional `fixture/` copied into a fresh temporary directory the run uses as its working directory.
 The runner spawns `bin/pig --mode json --incognito --no-update-check -p <prompt>` per case — the
 real entry point, so what is measured is what a person gets, and a crash in one case is one failed

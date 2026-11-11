@@ -53,13 +53,14 @@ final readonly class ConfiguredApiKeyAuth implements ApiKeyAuth
         return ConfigValue::isConfigured($this->rawKey) ? 'configured API key' : null;
     }
 
-    public function resolve(?ApiKeyCredential $credential): ?AuthResult
+    /** @param array<string, string>|null $env */
+    public function resolve(?ApiKeyCredential $credential, ?array $env = null): ?AuthResult
     {
         if ($credential?->key !== null && $credential->key !== '') {
             return new AuthResult(new ModelAuth($credential->key), $credential->env, 'stored credential');
         }
 
-        $key = ConfigValue::resolveOrThrow($this->rawKey, "API key for provider \"{$this->provider}\"");
+        $key = ConfigValue::resolveOrThrow($this->rawKey, "API key for provider \"{$this->provider}\"", $env);
 
         return new AuthResult(new ModelAuth($key), source: 'configured API key');
     }

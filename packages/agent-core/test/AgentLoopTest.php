@@ -882,6 +882,27 @@ final class AgentLoopTest extends TestCase
         $this->assertSame(['rules' => 'new rules'], $messages[4]->sections);
     }
 
+    public function testAToolResultWithTerminateTrueEndsTheLoopWithoutAnotherModelTurn(): void
+    {
+        $submit = new ScriptedTool('submit', static fn (): AgentToolResult => new AgentToolResult(
+            [new TextContent('submitted')],
+            terminate: true,
+        ));
+
+        // Only one scripted turn: a second provider call would throw out of `provider()`.
+        [, $messages] = $this->drive(
+            [$this->wantsTool('submit', ['path' => 'docs/models.md'])],
+            [new UserMessage('audit')],
+            [$submit],
+        );
+
+        $this->assertCount(3, $messages);
+        $this->assertInstanceOf(UserMessage::class, $messages[0]);
+        $this->assertInstanceOf(AssistantMessage::class, $messages[1]);
+        $this->assertInstanceOf(ToolResultMessage::class, $messages[2]);
+        $this->assertCount(1, $this->seen);
+    }
+
     /**
      * @param list<mixed> $prompts
      * @return array{0: null, 1: list<mixed>}

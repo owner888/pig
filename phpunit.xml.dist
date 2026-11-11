@@ -18,6 +18,7 @@
             <directory>packages/coding-agent/test</directory>
             <directory>packages/mcp/test</directory>
             <directory>packages/codemode/test</directory>
+            <directory>packages/evals/test</directory>
             <!-- Needs a MySQL server: set PIG_TEST_MYSQL_DSN and run the testsuite named mysql. -->
             <exclude>packages/coding-agent/test/Session/MysqlSessionStoreTest.php</exclude>
             <exclude>packages/coding-agent/test/Database/MysqlDatabaseTest.php</exclude>
@@ -38,6 +39,7 @@
             <directory>packages/codemode/src</directory>
             <directory>packages/coding-agent/src</directory>
             <directory>packages/mcp/src</directory>
+            <directory>packages/evals/src</directory>
         </include>
     </source>
     <php>

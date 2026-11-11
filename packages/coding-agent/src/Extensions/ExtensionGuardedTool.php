@@ -128,6 +128,7 @@ final readonly class ExtensionGuardedTool implements AgentTool, ReplayableTool, 
             $answer->details ?? $result->details,
             $result->usage,
             $answer->content === null ? $result->structuredContent : null,
+            $result->terminate,
         );
     }
 

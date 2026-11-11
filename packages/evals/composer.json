@@ -1,0 +1,19 @@
+{
+    "name": "pig/evals",
+    "description": "Behavioral and documentation-lift evals for pig. Structure documentation; the root composer.json is what Composer reads.",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.3",
+        "pig/async": "@dev",
+        "pig/ai": "@dev",
+        "pig/agent-core": "@dev",
+        "pig/tui": "@dev",
+        "pig/coding-agent": "@dev"
+    },
+    "autoload": {
+        "psr-4": {
+            "Pig\\Evals\\": "src/"
+        }
+    }
+}

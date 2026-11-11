@@ -397,6 +397,7 @@ Everything else — the PHP classes behind these, the Web UI's HTTP routes, the 
 - `packages/agent-core/` (`Pig\Agent\`): Agent loop, tool lifecycle, and JSON schema validation.
 - `packages/tui/` (`Pig\Tui\`): Differential terminal rendering engine, ANSI styling, and key parser.
 - `packages/coding-agent/` (`Pig\CodingAgent\`): CLI harness, session tree, auto-compaction, Web daemon, and tools.
+- `packages/evals/` (`Pig\Evals\`): Behavioral and documentation-lift evaluation harness (`smoke`, `documentation-audit`, and paired `without_docs` vs `with_docs` suites).
 
 ---
 
@@ -418,8 +419,10 @@ php test/lint.php
 # Run live provider validation (requires API keys)
 php test/live.php
 
-# Run the agent evals under evals/ (requires API keys; add -- --model <ref> to compare models)
+# Run the agent evals (requires API keys; --host / --docs for packages/evals, or CASE.md under evals/)
 php scripts/eval.php
+php scripts/eval.php --host --provider anthropic --model claude-sonnet-4-5
+php scripts/eval.php --docs --provider anthropic --model claude-sonnet-4-5
 ```
 
 ---

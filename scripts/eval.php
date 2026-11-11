@@ -4,10 +4,20 @@
 declare(strict_types=1);
 
 /**
- * Does the agent still do the task? Each case under `evals/` is run through `bin/pig`, as a
- * person would run it, and checked against what its `CASE.md` says must be true afterwards.
+ * Does the agent still do the task?
  *
+ *   php scripts/eval.php --host [--provider <p> --model <m>] [smoke|documentation-audit]
+ *   php scripts/eval.php --docs [--provider <p> --model <m>] [--runs-per-variant <n>] [-t <pattern>] [suite.docs.eval.php …]
  *   php scripts/eval.php [--json] [--keep] [--filter <substring>] [name …] [-- <bin/pig options>]
+ *
+ * `--host` and `--docs` run `packages/evals` (ported from upstream's `packages/evals`):
+ * - `--host` runs `SmokeEval` and `DocumentationAuditEval`
+ * - `--docs` runs the paired `without_docs` vs `with_docs` documentation-lift evals
+ *   (`ExtensionsDocsEval`, `ModelsDocsEval`, `OpenAiProviderDocsEval`, `CustomProviderDocsEval`,
+ *   `TuiDocsEval`) and writes comparison reports under `packages/evals/.eval/<run-id>/`.
+ *
+ * Without `--host` or `--docs`, each case under `evals/` is run through `bin/pig`, as a
+ * person would run it, and checked against what its `CASE.md` says must be true afterwards.
  *
  * Every case runs as `bin/pig --mode json --incognito --no-update-check -p <prompt>` in a
  * temporary copy of its `fixture/` directory; what follows `--` is appended (`--model`, `--no-extensions`,
@@ -46,8 +56,17 @@ declare(strict_types=1);
  */
 
 use Pig\CodingAgent\Prompt\Frontmatter;
+use Pig\Evals\Cli;
 
 require __DIR__ . '/../vendor/autoload.php';
+
+if (($argv[1] ?? null) === '--docs') {
+    exit(Cli::runDocsComparison(array_slice($argv, 2)));
+}
+
+if (($argv[1] ?? null) === '--host') {
+    exit(Cli::runHostEvals(array_slice($argv, 2)));
+}
 
 const DEFAULT_TIMEOUT = 120;
 

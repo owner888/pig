@@ -33,6 +33,7 @@ final readonly class AgentToolResult
         public mixed $details = null,
         public ?Usage $usage = null,
         public mixed $structuredContent = null,
+        public ?bool $terminate = null,
     ) {
     }
 }

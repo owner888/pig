@@ -89,6 +89,51 @@ final class Config
         return dirname(__DIR__, 3);
     }
 
+    /** Upstream's `getReadmePath()`: `<package-dir>/README.md`. */
+    public static function readmePath(): string
+    {
+        return self::packageDir() . '/README.md';
+    }
+
+    /**
+     * Upstream's `getDocsPath()`: `<package-dir>/docs` when it holds user docs, else the site docs
+     * checkout beside the repository (`../smart-book/app/Views/pig/docs/en`) when present.
+     */
+    public static function docsPath(): string
+    {
+        $override = getenv('PIG_DOCS_DIR');
+
+        if ($override !== false && $override !== '') {
+            return rtrim(Settings::normalizePath($override), '/');
+        }
+
+        $packageDir = self::packageDir();
+
+        if (is_file($packageDir . '/docs/models.md')) {
+            return $packageDir . '/docs';
+        }
+
+        $siteDocs = dirname($packageDir) . '/smart-book/app/Views/pig/docs/en';
+
+        if (is_dir($siteDocs)) {
+            return $siteDocs;
+        }
+
+        return $packageDir . '/docs';
+    }
+
+    /** Upstream's `getExamplesPath()`: `<package-dir>/examples`. */
+    public static function examplesPath(): string
+    {
+        return self::packageDir() . '/examples';
+    }
+
+    /** Upstream's `getChangelogPath()`: `<package-dir>/CHANGELOG.md`. */
+    public static function changelogPath(): string
+    {
+        return self::packageDir() . '/CHANGELOG.md';
+    }
+
     /**
      * The person's home directory, which is not `home()` — that is `~/.pig/agent` inside it.
      *

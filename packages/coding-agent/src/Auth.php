@@ -547,8 +547,9 @@ final class Auth
      * credential and carries on to the environment, which means one blocked network call
      * throws away a login that was perfectly good — and the person finds out by being asked to
      * sign in again for no reason. Here it throws, naming the provider.
+     * @param array<string, string>|null $env request-scoped environment values (`SimpleStreamOptions::$env`)
      */
-    public function apiKey(string $provider): ?string
+    public function apiKey(string $provider, ?array $env = null): ?string
     {
         if (isset($this->runtime[$provider])) {
             return $this->runtime[$provider];
@@ -559,7 +560,11 @@ final class Auth
         $apiKeyAuth = ProviderRegistry::apiKeyAuthFor($provider);
 
         if ($apiKeyAuth !== null && $this->kind($provider) !== 'oauth') {
-            return $apiKeyAuth->resolve($this->apiKeyCredential($provider))?->auth->apiKey;
+            $credential = $this->apiKeyCredential($provider);
+
+            return $apiKeyAuth instanceof Extensions\ConfiguredApiKeyAuth
+                ? $apiKeyAuth->resolve($credential, $env)?->auth->apiKey
+                : $apiKeyAuth->resolve($credential)?->auth->apiKey;
         }
 
         if ($this->kind($provider) === 'api_key') {
@@ -592,8 +597,8 @@ final class Auth
         // `check()` answers undefined for it before `resolve()` is ever asked — and was named when the
         // file was read; a command that answers nothing is the error.
         if (isset($this->customKeys[$provider])) {
-            return ConfigValue::isConfigured($this->customKeys[$provider])
-                ? ConfigValue::resolveOrThrow($this->customKeys[$provider], "API key for provider \"{$provider}\"")
+            return ConfigValue::isConfigured($this->customKeys[$provider], $env)
+                ? ConfigValue::resolveOrThrow($this->customKeys[$provider], "API key for provider \"{$provider}\"", $env)
                 : null;
         }
 
@@ -601,11 +606,11 @@ final class Auth
         // `Authorization: Bearer` header, ahead of `ANTHROPIC_OAUTH_TOKEN` and `ANTHROPIC_API_KEY`. So
         // the answer is `Stream::AMBIENT_AUTH_MARKER` — signed in, no key to send — which `Stream`
         // never sends, putting the header on instead (`Stream::envAuthHeaders()`).
-        if (Stream::envAuthHeaders($provider) !== null) {
+        if (Stream::envAuthHeaders($provider, $env) !== null) {
             return Stream::AMBIENT_AUTH_MARKER;
         }
 
-        return Stream::envApiKey($provider);
+        return Stream::envApiKey($provider, $env);
     }
 
     /**

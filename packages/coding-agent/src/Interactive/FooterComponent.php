@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\CodingAgent\Interactive;
 
+use Closure;
 use Pig\Agent\ThinkingLevel;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\Model;
@@ -123,6 +124,46 @@ final class FooterComponent implements Component
         if ($key === self::INLINE_STATUS) {
             $this->inlineFor = $this->session->sessionId();
         }
+    }
+
+    /** Upstream's `footerDataProvider.clearExtensionStatuses()` on reload. */
+    public function clearStatuses(): void
+    {
+        $this->statuses = [];
+        $this->inlineFor = null;
+    }
+
+    /** Upstream's `ReadonlyFooterDataProvider::getGitBranch()`: current git branch, or null outside a repo. */
+    public function getGitBranch(): ?string
+    {
+        $branch = $this->currentBranch();
+
+        return $branch === false ? null : $branch;
+    }
+
+    /**
+     * Upstream's `ReadonlyFooterDataProvider::getExtensionStatuses()`.
+     *
+     * @return array<string, string>
+     */
+    public function getExtensionStatuses(): array
+    {
+        return $this->statuses;
+    }
+
+    /** Upstream's `ReadonlyFooterDataProvider::getAvailableProviderCount()`. */
+    public function getAvailableProviderCount(): int
+    {
+        return $this->providerCount();
+    }
+
+    /** Upstream's `ReadonlyFooterDataProvider::onBranchChange()`. */
+    public function onBranchChange(Closure $callback): Closure
+    {
+        unset($callback);
+
+        return static function (): void {
+        };
     }
 
     #[\Override]

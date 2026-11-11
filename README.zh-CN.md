@@ -376,6 +376,7 @@ Logger::timeEnd('benchmark');
 - `packages/agent-core/` (`Pig\Agent\`): Agent 核心循环、工具生命周期与 JSON Schema 参数校验。
 - `packages/tui/` (`Pig\Tui\`): 差异化终端渲染引擎、ANSI 样式与键盘输入事件解析器。
 - `packages/coding-agent/` (`Pig\CodingAgent\`): CLI 调度器、会话树、自动上下文压缩、Web 守护进程与核心工具集。
+- `packages/evals/` (`Pig\Evals\`): 行为与文档提升（Documentation-Lift）评测套件（含 `smoke`、`documentation-audit` 及 `without_docs` vs `with_docs` 对照评测）。
 
 ---
 
@@ -397,8 +398,10 @@ php test/lint.php
 # 运行真实模型提供商端到端测试（需要配置对应 API Key）
 php test/live.php
 
-# 运行 evals/ 下的 agent 评测用例（需要 API Key；加 -- --model <ref> 可对比模型）
+# 运行 agent 评测用例（需要 API Key；--host / --docs 运行 packages/evals，或运行 evals/ 下的 CASE.md）
 php scripts/eval.php
+php scripts/eval.php --host --provider anthropic --model claude-sonnet-4-5
+php scripts/eval.php --docs --provider anthropic --model claude-sonnet-4-5
 ```
 
 ---

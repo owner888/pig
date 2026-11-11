@@ -562,7 +562,7 @@ final class TerminalUi implements ExtensionUi
     {
         $this->customFooter?->clear();
         if ($factory !== null) {
-            $comp = $factory($this->tui, $this->theme());
+            $comp = $factory($this->tui, $this->theme(), $this->footer);
             if ($comp instanceof Component) {
                 $this->customFooter?->addChild($comp);
             }

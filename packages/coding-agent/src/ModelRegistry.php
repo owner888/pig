@@ -159,7 +159,7 @@ final readonly class ModelRegistry
 
         return Stream::simple($model, $context, new SimpleStreamOptions(...[
             ...$base,
-            'apiKey' => is_string($apiKey) && $apiKey !== '' ? $apiKey : $this->auth?->apiKey($model->provider),
+            'apiKey' => is_string($apiKey) && $apiKey !== '' ? $apiKey : $this->auth?->apiKey($model->provider, $options?->env),
             'reasoning' => $reasoning,
             'toolChoice' => $options?->toolChoice,
             'thinkingBudgets' => $options?->thinkingBudgets,
