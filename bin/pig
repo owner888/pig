@@ -957,8 +957,8 @@ $decideTrust = static function (array $loaded) use ($cwd, $askTrust, $settleTrus
     return $trusted;
 };
 
-// On first run on a fresh machine, ensure bundled extensions (pig-vless, etc.)
-// are populated into ~/.pig/agent/extensions so they are available out of the box.
+// On first run on a fresh machine, ensure bundled extensions are populated into
+// ~/.pig/agent/extensions so they are available out of the box.
 if (!isset($options['no-extensions']) && !is_dir(\Pig\CodingAgent\Config::home() . '/extensions')) {
     \Pig\CodingAgent\Cli\SelfUpdate::ensureBundledExtensions();
 }

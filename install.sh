@@ -72,7 +72,7 @@ pig_installer_main() {
     fi
   fi
 
-  # Sync bundled extensions (pig-vless, etc.) to user directory
+  # Sync bundled extensions to user directory
   if [ -n "$bin_dir" ] && [ -x "$bin_dir/$PIG_CMD" ]; then
     "$bin_dir/$PIG_CMD" update --extensions >/dev/null 2>&1 || true
   fi

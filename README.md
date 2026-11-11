@@ -17,7 +17,6 @@ A complete, high-performance PHP port of [pi](https://github.com/earendil-works/
   - **Persistent Web UI & PTY Workbench (`pig web start -d` / `/web`)**: Daemonized multi-tab browser interface with embedded xterm.js PTY terminal drawer, SSH node workbench, SFTP remote file explorer, and full-duplex WebSocket streaming.
   - **CLI & Automation**: Print mode (`-p`), JSON event streaming (`--mode json`), long-lived JSON-RPC socket mode (`--mode rpc`), and MCP server mode (`--mode mcp`) so another agent can call pig as a tool.
 - **Comprehensive Built-in Extensions**:
-  - `pig-vless`: A minimal VLESS inbound (TCP, optional TLS) so a phone can proxy through the machine pig runs on.
   - `pig-codemode`: Batch multi-tool execution inside an isolated PHP sandbox to minimize context window usage.
   - `pig-mcp`: Native Model Context Protocol (MCP) client supporting stdio and streamable HTTP servers with OAuth sign-in — pig's Client ID Metadata Document where the server takes one, dynamic registration elsewhere (`oauth.clientRegistration`, `oauth.clientName` in `mcp.json`).
 - **Resilient Network & Logging**: Workerman-inspired fault isolation boundaries, auto-retry on transient SSL/socket drops, and a unified 5-tier colored logger (`Pig\Logger`).
@@ -261,7 +260,7 @@ is running wait their turn rather than failing. Details: [Serve pig as an MCP Se
 
 ### 4. A VLESS Inbound for Your Phone (`pig-vless`)
 
-The built-in `pig-vless` extension opens a [VLESS](https://xtls.github.io/en/development/protocols/vless.html) inbound beside the agent, so a phone running Shadowrocket or v2rayNG can route through the machine pig is on. TCP only, one UUID, TLS when you give it a certificate — the smallest version a phone can use, not an Xray.
+The `pig-vless` package (`pig install git:github.com/owner888/pig-vless`) opens a [VLESS](https://xtls.github.io/en/development/protocols/vless.html) inbound beside the agent, so a phone running Shadowrocket, v2rayNG or sing-box can route through the machine pig is on. TCP or WebSocket (`vless.wsPath`), one UUID, TLS when you give it a certificate, and non-blocking DNS.
 
 ```text
 /vless start      # open the port (nothing listens until you ask)
@@ -270,7 +269,7 @@ The built-in `pig-vless` extension opens a [VLESS](https://xtls.github.io/en/dev
 /vless restart
 ```
 
-The first session writes `vless.listen` (`0.0.0.0:10086`) and a generated `vless.uuid` into `settings.json`; add `vless.cert` / `vless.key` (PEM) for TLS. Details: [Proxy a Phone Through pig](https://pigagent.dev/docs/latest/vless).
+The first session writes `vless.listen` (`0.0.0.0:10086`) and a generated `vless.uuid` into `settings.json`; add `vless.cert` / `vless.key` (PEM) for TLS, and `vless.wsPath` (e.g. `"/vless"`) for WebSocket. Details: [Proxy a Phone Through pig](https://pigagent.dev/docs/latest/vless).
 
 ---
 
@@ -285,7 +284,6 @@ All extensions in `pig` are **100% pure native PHP** with zero external npm or c
 | **`pig-tool-search`** · `builtin:tool-search` | `extensions/pig-tool-search/` | `tool_search`: BM25 over the tools an extension deferred (MCP's `deferred` exposure), loading the matches. |
 | **`pig-mcp`** · `builtin:mcp` | `extensions/pig-mcp/` | Model Context Protocol client for stdio & streamable HTTP servers with dynamic OAuth (`mcp.json`). |
 | **`pig-schedule`** · `builtin:schedule` | `extensions/pig-schedule/` | The `schedule` tool: scheduled tasks set up by asking, each change confirmed first, saved by the running `pig web`. pig's own. |
-| **`pig-vless`** | `extensions/pig-vless/` | A VLESS inbound beside the agent so a phone (Shadowrocket, v2rayNG) can go through this machine. TCP only, one UUID, TLS when a cert is given. Loading it writes a UUID and listen address into `settings.json`; nothing listens until `/vless start` (`stop`, `restart`, `status`), and `/vless` prints the `vless://` link. |
 
 The five marked `builtin:` are **built in**, as pi's are (`schedule` is pig's own): they load from pig itself on every run, after every other extension, and `pig update` does not copy them anywhere. `-builtin:mcp` (or `!builtin:*`) in the `extensions` setting turns one off, a project's `+`/`-` entry decides over yours, `pig config` lists them under *Built-in*, `-e builtin:<name>` loads one under `--no-extensions`, and `--no-mcp` leaves out `mcp`. `codemode`, `tool-search` and `mcp` step aside, with a warning, for another extension that registers one of their tools or commands. A leftover copy of one of them in `~/.pig/agent/extensions` is not loaded — pig says so; delete it.
 

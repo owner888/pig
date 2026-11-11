@@ -324,12 +324,12 @@ final class SelfUpdate
     }
 
     /**
-     * Ensure bundled extensions (pig-vless and the like) are populated
-     * in the user's home directory on initial install if missing.
+     * Ensure bundled extensions are populated in the user's home directory on initial install if
+     * missing.
      */
-    public static function ensureBundledExtensions(?string $home = null): int
+    public static function ensureBundledExtensions(?string $home = null, ?string $coreDir = null): int
     {
-        $coreDir = self::coreExtensionsDir();
+        $coreDir ??= self::coreExtensionsDir();
         $userDir = ($home ?? Config::home()) . '/extensions';
 
         if ($coreDir === null || !is_dir($coreDir)) {
@@ -437,6 +437,7 @@ final class SelfUpdate
         'pig-antigravity' => 'git:github.com/owner888/pig-antigravity',
         'pig-computer' => 'git:github.com/owner888/pig-computer',
         'pig-gemini-video' => 'git:github.com/owner888/pig-gemini-video',
+        'pig-vless' => 'git:github.com/owner888/pig-vless',
         'pig-web-search' => 'git:github.com/owner888/pig-web-search',
     ];
 

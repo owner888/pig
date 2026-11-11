@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [2.0.7] - 2026-11-11
+
+### Changed
+
+- `pig-vless` is no longer bundled with pig: it is the package `pig-vless` (MIT), installed with `pig install git:github.com/owner888/pig-vless` — same `/vless` command, `vless.*` settings (including `vless.wsPath` for WebSocket and non-blocking DNS) and `disabledExtensions: ["pig-vless"]`. `pig update` removes the old bundled copy and prints the install line.
+
 ## [2.0.6] - 2026-11-11
 
 ### Added

@@ -17,7 +17,6 @@
   - **持久化 Web UI 界面与 PTY 工作台（`pig web start -d` / `/web`）**：常驻后台守护进程，单物理长连接多 Tab 并行会话、内置 xterm.js 原生 PTY 终端抽屉、SSH 远程节点工作台与 SFTP 文件浏览器。
   - **CLI 命令行与自动化集成**：单次快速回答模式（`-p`）、JSON 事件行流式模式（`--mode json`）、长生命周期标准双向通信管道（`--mode rpc`）与 MCP server 模式（`--mode mcp`，让别的 agent 把 pig 当工具调用）。
 - **完善的纯 PHP 内置扩展生态**：
-  - `pig-vless`：最简 VLESS 入站（仅 TCP，可选 TLS），让手机（Shadowrocket、v2rayNG）通过跑 pig 的这台机器上网。
   - `pig-codemode`：PHP 原生沙盒批量执行代码模式（`open_basedir`、`disable_functions`），成倍降低长上下文消耗。
   - `pig-mcp`：原生 Model Context Protocol 客户端，支持标准 stdio 与可流式 HTTP MCP 服务，支持 OAuth 登录——服务端支持时用 pig 的 Client ID Metadata Document，否则动态注册客户端（`mcp.json` 里的 `oauth.clientRegistration`、`oauth.clientName`）。
 - **工业级故障隔离与日志**：借鉴 Workerman 设计的结构化边界故障隔离（Fault Isolation），底层 Socket/SSL 瞬态断连自动重试，以及统一的五级彩色日志工具（`Pig\Logger`）。
@@ -242,7 +241,7 @@ pig 会话里的一轮对话，背后是 pig 自己的工具、hooks 和扩展�
 
 ### 4. 给手机用的 VLESS 入站（`pig-vless`）
 
-内置扩展 `pig-vless` 在 agent 旁边开一个 [VLESS](https://xtls.github.io/development/protocols/vless.html) 入站，让跑 Shadowrocket 或 v2rayNG 的手机通过 pig 所在的这台机器上网。只做 TCP、单 UUID、给了证书才走 TLS——手机能用的最小版本，不是 Xray。
+`pig-vless` 包（`pig install git:github.com/owner888/pig-vless`）在 agent 旁边开一个 [VLESS](https://xtls.github.io/development/protocols/vless.html) 入站，让跑 Shadowrocket、v2rayNG 或 sing-box 的手机通过 pig 所在的这台机器上网。支持 TCP 或 WebSocket（`vless.wsPath`）、单 UUID、非阻塞 TLS 与异步 DNS。
 
 ```text
 /vless start      # 开端口（不开口不监听）
@@ -251,7 +250,7 @@ pig 会话里的一轮对话，背后是 pig 自己的工具、hooks 和扩展�
 /vless restart
 ```
 
-第一个会话会把 `vless.listen`（`0.0.0.0:10086`）和自动生成的 `vless.uuid` 写进 `settings.json`；要 TLS 加 `vless.cert` / `vless.key`（PEM）。详见[让手机通过 pig 上网](https://pigagent.dev/docs/latest/vless)。
+第一个会话会把 `vless.listen`（`0.0.0.0:10086`）和自动生成的 `vless.uuid` 写进 `settings.json`；要 TLS 加 `vless.cert` / `vless.key`（PEM），要 WebSocket 加 `vless.wsPath`（如 `"/vless"`）。详见[让手机通过 pig 上网](https://pigagent.dev/docs/latest/vless)。
 
 ---
 
@@ -266,7 +265,6 @@ pig 会话里的一轮对话，背后是 pig 自己的工具、hooks 和扩展�
 | **`pig-tool-search`** · `builtin:tool-search` | `extensions/pig-tool-search/` | `tool_search`：在扩展延后注册的工具（MCP 的 `deferred` 暴露方式）里做 BM25 检索，并加载命中的工具。 |
 | **`pig-mcp`** · `builtin:mcp` | `extensions/pig-mcp/` | Model Context Protocol 原生客户端，连接标准 stdio 与 HTTP MCP 服务，支持动态 OAuth 换票（`mcp.json`）。 |
 | **`pig-schedule`** · `builtin:schedule` | `extensions/pig-schedule/` | `schedule` 工具：聊天里直接设置定时任务，每次改动先确认，由运行中的 `pig web` 保存。pig 自有。 |
-| **`pig-vless`** | `extensions/pig-vless/` | 挂在 agent 旁边的 VLESS 入站，手机通过这台机器上网。仅 TCP、单 UUID，给了证书就走 TLS。加载时把 UUID 和监听地址写进 `settings.json`，但要 `/vless start` 才监听（`stop`、`restart`、`status`）；`/vless` 打印 `vless://` 链接。 |
 
 标了 `builtin:` 的五个是**内置扩展**，与 pi 一致（`schedule` 是 pig 自有的）：每次都从 pig 自身加载、排在所有扩展之后，`pig update` 不再把它们复制到任何地方。在 `extensions` 设置里写 `-builtin:mcp`（或 `!builtin:*`）关掉，项目里的 `+`/`-` 条目优先于你的，`pig config` 在 *Built-in* 分组列出它们，`-e builtin:<name>` 在 `--no-extensions` 下也能单独加载，`--no-mcp` 不加载 `mcp`。若另一个扩展注册了同名工具或命令，`codemode`、`tool-search`、`mcp` 会让位并给出警告。`~/.pig/agent/extensions` 里残留的旧副本不会加载，pig 会提示，删掉即可。
 
