@@ -799,6 +799,48 @@
     },
     {
         "type": "chat",
+        "id": "gemini-4-carbon",
+        "name": "Gemini 4 Carbon",
+        "api": "google-generative-ai",
+        "provider": "google",
+        "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": null,
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": null,
+            "max": null
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 2.0,
+            "output": 10.0,
+            "cacheRead": 0.1,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 1048576,
+        "maxTokens": 32768,
+        "inputLimits": {
+            "maxRequestBytes": 20971520,
+            "images": {
+                "maxPerRequest": 3600,
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
         "id": "gemini-flash-latest",
         "name": "Gemini Flash Latest",
         "api": "google-generative-ai",

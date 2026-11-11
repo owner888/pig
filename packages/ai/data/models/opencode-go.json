@@ -120,7 +120,7 @@
     {
         "type": "chat",
         "id": "deepseek-v4.1-flash",
-        "name": "DeepSeek V4.1 Flash",
+        "name": "DeepSeek V4.1 Flash 1017",
         "api": "openai-completions",
         "provider": "opencode-go",
         "baseUrl": "https://opencode.ai/inference/go/openai/v1",

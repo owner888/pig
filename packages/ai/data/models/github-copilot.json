@@ -93,6 +93,52 @@
     },
     {
         "type": "chat",
+        "id": "claude-fable-5.2",
+        "name": "Claude Fable 5.2",
+        "api": "anthropic-messages",
+        "provider": "github-copilot",
+        "baseUrl": "https://api.individual.githubcopilot.com",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": null,
+            "xhigh": "xhigh",
+            "max": "max"
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 8.0,
+            "output": 40.0,
+            "cacheRead": 0.2,
+            "cacheWrite": 10.0
+        },
+        "contextWindow": 1000000,
+        "maxTokens": 128000,
+        "compat": {
+            "forceAdaptiveThinking": true,
+            "supportsMidConvoSystemMessages": true
+        },
+        "headers": {
+            "User-Agent": "GitHubCopilotChat/0.35.0",
+            "Editor-Version": "vscode/1.107.0",
+            "Editor-Plugin-Version": "copilot-chat/0.35.0",
+            "Copilot-Integration-Id": "vscode-chat"
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
         "id": "claude-haiku-4.5",
         "name": "Claude Haiku 4.5 (latest)",
         "api": "anthropic-messages",
@@ -512,6 +558,49 @@
         "type": "chat",
         "id": "gemini-4-argon",
         "name": "Gemini 4 Argon",
+        "api": "openai-completions",
+        "provider": "github-copilot",
+        "baseUrl": "https://api.individual.githubcopilot.com",
+        "reasoning": true,
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 2.0,
+            "output": 10.0,
+            "cacheRead": 0.1,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 1048576,
+        "maxTokens": 65536,
+        "compat": {
+            "supportsStore": false,
+            "supportsDeveloperRole": false,
+            "supportsReasoningEffort": false,
+            "supportsStrictMode": true
+        },
+        "headers": {
+            "User-Agent": "GitHubCopilotChat/0.35.0",
+            "Editor-Version": "vscode/1.107.0",
+            "Editor-Plugin-Version": "copilot-chat/0.35.0",
+            "Copilot-Integration-Id": "vscode-chat"
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
+        "id": "gemini-4-carbon",
+        "name": "Gemini 4 Carbon",
         "api": "openai-completions",
         "provider": "github-copilot",
         "baseUrl": "https://api.individual.githubcopilot.com",

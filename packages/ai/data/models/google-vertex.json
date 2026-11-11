@@ -531,5 +531,45 @@
                 }
             }
         }
+    },
+    {
+        "type": "chat",
+        "id": "gemini-4-carbon",
+        "name": "Gemini 4 Carbon",
+        "api": "google-vertex",
+        "provider": "google-vertex",
+        "baseUrl": "https://{location}-aiplatform.googleapis.com",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": null,
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": null,
+            "max": null
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 2.0,
+            "output": 10.0,
+            "cacheRead": 0.1,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 1048576,
+        "maxTokens": 65536,
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
     }
 ]

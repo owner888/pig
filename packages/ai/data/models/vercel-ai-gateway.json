@@ -392,6 +392,40 @@
     },
     {
         "type": "chat",
+        "id": "alibaba/qwen3.6-35b-a3b",
+        "name": "Qwen 3.6 35B A3B",
+        "api": "anthropic-messages",
+        "provider": "vercel-ai-gateway",
+        "baseUrl": "https://ai-gateway.vercel.sh",
+        "reasoning": true,
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 0.375,
+            "output": 2.25,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 262144,
+        "maxTokens": 65536,
+        "compat": {
+            "allowEmptySignature": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
         "id": "alibaba/qwen3.6-plus",
         "name": "Qwen 3.6 Plus",
         "api": "anthropic-messages",
@@ -597,7 +631,7 @@
         ],
         "cost": {
             "input": 0.06,
-            "output": 2.3,
+            "output": 2.2,
             "cacheRead": 0.059,
             "cacheWrite": 0.0
         },
@@ -2264,92 +2298,6 @@
     },
     {
         "type": "chat",
-        "id": "bytedance/seed-1.6",
-        "name": "Seed 1.6",
-        "api": "anthropic-messages",
-        "provider": "vercel-ai-gateway",
-        "baseUrl": "https://ai-gateway.vercel.sh",
-        "reasoning": true,
-        "input": [
-            "text",
-            "image"
-        ],
-        "cost": {
-            "input": 0.25,
-            "output": 2.0,
-            "cacheRead": 0.05,
-            "cacheWrite": 0.0,
-            "tiers": [
-                {
-                    "inputTokensAbove": 128000,
-                    "input": 0.5,
-                    "output": 4.0,
-                    "cacheRead": 0.05,
-                    "cacheWrite": 0.0
-                }
-            ]
-        },
-        "contextWindow": 256000,
-        "maxTokens": 32000,
-        "compat": {
-            "allowEmptySignature": true
-        },
-        "inputLimits": {
-            "images": {
-                "resize": {
-                    "maxWidth": 2000,
-                    "maxHeight": 2000,
-                    "maxBytes": 4718592,
-                    "jpegQuality": 80
-                }
-            }
-        }
-    },
-    {
-        "type": "chat",
-        "id": "bytedance/seed-1.8",
-        "name": "Bytedance Seed 1.8",
-        "api": "anthropic-messages",
-        "provider": "vercel-ai-gateway",
-        "baseUrl": "https://ai-gateway.vercel.sh",
-        "reasoning": true,
-        "input": [
-            "text",
-            "image"
-        ],
-        "cost": {
-            "input": 0.25,
-            "output": 2.0,
-            "cacheRead": 0.05,
-            "cacheWrite": 0.0,
-            "tiers": [
-                {
-                    "inputTokensAbove": 128000,
-                    "input": 0.5,
-                    "output": 4.0,
-                    "cacheRead": 0.05,
-                    "cacheWrite": 0.0
-                }
-            ]
-        },
-        "contextWindow": 256000,
-        "maxTokens": 64000,
-        "compat": {
-            "allowEmptySignature": true
-        },
-        "inputLimits": {
-            "images": {
-                "resize": {
-                    "maxWidth": 2000,
-                    "maxHeight": 2000,
-                    "maxBytes": 4718592,
-                    "jpegQuality": 80
-                }
-            }
-        }
-    },
-    {
-        "type": "chat",
         "id": "bytedance/seed-2.1-turbo",
         "name": "Seed 2.1 Turbo",
         "api": "anthropic-messages",
@@ -3565,6 +3513,40 @@
         "type": "chat",
         "id": "google/gemini-4-argon",
         "name": "Gemini 4 Argon",
+        "api": "anthropic-messages",
+        "provider": "vercel-ai-gateway",
+        "baseUrl": "https://ai-gateway.vercel.sh",
+        "reasoning": true,
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 2.0,
+            "output": 10.0,
+            "cacheRead": 0.1,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 1000000,
+        "maxTokens": 1000000,
+        "compat": {
+            "allowEmptySignature": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
+        "id": "google/gemini-4-carbon",
+        "name": "Gemini 4 Carbon",
         "api": "anthropic-messages",
         "provider": "vercel-ai-gateway",
         "baseUrl": "https://ai-gateway.vercel.sh",
@@ -10544,6 +10526,24 @@
             "cacheWrite": 0.0
         },
         "contextWindow": 8192
+    },
+    {
+        "type": "classifier",
+        "id": "google/gemini-decision-1",
+        "name": "Gemini Decision 1",
+        "api": "typesafe-system-one",
+        "provider": "vercel-ai-gateway",
+        "baseUrl": "https://ai-gateway.vercel.sh/typesafe/v1",
+        "input": [
+            "text"
+        ],
+        "cost": {
+            "input": 0.1,
+            "output": 0.0,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 262144
     },
     {
         "type": "classifier",
