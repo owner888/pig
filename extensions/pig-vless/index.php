@@ -24,8 +24,9 @@ require_once __DIR__ . '/VlessServer.php';
  *     "vless": {
  *       "listen": "0.0.0.0:10086",      // written on first load
  *       "uuid":   "…",                   // likewise
- *       "cert":   "/path/fullchain.pem", // optional; both set → TLS, else plain TCP
- *       "key":    "/path/privkey.pem"
+ *       "cert":   "/path/fullchain.pem", // optional; both set → TLS, else plain
+ *       "key":    "/path/privkey.pem",
+ *       "wsPath": "/vless"               // optional; when set → WebSocket, else raw TCP
  *     }
  *
  * See `VlessServer` for what the protocol is and what is left out (UDP, MUX, everything Xray
@@ -62,6 +63,8 @@ return function (ExtensionApi $pig): void {
 
         [$host, $port] = str_contains($listen, ':') ? explode(':', $listen, 2) : [$listen, '10086'];
 
+        $wsPath = $config['wsPath'] ?? $config['path'] ?? null;
+
         try {
             $server = new VlessServer(
                 $host,
@@ -69,6 +72,7 @@ return function (ExtensionApi $pig): void {
                 $uuid,
                 is_string($config['cert'] ?? null) ? $config['cert'] : null,
                 is_string($config['key'] ?? null) ? $config['key'] : null,
+                is_string($wsPath) ? $wsPath : null,
             );
             $problem = null;
         } catch (Throwable $e) {
@@ -128,9 +132,11 @@ return function (ExtensionApi $pig): void {
                 }
             }
 
+            $mode = ($server->isWs() ? "WS {$server->wsPath}" : 'TCP') . ($server->isTls() ? ' + TLS' : '');
+
             if ($action === 'start' || $action === 'restart') {
                 if ($running) {
-                    $say("VLESS is already listening on {$server->host}:{$server->port}.");
+                    $say("VLESS is already listening on {$server->host}:{$server->port} ({$mode}).");
 
                     return;
                 }
@@ -138,7 +144,7 @@ return function (ExtensionApi $pig): void {
                 try {
                     $server->start();
                     $running = true;
-                    Logger::info("[vless] listening on {$server->host}:{$server->port}" . ($server->isTls() ? ' (tls)' : ''));
+                    Logger::info("[vless] listening on {$server->host}:{$server->port} ({$mode})");
                 } catch (Throwable $e) {
                     $say("VLESS could not start: {$e->getMessage()}", 'warning');
 
@@ -149,8 +155,8 @@ return function (ExtensionApi $pig): void {
             $where = $server->host === '0.0.0.0' || $server->host === '::' ? '<this machine\'s address>' : $server->host;
             $say(
                 ($running
-                    ? "VLESS listening on {$server->host}:{$server->port}" . ($server->isTls() ? ' with TLS' : ' in plain TCP') . ", {$server->connections()} socket(s) open."
-                    : "VLESS is not listening (configured for {$server->host}:{$server->port}" . ($server->isTls() ? ', TLS' : ', plain TCP') . '). `/vless start` opens it.')
+                    ? "VLESS listening on {$server->host}:{$server->port} ({$mode}), {$server->connections()} socket(s) open."
+                    : "VLESS is not listening (configured for {$server->host}:{$server->port}, {$mode}). `/vless start` opens it.")
                 . "\nLink for the phone: " . $server->shareLink($where),
                 $running ? 'info' : 'warning',
             );

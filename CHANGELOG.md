@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [2.0.6] - 2026-11-11
+
+### Added
+
+- `pig-vless` supports VLESS over WebSocket (`vless.wsPath`, `type=ws&path=…`, RFC 6455 binary frames and `Sec-WebSocket-Protocol` 0-RTT early data) alongside TCP and TLS, and resolves target domain names off the event loop through `Pig\Async\Dns`.
+
 ## [2.0.5] - 2026-11-11
 
 ### New Features

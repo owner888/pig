@@ -147,6 +147,55 @@ final class VlessServerTest extends TestCase
         $this->assertSame('vless://' . self::UUID . "@192.168.1.2:{$this->server->port}?encryption=none&security=none&type=tcp#home%20mac", $link);
     }
 
+    public function testAWebSocketRequestUpgradesAndRelaysBinaryFrames(): void
+    {
+        $wsServer = new VlessServer('127.0.0.1', self::freePort(), self::UUID, wsPath: 'vless');
+        $wsServer->start();
+
+        try {
+            $this->assertSame('/vless', $wsServer->wsPath);
+            $this->assertSame(
+                'vless://' . self::UUID . "@example.com:{$wsServer->port}?encryption=none&security=none&type=ws&path=%2Fvless#ws",
+                $wsServer->shareLink('example.com', 'ws'),
+            );
+
+            $frame = self::maskedBinaryFrame(self::header(self::UUID, VlessServer::CMD_TCP, '127.0.0.1', $this->echoPort) . 'ws-hello');
+            $reply = $this->throughWs($wsServer->port, '/vless', $frame);
+
+            $this->assertSame("\x00\x00WS-HELLO", $reply);
+        } finally {
+            $wsServer->stop();
+        }
+    }
+
+    public function testWebSocketEarlyDataInSecWebSocketProtocolIsRelayed(): void
+    {
+        $wsServer = new VlessServer('127.0.0.1', self::freePort(), self::UUID, wsPath: '/vless');
+        $wsServer->start();
+
+        try {
+            $early = rtrim(strtr(base64_encode(self::header(self::UUID, VlessServer::CMD_TCP, '127.0.0.1', $this->echoPort) . 'early'), '+/', '-_'), '=');
+            $reply = $this->throughWs($wsServer->port, '/vless', '', earlyProtocol: $early);
+
+            $this->assertSame("\x00\x00EARLY", $reply);
+        } finally {
+            $wsServer->stop();
+        }
+    }
+
+    public function testWebSocketRefusesTheWrongPath(): void
+    {
+        $wsServer = new VlessServer('127.0.0.1', self::freePort(), self::UUID, wsPath: '/vless');
+        $wsServer->start();
+
+        try {
+            $frame = self::maskedBinaryFrame(self::header(self::UUID, VlessServer::CMD_TCP, '127.0.0.1', $this->echoPort) . 'nope');
+            $this->assertSame('', $this->throughWs($wsServer->port, '/wrong', $frame));
+        } finally {
+            $wsServer->stop();
+        }
+    }
+
     // ---- the phone -------------------------------------------------------------------------
 
     /** Writes, waits a moment for the relay to settle, and returns everything read back. */
@@ -197,6 +246,75 @@ final class VlessServerTest extends TestCase
         };
 
         return "\x00" . hex2bin(str_replace('-', '', $uuid)) . "\x00" . chr($command) . pack('n', $port) . $address;
+    }
+
+    /** Build a client-to-server masked binary WebSocket frame (RFC 6455). */
+    private static function maskedBinaryFrame(string $payload): string
+    {
+        $mask = "\x12\x34\x56\x78";
+        $len = strlen($payload);
+        $masked = $payload ^ substr(str_repeat($mask, intdiv($len, 4) + 1), 0, $len);
+
+        return "\x82" . chr(0x80 | $len) . $mask . $masked;
+    }
+
+    /** Upgrade to WebSocket on `$path`, send `$frames`, and unframe the binary responses. */
+    private function throughWs(int $port, string $path, string $frames, ?string $earlyProtocol = null): string
+    {
+        return Async::run(function () use ($port, $path, $frames, $earlyProtocol): string {
+            $socket = Socket::connect('127.0.0.1', $port, timeout: 2.0);
+            $request = "GET {$path} HTTP/1.1\r\n"
+                . "Host: 127.0.0.1:{$port}\r\n"
+                . "Upgrade: websocket\r\n"
+                . "Connection: Upgrade\r\n"
+                . "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+                . ($earlyProtocol !== null ? "Sec-WebSocket-Protocol: {$earlyProtocol}\r\n" : '')
+                . "\r\n";
+
+            $socket->write($request . $frames, 2.0);
+
+            $raw = '';
+            $deadline = microtime(true) + 1.0;
+
+            while (microtime(true) < $deadline) {
+                try {
+                    $chunk = $socket->read(65536, 0.1);
+                } catch (\Throwable) {
+                    break;
+                }
+
+                if ($chunk === null) {
+                    break;
+                }
+
+                $raw .= $chunk;
+                $headEnd = strpos($raw, "\r\n\r\n");
+
+                if ($headEnd !== false && strlen($raw) > $headEnd + 4 + 4) {
+                    break;
+                }
+            }
+
+            $socket->close();
+            $headEnd = strpos($raw, "\r\n\r\n");
+
+            if ($headEnd === false || !str_starts_with($raw, 'HTTP/1.1 101')) {
+                return '';
+            }
+
+            $rest = substr($raw, $headEnd + 4);
+            $unframed = '';
+
+            while (strlen($rest) >= 2) {
+                $opcode = ord($rest[0]) & 0x0F;
+                $this->assertSame(0x02, $opcode, 'VLESS over WebSocket uses binary frames');
+                $len = ord($rest[1]) & 0x7F;
+                $unframed .= substr($rest, 2, $len);
+                $rest = substr($rest, 2 + $len);
+            }
+
+            return $unframed;
+        });
     }
 
     private static function freePort(): int

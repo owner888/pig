@@ -4,14 +4,18 @@ declare(strict_types=1);
 
 namespace PigVless;
 
+use Pig\Async\Async;
+use Pig\Async\Dns;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Logger;
 use Pig\CodingAgent\Web\Connection;
+use Pig\CodingAgent\Web\Protocols\Http;
 use Pig\CodingAgent\Web\Protocols\ProtocolInterface;
+use Pig\CodingAgent\Web\Protocols\Websocket;
 use Pig\CodingAgent\Web\TcpConnection;
 
 /**
- * A VLESS inbound, the smallest one that a phone can use: TCP only, one UUID, TLS if a
+ * A VLESS inbound, the smallest one that a phone can use: TCP or WebSocket, one UUID, TLS if a
  * certificate is configured and plain if not.
  *
  * VLESS is the thinnest of the V2Ray protocols — a header and then bytes:
@@ -25,15 +29,11 @@ use Pig\CodingAgent\Web\TcpConnection;
  * per-packet framing on both ends, and MUX a whole multiplexer, and neither is "a phone
  * through the Mac". Shadowrocket falls back to direct for UDP when the proxy declines it.
  *
- * The relay is two `TcpConnection`s over a `Raw` protocol — the Web UI's buffered,
- * backpressured socket, with the framing taken out — one for the phone, one for where it
- * asked to go, each writing what the other reads. An outbound connect is asynchronous
- * (`STREAM_CLIENT_ASYNC_CONNECT`, then one writable wakeup); the name lookup inside it is
- * not, which is the one blocking call here and the price of the simplest version.
- *
- * Not a general proxy server. No REALITY, no Vision, no XHTTP, no UDP, no flow control
- * beyond the two send buffers — Xray and sing-box exist for that, and this is for the case
- * where running one of them is more than the job needs.
+ * The relay is two `TcpConnection`s — over `Raw` for plain TCP/TLS, or `WsBinary` (RFC 6455
+ * binary frames after an HTTP upgrade on `$wsPath`, with `Sec-WebSocket-Protocol` 0-RTT early
+ * data) for WebSocket — one for the phone, one for where it asked to go, each writing what the
+ * other reads. Domain names are resolved off the loop through `Pig\Async\Dns`, and the outbound
+ * connect is asynchronous (`STREAM_CLIENT_ASYNC_CONNECT`, then one writable wakeup).
  */
 final class VlessServer
 {
@@ -59,9 +59,13 @@ final class VlessServer
     /** @var string the uuid as its 16 bytes */
     private readonly string $uuid;
 
+    /** WebSocket upgrade path (e.g. `/vless`), or null for raw TCP. */
+    public readonly ?string $wsPath;
+
     /**
-     * @param string      $uuid as written, with or without dashes
-     * @param string|null $cert PEM path; with `$key` turns the listener into TLS
+     * @param string      $uuid   as written, with or without dashes
+     * @param string|null $cert   PEM path; with `$key` turns the listener into TLS
+     * @param string|null $wsPath when set, expects a WebSocket upgrade at this path (`type=ws`)
      */
     public function __construct(
         public readonly string $host,
@@ -69,6 +73,7 @@ final class VlessServer
         string $uuid,
         public readonly ?string $cert = null,
         public readonly ?string $key = null,
+        ?string $wsPath = null,
     ) {
         $hex = str_replace('-', '', $uuid);
 
@@ -77,11 +82,18 @@ final class VlessServer
         }
 
         $this->uuid = hex2bin($hex);
+        $trimmedPath = $wsPath !== null ? trim($wsPath) : '';
+        $this->wsPath = $trimmedPath !== '' ? '/' . ltrim($trimmedPath, '/') : null;
     }
 
     public function isTls(): bool
     {
         return $this->cert !== null && $this->key !== null;
+    }
+
+    public function isWs(): bool
+    {
+        return $this->wsPath !== null;
     }
 
     /** @throws \RuntimeException when the port cannot be bound or the certificate cannot be read */
@@ -223,13 +235,37 @@ final class VlessServer
     {
         $id = ++$this->nextId;
         $head = '';
+        $earlyPayload = '';
+        $connecting = false;
         $far = null;
 
         $phone = new Connection(
             $client,
-            onMessage: function (Connection $phone, mixed $chunk) use (&$head, &$far, $id): void {
+            onMessage: function (Connection $phone, mixed $chunk) use (&$head, &$earlyPayload, &$connecting, &$far): void {
+                if (is_array($chunk)) {
+                    $early = WsBinary::handshake($chunk, $phone, $this->wsPath);
+                    if ($early === false) {
+                        $phone->close();
+
+                        return;
+                    }
+                    if ($early === '') {
+                        return;
+                    }
+                    $chunk = $early;
+                }
+
                 if ($far !== null) {
                     $far->sendRaw((string) $chunk);
+
+                    return;
+                }
+
+                if ($connecting) {
+                    $earlyPayload .= (string) $chunk;
+                    if (strlen($earlyPayload) > TcpConnection::MAX_SEND_BUFFER) {
+                        $phone->close();
+                    }
 
                     return;
                 }
@@ -260,8 +296,42 @@ final class VlessServer
                     return;
                 }
 
-                $far = $this->connect($phone, $request['host'], $request['port'], $request['payload']);
                 $head = '';
+                $host = $request['host'];
+                $port = $request['port'];
+                $earlyPayload = $request['payload'];
+
+                if (self::needsDns($host)) {
+                    $connecting = true;
+                    Async::spawn(function () use ($phone, $host, $port, &$earlyPayload, &$connecting, &$far): void {
+                        try {
+                            $resolved = Dns::resolve($host, 10.0);
+                        } catch (\Throwable) {
+                            $phone->close();
+
+                            return;
+                        }
+
+                        if ($phone->isClosed()) {
+                            return;
+                        }
+
+                        $payload = $earlyPayload;
+                        $earlyPayload = '';
+                        $connecting = false;
+                        $far = $this->connect($phone, $resolved, $port, $payload);
+
+                        if ($far === null) {
+                            $phone->close();
+                        }
+                    });
+
+                    return;
+                }
+
+                $payload = $earlyPayload;
+                $earlyPayload = '';
+                $far = $this->connect($phone, $host, $port, $payload);
 
                 if ($far === null) {
                     $phone->close();
@@ -271,11 +341,17 @@ final class VlessServer
                 unset($this->connections[$id]);
                 $far?->close();
             },
-            protocol: Raw::class,
+            protocol: $this->isWs() ? Http::class : Raw::class,
         );
 
         $this->connections[$id] = $phone;
         $phone->setReadableWatcher(Loop::get()->onReadable($client, static fn () => $phone->onReadable()));
+    }
+
+    private static function needsDns(string $host): bool
+    {
+        return strcasecmp($host, 'localhost') !== 0
+            && filter_var(trim($host, '[]'), FILTER_VALIDATE_IP) === false;
     }
 
     /**
@@ -310,7 +386,7 @@ final class VlessServer
         $far = new Connection(
             $socket,
             onMessage: static function (Connection $far, mixed $chunk) use ($phone): void {
-                $phone->sendRaw((string) $chunk);
+                $phone->send((string) $chunk);
             },
             onClose: function () use ($phone, $id): void {
                 unset($this->connections[$id]);
@@ -334,7 +410,7 @@ final class VlessServer
             }
 
             $far->setReadableWatcher(Loop::get()->onReadable($socket, static fn () => $far->onReadable()));
-            $phone->sendRaw("\x00\x00"); // the response header: version 0, no addons
+            $phone->send("\x00\x00"); // the response header: version 0, no addons
 
             if ($payload !== '') {
                 $far->sendRaw($payload);
@@ -430,8 +506,11 @@ final class VlessServer
         $uuid = bin2hex($this->uuid);
         $uuid = substr($uuid, 0, 8) . '-' . substr($uuid, 8, 4) . '-' . substr($uuid, 12, 4) . '-' . substr($uuid, 16, 4) . '-' . substr($uuid, 20);
         $security = $this->isTls() ? 'tls' : 'none';
+        $transport = $this->wsPath !== null
+            ? 'type=ws&path=' . rawurlencode($this->wsPath)
+            : 'type=tcp';
 
-        return "vless://{$uuid}@{$host}:{$this->port}?encryption=none&security={$security}&type=tcp#" . rawurlencode($name);
+        return "vless://{$uuid}@{$host}:{$this->port}?encryption=none&security={$security}&{$transport}#" . rawurlencode($name);
     }
 }
 
@@ -451,5 +530,72 @@ final class Raw implements ProtocolInterface
     public static function encode(mixed $data, TcpConnection $connection): string
     {
         return (string) $data;
+    }
+}
+
+/**
+ * VLESS over WebSocket: RFC 6455 binary frames (`OPCODE_BINARY`), with Xray/v2ray 0-RTT early
+ * data accepted from `Sec-WebSocket-Protocol`.
+ */
+final class WsBinary implements ProtocolInterface
+{
+    private const string GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
+
+    /**
+     * Upgrade an HTTP request on `$expectedPath` to binary WebSocket frames.
+     *
+     * @param array{path?: string, headers?: array<string, string>} $request
+     * @return string|false early-data bytes from `Sec-WebSocket-Protocol` (empty when none), or false on refusal
+     */
+    public static function handshake(array $request, TcpConnection $connection, ?string $expectedPath = null): string|false
+    {
+        if ($expectedPath !== null && ($request['path'] ?? '') !== $expectedPath) {
+            return false;
+        }
+
+        $headers = $request['headers'] ?? [];
+        $upgrade = strtolower($headers['upgrade'] ?? '');
+        $connectionHeader = strtolower($headers['connection'] ?? '');
+        $key = $headers['sec-websocket-key'] ?? null;
+
+        if ($upgrade !== 'websocket' || !str_contains($connectionHeader, 'upgrade') || $key === null) {
+            return false;
+        }
+
+        $earlyData = '';
+        $protocol = trim($headers['sec-websocket-protocol'] ?? '');
+        if ($protocol !== '') {
+            $decoded = base64_decode(strtr($protocol, '-_', '+/'), true);
+            if ($decoded === false) {
+                return false;
+            }
+            $earlyData = $decoded;
+        }
+
+        $accept = base64_encode(sha1($key . self::GUID, true));
+        $connection->sendRaw(
+            "HTTP/1.1 101 Switching Protocols\r\n"
+            . "Upgrade: websocket\r\n"
+            . "Connection: Upgrade\r\n"
+            . "Sec-WebSocket-Accept: {$accept}\r\n\r\n",
+        );
+        $connection->setProtocol(self::class);
+
+        return $earlyData;
+    }
+
+    public static function input(string $buffer, TcpConnection $connection): int|false
+    {
+        return Websocket::input($buffer, $connection);
+    }
+
+    public static function decode(string $buffer, TcpConnection $connection): ?string
+    {
+        return Websocket::decode($buffer, $connection);
+    }
+
+    public static function encode(mixed $data, TcpConnection $connection): string
+    {
+        return Websocket::createFrame((string) $data, Websocket::OPCODE_BINARY);
     }
 }
