@@ -201,6 +201,78 @@ final class LoopTest extends TestCase
         $this->assertTrue(is_resource($peer));
     }
 
+    public function testCancellingAWatcherAfterItsStreamWasClosedIsSafe(): void
+    {
+        $loop = Loop::get();
+        [$stream, $peer] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, 0);
+        $watcher = $loop->onReadable($stream, function (): void {
+        });
+
+        fclose($stream);
+        $loop->cancel($watcher);
+        $loop->tick();
+
+        $this->assertTrue($loop->isIdle());
+        fclose($peer);
+    }
+
+    public function testAnEmptyRegularFileIsReportedReadableAtEof(): void
+    {
+        $loop = Loop::get();
+        $file = tmpfile();
+        $this->assertIsResource($file);
+        $fired = false;
+
+        $id = $loop->onReadable($file, static function () use ($loop, &$id, &$fired): void {
+            $fired = true;
+            $loop->cancel($id);
+        });
+        $guard = $loop->delay(0.5, static fn () => $loop->stop());
+
+        try {
+            $loop->run();
+        } finally {
+            $loop->cancel($guard);
+            fclose($file);
+        }
+
+        $this->assertTrue($fired);
+    }
+
+    public function testAnUnpollableDeviceStreamIsReadableAndDoesNotSpinOnceCancelled(): void
+    {
+        if (PHP_OS_FAMILY === 'Windows') {
+            self::markTestSkipped('Skip on Windows');
+        }
+
+        $loop = Loop::get();
+        $device = fopen(PHP_OS_FAMILY === 'Linux' ? '/dev/urandom' : '/dev/null', 'r');
+        $this->assertIsResource($device);
+        $fired = false;
+
+        $before = getrusage();
+
+        try {
+            $id = $loop->onReadable($device, static function () use ($loop, &$id, &$fired): void {
+                $fired = true;
+                $loop->cancel($id);
+            });
+            $loop->delay(0.15, static function () use ($loop, $id): void {
+                $loop->cancel($id);
+            });
+            $loop->run();
+        } finally {
+            fclose($device);
+        }
+
+        $after = getrusage();
+        $cpu = ($after['ru_utime.tv_sec'] - $before['ru_utime.tv_sec']) * 1_000_000
+            + ($after['ru_utime.tv_usec'] - $before['ru_utime.tv_usec']);
+
+        $this->assertTrue($fired);
+        $this->assertLessThan(50_000, $cpu);
+    }
+
     public function testWithNoHandlerAThrowStillEscapesTheLoop(): void
     {
         // The default, and every test in this suite was written against it: a library that

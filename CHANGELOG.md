@@ -43,7 +43,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
-## Unreleased
+## [2.0.5] - 2026-11-11
 
 ### New Features
 
@@ -53,6 +53,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 - `/unshare` deletes one of this machine's shares from pigagent.dev before it expires. Shares are listed in `shares.json` in the agent directory, with the token that deletes them (mode `0600`).
 - `PIG_SHARE_SERVER` points `/share` at another server with pigagent.dev's share API.
+- `Pig\Async\Loop` uses PHP 8.6's native `Io\Poll\Context` (`epoll` on Linux, `kqueue` on macOS and BSD) when running on PHP 8.6+, removing the `FD_SETSIZE` descriptor cap and the $O(n)$ per-tick scan of `stream_select()` while keeping `stream_select()` on PHP 8.3–8.5 and Windows.
 
 ### Changed
 

@@ -29,6 +29,30 @@ final class Loop
     /** @var array<string, array{stream: resource, callback: Closure}> */
     private array $writers = [];
 
+    /**
+     * Native `Io\Poll\Context` on PHP 8.6+ (epoll on Linux, kqueue on macOS/BSD), null below 8.6
+     * or on Windows where `WSAPoll` cannot poll pipes (`stream_select()` is used instead).
+     */
+    private ?object $pollContext = null;
+
+    /** @var array<int, object> stream resource id => `Io\Poll\Watcher` */
+    private array $pollWatchers = [];
+
+    /**
+     * Streams that `epoll`/`kqueue` refuse (`/dev/null`, `/dev/urandom`, regular files on Linux)
+     * or that `kqueue` stops reporting at EOF (regular files on macOS/BSD): they never block and
+     * are reported ready on every tick, matching `stream_select()`.
+     *
+     * @var array<int, true>
+     */
+    private array $alwaysReady = [];
+
+    /** @var array<int, array<string, string>> stream resource id => reader watcher ids */
+    private array $streamReaders = [];
+
+    /** @var array<int, array<string, string>> stream resource id => writer watcher ids */
+    private array $streamWriters = [];
+
     /** @var array<string, array{at: float, callback: Closure}> */
     private array $timers = [];
 
@@ -96,6 +120,10 @@ final class Loop
     public function __construct()
     {
         $this->suspendedAt = new \WeakMap();
+
+        if (\PHP_VERSION_ID >= 80600 && \PHP_OS_FAMILY !== 'Windows' && class_exists(\Io\Poll\Context::class)) {
+            $this->pollContext = new \Io\Poll\Context();
+        }
     }
 
     public static function get(): self
@@ -127,6 +155,12 @@ final class Loop
         $id = 'r' . $this->nextId++;
         $this->readers[$id] = ['stream' => $stream, 'callback' => $callback];
 
+        if ($this->pollContext !== null && is_resource($stream)) {
+            $streamId = (int) $stream;
+            $this->streamReaders[$streamId][$id] = $id;
+            $this->syncPoll($streamId, $stream);
+        }
+
         return $id;
     }
 
@@ -144,13 +178,34 @@ final class Loop
         $id = 'w' . $this->nextId++;
         $this->writers[$id] = ['stream' => $stream, 'callback' => $callback];
 
+        if ($this->pollContext !== null && is_resource($stream)) {
+            $streamId = (int) $stream;
+            $this->streamWriters[$streamId][$id] = $id;
+            $this->syncPoll($streamId, $stream);
+        }
+
         return $id;
     }
 
     /** Disarm a reader, a writer, a timer or a sleep callback. Unknown ids are a no-op. */
     public function cancel(string $id): void
     {
+        $reader = $this->readers[$id] ?? null;
+        $writer = $this->writers[$id] ?? null;
         unset($this->readers[$id], $this->writers[$id], $this->timers[$id], $this->sleepers[$id]);
+
+        if ($this->pollContext !== null && ($reader !== null || $writer !== null)) {
+            $stream = ($reader ?? $writer)['stream'];
+            $streamId = (int) $stream;
+            unset($this->streamReaders[$streamId][$id], $this->streamWriters[$streamId][$id]);
+            if (($this->streamReaders[$streamId] ?? []) === []) {
+                unset($this->streamReaders[$streamId]);
+            }
+            if (($this->streamWriters[$streamId] ?? []) === []) {
+                unset($this->streamWriters[$streamId]);
+            }
+            $this->syncPoll($streamId, $stream);
+        }
     }
 
     /**
@@ -580,6 +635,33 @@ final class Loop
             $write[$id] = $watcher['stream'];
         }
 
+        [$readIds, $writeIds] = $this->pollContext !== null
+            ? $this->waitPoll($timeout)
+            : $this->waitSelect($read, $write, $timeout);
+
+        foreach ($readIds as $id) {
+            // A callback may have cancelled a later watcher in this same batch.
+            if (isset($this->readers[$id])) {
+                $this->safely($this->readers[$id]['callback'], $this->readers[$id]['stream']);
+            }
+        }
+
+        foreach ($writeIds as $id) {
+            if (isset($this->writers[$id])) {
+                $this->safely($this->writers[$id]['callback'], $this->writers[$id]['stream']);
+            }
+        }
+    }
+
+    /**
+     * Wait for readiness with `stream_select()` (PHP 8.3–8.5, and Windows).
+     *
+     * @param array<string, resource> $read
+     * @param array<string, resource> $write
+     * @return array{0: list<string>, 1: list<string>}
+     */
+    private function waitSelect(array $read, array $write, ?float $timeout): array
+    {
         $except = null;
         $seconds = $timeout === null ? null : (int) $timeout;
         $microseconds = $timeout === null ? 0 : (int) round(($timeout - (int) $timeout) * 1_000_000);
@@ -610,28 +692,156 @@ final class Loop
             // already run; this is not a failure, and the next tick re-arms the watchers.
             // Matched on the errno rather than the text, which is locale-dependent.
             if (str_contains($message, 'Unable to select [4]')) {
-                return;
+                return [[], []];
             }
 
             throw new AsyncError("stream_select() failed: {$message}");
         }
 
         if ($ready === 0) {
+            return [[], []];
+        }
+
+        return [array_keys($read), array_keys($write)];
+    }
+
+    /**
+     * Keep `$stream`'s `Io\Poll\Watcher` in line with `$this->streamReaders` and `$this->streamWriters`.
+     */
+    private function syncPoll(int $streamId, mixed $stream): void
+    {
+        if ($this->pollContext === null) {
             return;
         }
 
-        foreach (array_keys($read) as $id) {
-            // A callback may have cancelled a later watcher in this same batch.
-            if (isset($this->readers[$id])) {
-                $this->safely($this->readers[$id]['callback'], $this->readers[$id]['stream']);
+        $events = [];
+        if (($this->streamReaders[$streamId] ?? []) !== []) {
+            $events[] = \Io\Poll\Event::Read;
+        }
+        if (($this->streamWriters[$streamId] ?? []) !== []) {
+            $events[] = \Io\Poll\Event::Write;
+        }
+
+        $watcher = $this->pollWatchers[$streamId] ?? null;
+
+        if ($events === [] || !is_resource($stream)) {
+            unset($this->alwaysReady[$streamId]);
+
+            if ($watcher !== null) {
+                unset($this->pollWatchers[$streamId]);
+
+                // Removing the watcher of a closed stream crashes 8.6 builds before php/php-src#23791.
+                if (is_resource($stream)) {
+                    $watcher->remove();
+                }
+            }
+
+            return;
+        }
+
+        if (isset($this->alwaysReady[$streamId])) {
+            return;
+        }
+
+        if ($watcher !== null) {
+            $watcher->modifyEvents($events);
+
+            return;
+        }
+
+        // kqueue accepts regular files, but stops reporting them readable at EOF, so a reader
+        // would never see the end (e.g. STDIN redirected from a file). On macOS and BSD, PHP only
+        // sets seekable on regular files and directories.
+        if ($this->pollContext->getBackend() === \Io\Poll\Backend::Kqueue && (stream_get_meta_data($stream)['seekable'] ?? false)) {
+            $this->alwaysReady[$streamId] = true;
+
+            return;
+        }
+
+        try {
+            $this->pollWatchers[$streamId] = $this->pollContext->add(new \StreamPollHandle($stream), $events, $streamId);
+        } catch (\Io\Poll\FailedHandleAddException $e) {
+            // epoll reports EPERM as ERROR_NOSUPPORT and kqueue reports EINVAL as ERROR_INVALID
+            // for handles that never block (/dev/null, /dev/urandom, regular files on Linux).
+            if (in_array($e->getCode(), [
+                \Io\Poll\FailedPollOperationException::ERROR_NOSUPPORT,
+                \Io\Poll\FailedPollOperationException::ERROR_INVALID,
+            ], true)) {
+                $this->alwaysReady[$streamId] = true;
+
+                return;
+            }
+
+            throw new AsyncError("Io\\Poll\\Context::add() failed: {$e->getMessage()}", previous: $e);
+        } catch (\Io\Poll\PollException $e) {
+            throw new AsyncError("Io\\Poll\\Context::add() failed: {$e->getMessage()}", previous: $e);
+        }
+    }
+
+    /**
+     * Wait for readiness with PHP 8.6's `Io\Poll\Context` (`epoll` / `kqueue`).
+     *
+     * @return array{0: list<string>, 1: list<string>}
+     */
+    private function waitPoll(?float $timeout): array
+    {
+        if ($this->alwaysReady !== []) {
+            $timeout = 0.0;
+        }
+
+        $watchers = [];
+        if ($this->pollWatchers !== [] && $this->pollContext !== null) {
+            if ($timeout === null) {
+                $duration = null;
+            } else {
+                $seconds = (int) $timeout;
+                $duration = \Time\Duration::fromSeconds($seconds, (int) (($timeout - $seconds) * 1_000_000_000));
+            }
+
+            try {
+                $watchers = $this->pollContext->wait($duration);
+            } catch (\Io\Poll\FailedPollWaitException $e) {
+                if ($e->getCode() === \Io\Poll\FailedPollOperationException::ERROR_INTERRUPTED) {
+                    return [[], []];
+                }
+
+                throw new AsyncError("Io\\Poll\\Context::wait() failed: {$e->getMessage()}", previous: $e);
             }
         }
 
-        foreach (array_keys($write) as $id) {
-            if (isset($this->writers[$id])) {
-                $this->safely($this->writers[$id]['callback'], $this->writers[$id]['stream']);
+        $readIds = [];
+        $writeIds = [];
+
+        foreach (array_keys($this->alwaysReady) as $streamId) {
+            foreach ($this->streamReaders[$streamId] ?? [] as $id) {
+                $readIds[$id] = $id;
+            }
+            foreach ($this->streamWriters[$streamId] ?? [] as $id) {
+                $writeIds[$id] = $id;
             }
         }
+
+        foreach ($watchers as $watcher) {
+            /** @var int $streamId */
+            $streamId = $watcher->getData();
+            // Error and HangUp are reported whether requested or not; wake both sides so a
+            // level-triggered backend does not report them again on every wait().
+            $aborted = $watcher->hasTriggered(\Io\Poll\Event::Error) || $watcher->hasTriggered(\Io\Poll\Event::HangUp);
+
+            if ($aborted || $watcher->hasTriggered(\Io\Poll\Event::Read)) {
+                foreach ($this->streamReaders[$streamId] ?? [] as $id) {
+                    $readIds[$id] = $id;
+                }
+            }
+
+            if ($aborted || $watcher->hasTriggered(\Io\Poll\Event::Write)) {
+                foreach ($this->streamWriters[$streamId] ?? [] as $id) {
+                    $writeIds[$id] = $id;
+                }
+            }
+        }
+
+        return [array_values($readIds), array_values($writeIds)];
     }
 
     private function runTimers(): void
