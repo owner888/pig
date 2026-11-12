@@ -32,6 +32,7 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\CodingAgent\Extensions\ToolDefinition;
 use Pig\CodingAgent\Extensions\CustomToolSet;
+use Pig\CodingAgent\Prompt\ContextFile;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\LoadedExtension;
 use Pig\CodingAgent\Extensions\Events\BeforeAgentStartEvent;
@@ -459,6 +460,25 @@ final class SystemMessageTranscriptTest extends TestCase
         $loadout->reloaded($tools, [], []);
         $session->setActiveTools(['read']);
         $this->assertFalse($session->isToolPending('late'), 'bash was of the reloaded loadout');
+    }
+
+    /** What `get_loaded_resources` lists as [Context]: the files the prompt carries, whoever read them. */
+    public function testTheSessionSaysWhichContextFilesItsPromptCarries(): void
+    {
+        $agent = new Agent(new AgentOptions(streamFn: $this->provider(...), apiKey: 'test-key'));
+        $files = [new ContextFile('/work/AGENTS.md', 'rules')];
+        $given = new ToolLoadout($agent, $this->cwd, ['read'], new CustomToolSet(), new ExtensionRunner(), $files, []);
+        $this->assertSame($files, (new AgentSession($agent, $this->cwd, loadout: $given))->contextFiles());
+
+        // None handed in: the prompt reads them off disk, and so does this.
+        file_put_contents($this->cwd . '/AGENTS.md', 'project rules');
+        $read = new ToolLoadout($agent, $this->cwd, ['read'], new CustomToolSet(), new ExtensionRunner(), null, []);
+        $this->assertContains(
+            (string) realpath($this->cwd . '/AGENTS.md'),
+            array_map(static fn (ContextFile $file): string => (string) realpath($file->path), $read->contextFiles()),
+        );
+
+        $this->assertSame([], (new AgentSession($agent, $this->cwd))->contextFiles(), 'a session without a loadout');
     }
 
     /**

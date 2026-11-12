@@ -88,6 +88,22 @@ interactive `/web restart`, `/web status`, and `/web stop` controls;
 - `Pig\CodingAgent\Web\Node\NodeProfile` & `NodeManager`: SSH node inventory in `~/.pig/agent/nodes.json`, secret persistence in `~/.pig/agent/nodes-secrets.json` (chmod 0600), SHA-256 host key fingerprint detection (`ssh-keyscan` + `ssh-keygen -lf`), OpenSSH `~/.ssh/config` discovery, remote PTY terminal streaming (`ssh -tt`), and SFTP remote directory listing/reading/writing (capped at 512 KiB).
 - Frontend: official `@xterm/xterm` 6.0.0 (`assets/js/vendor/xterm.mjs`, `assets/css/vendor/xterm.css`) + `@xterm/addon-fit` 0.11.0 (`assets/js/vendor/addon-fit.mjs`), copied byte for byte from the npm packages, drive the multi-tab terminal drawer in `WebTerminal.js` and the `NodeWorkbench.js` modal with remote terminal tabs and SFTP file explorer/editor.
 
+## What a new conversation loaded: the terminal's header listing, under the welcome
+
+**Asked for by the developer, 2026-11-12:** the TUI lists `[Context]`, `[Skills]`, `[Prompts]` and
+`[Extensions]` under its header at startup (`InteractiveMode::showLoadedResources()`), and the page
+showed nothing, so which `AGENTS.md` and which extensions a web conversation runs with could not be
+seen. The page cannot work it out — the child loaded them, in its own directory — so the child
+says: **`get_loaded_resources`**, pig's own RPC command (`RpcMode::loadedResources()`), answers
+`{context: [{name, path}], skills, prompts, extensions}` with the terminal's contents in the
+terminal's order (built-in extensions left out, as there). `hooks.js`'s `loadedResourceSections()`
+turns it into sections, dropping the empty ones, and `EmptyState` draws them under the chips.
+
+Asked for only while the welcome is up, and again on each bind, because the folder picker starts a
+new child in another directory with other files. Unlike the terminal it is not gated on
+`quietStartup`: the welcome is a page of its own that the first message replaces, not lines above
+every conversation.
+
 ## An extension's `$ctx->ui` in the page
 
 The child's UI is `RpcUi`, upstream's RPC context, and what it sends the page draws as `TerminalUi`

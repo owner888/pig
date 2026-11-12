@@ -43,6 +43,21 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Added
+
+- Added the loaded resources to the web UI's welcome: a new conversation lists `[Context]`, `[Skills]`, `[Prompts]` and `[Extensions]` under its quick-action chips, the sections the terminal lists under its header at startup, in the same order and with the same names (a context file by name, its path on hover). Behind it is `get_loaded_resources`, a pig-only RPC command.
+
+### Changed
+
+- Removed `Pig\Evals\Harness::withDocsSection()` and `documentationSectionText()`, a second copy of the `docs` section that nothing called once the default prompt carried it.
+
+### Fixed
+
+- Fixed the system prompt's `docs` section (2.0.10) naming documentation that is not on the machine: pig's user documentation lives in the site's repository, not in the package, so an installed pig was told to read `docs/extensions.md` and twelve more files that do not exist. The section is now sent only when the documentation is there (`PIG_DOCS_DIR`, `<package>/docs`, or the site's checkout beside the repository), and no longer lists `docs/codemode.md`, a page pig's documentation does not have.
+- Fixed two `SystemMessageTranscriptTest` cases that 2.0.10 left failing, and made the suite build the same system prompt on every machine: `test/bootstrap.php` points `PIG_DOCS_DIR` at a directory that is not there.
+
 ## [2.0.11] - 2026-11-12
 
 ### Changed

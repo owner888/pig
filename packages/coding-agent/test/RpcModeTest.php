@@ -1068,6 +1068,28 @@ final class RpcModeTest extends TestCase
         $this->assertInstanceOf(\Pig\Ai\ImageContent::class, $steered[0]->content[1] ?? null);
     }
 
+    /**
+     * pig's own `get_loaded_resources`: what the terminal lists under its header at startup, for
+     * the web page to list under a new conversation.
+     */
+    public function testWhatTheSessionLoadedIsListedAsTheTerminalListsIt(): void
+    {
+        mkdir($this->cwd . '/.pig/extensions', 0o755, true);
+        file_put_contents($this->cwd . '/.pig/extensions/deploy.php', '<?php return static fn () => null;');
+
+        $this->start(fileCommands: [
+            new PromptTemplate('review', 'Review a file', 'Review $1', '(user)'),
+            new PromptTemplate('audit', 'Audit a file', 'Audit $1', '(user)'),
+        ]);
+
+        // A session with no loadout has no context files and no skills; `SystemMessageTranscriptTest`
+        // has the ones a loadout carries.
+        $this->assertSame(
+            ['context' => [], 'skills' => [], 'prompts' => ['/audit', '/review'], 'extensions' => ['deploy.php']],
+            $this->data(['type' => 'get_loaded_resources']),
+        );
+    }
+
     public function testAHostsSlashCommandsReachTheSameDispatchTheTerminalDoes(): void
     {
         $api = new ExtensionApi($this->cwd, 'deploy.php');

@@ -1,18 +1,39 @@
 import { escapeHtml } from "../utils.js";
 import { t } from "../i18n.js";
+import { loadedResourceSections } from "../hooks.js";
 
 /**
  * EmptyState Component
  *
  * Renders a welcoming hero state for pristine conversations,
- * complete with Piglet mascot, friendly greeting, and quick-action chips.
+ * complete with Piglet mascot, friendly greeting, and quick-action chips — and, under them, what
+ * this conversation loaded: the terminal's [Context], [Skills], [Prompts] and [Extensions]
+ * (`setResources()`, from the child's `get_loaded_resources`).
  */
 export class EmptyState {
   constructor(onSelectPrompt) {
     this.onSelectPrompt = onSelectPrompt;
     this.element = document.createElement("div");
     this.element.className = "empty-state-hero";
+    this.resources = null;
     this.render();
+  }
+
+  /** What the conversation loaded, once its process has said; null until then. */
+  setResources(resources) {
+    this.resources = resources;
+    const box = this.element.querySelector(".empty-state-resources");
+    if (box) box.innerHTML = this.resourcesHtml();
+  }
+
+  /** One block per section, as the terminal draws them: the name in brackets, the list under it. */
+  resourcesHtml() {
+    return loadedResourceSections(this.resources).map((section) => `
+      <div class="empty-state-resource">
+        <div class="resource-name">[${escapeHtml(section.name)}]</div>
+        <div class="resource-items">${section.items.map((item) => `<span${item.title ? ` title="${escapeHtml(item.title)}"` : ""}>${escapeHtml(item.text)}</span>`).join(", ")}</div>
+      </div>
+    `).join("");
   }
 
   render() {
@@ -52,6 +73,7 @@ export class EmptyState {
           </button>
         `).join("")}
       </div>
+      <div class="empty-state-resources">${this.resourcesHtml()}</div>
     `;
 
     this.element.querySelectorAll(".empty-state-chip").forEach(btn => {

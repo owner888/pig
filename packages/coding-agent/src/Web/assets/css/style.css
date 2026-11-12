@@ -1489,6 +1489,23 @@
     .empty-state-chip:hover .chip-text {
       color: var(--color-text-primary);
     }
+    /* What the conversation loaded, as the terminal lists it under its header. */
+    .empty-state-resources {
+      width: 100%;
+      margin-top: 24px;
+      text-align: left;
+      font-family: var(--font-mono);
+      font-size: var(--text-xs);
+      line-height: 1.6;
+    }
+    .empty-state-resources:empty { display: none; }
+    .empty-state-resource + .empty-state-resource { margin-top: 10px; }
+    .empty-state-resource .resource-name { color: var(--color-accent); }
+    .empty-state-resource .resource-items {
+      padding-left: 2ch;
+      color: var(--color-text-secondary);
+      overflow-wrap: anywhere;
+    }
 
     /* Image Lightbox */
     .image-lightbox-overlay {

@@ -14,6 +14,7 @@ use Pig\CodingAgent\Extensions\WrappedCustomTool;
 use Pig\CodingAgent\Extensions\ExtensionGuardedTool;
 use Pig\CodingAgent\Extensions\ExtensionRunner;
 use Pig\CodingAgent\Prompt\ContextFile;
+use Pig\CodingAgent\Prompt\ContextFiles;
 use Pig\CodingAgent\Prompt\Skill;
 use Pig\CodingAgent\Prompt\SystemPrompt;
 
@@ -144,6 +145,12 @@ final class ToolLoadout
     public function skills(): array
     {
         return $this->skills;
+    }
+
+    /** @return list<ContextFile> the context files the prompt carries — read off disk when none were handed in, as the prompt does */
+    public function contextFiles(): array
+    {
+        return $this->contextFiles ?? ContextFiles::load($this->cwd);
     }
 
     /**

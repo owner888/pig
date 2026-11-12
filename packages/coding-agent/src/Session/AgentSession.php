@@ -101,6 +101,7 @@ use Pig\CodingAgent\Extensions\ExtensionError;
 use Pig\CodingAgent\Extensions\ExtensionRunner;
 use Pig\CodingAgent\ModelChoice;
 use Pig\CodingAgent\ModelResolver;
+use Pig\CodingAgent\Prompt\ContextFile;
 use Pig\CodingAgent\Prompt\PromptTemplate;
 use Pig\CodingAgent\Prompt\Skill;
 use Pig\CodingAgent\Prompt\Skills;
@@ -2760,6 +2761,12 @@ final class AgentSession
     public function skills(): array
     {
         return $this->loadout?->skills() ?? [];
+    }
+
+    /** @return list<ContextFile> the context files (AGENTS.md and its kind) the system prompt carries */
+    public function contextFiles(): array
+    {
+        return $this->loadout?->contextFiles() ?? [];
     }
 
     /**

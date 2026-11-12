@@ -60,4 +60,14 @@ assert.equal(hooks.countdownTitle('Pick one', 2), 'Pick one (2s)');
 assert.deepEqual(hooks.slashCommandsFrom(fixture.commands).map((c) => c.name), ['deploy', 'review', 'skill:release']);
 assert.deepEqual(hooks.slashCommandsFrom(null), []);
 
+// What a new conversation's welcome lists, as the terminal's header does: the sections in its
+// order, an empty one left out, a context file by name with its path beside it.
+assert.deepEqual(hooks.loadedResourceSections(fixture.resources), [
+  { name: 'Context', items: [{ text: 'AGENTS.md', title: '~/.pig/agent/AGENTS.md' }, { text: 'AGENTS.md', title: '/work/app/AGENTS.md' }] },
+  { name: 'Skills', items: [{ text: 'release', title: '' }] },
+  { name: 'Extensions', items: [{ text: 'deploy.php', title: '' }, { text: 'pig-antigravity', title: '' }] },
+]);
+assert.deepEqual(hooks.loadedResourceSections(null), []);
+assert.deepEqual(hooks.loadedResourceSections({ context: 'no', skills: [3, ''], prompts: null }), []);
+
 console.log('Web hook ui: passed');

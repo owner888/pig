@@ -96,6 +96,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         this._emptyState = null;
         this.hook = createHookState();  // what this child's extensions have put on screen
         this.commands = [];             // `get_commands`: extension, prompt template and skill commands
+        this.resources = null;          // `get_loaded_resources`: what the welcome lists, as the TUI's header does
         this.promptHistory = [];        // prompts sent from this tab, newest first (`rememberPrompt()`)
         this.historyIndex = -1;         // -1: not browsing; 0: the newest; 1: the one before …
         this.historyDraft = null;       // what was being typed when browsing began
@@ -145,6 +146,12 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       set emptyState(value) {
         this._emptyState = value;
         if (this === active) drawCwdChip();
+        // The welcome lists what the conversation loaded: what is known now, and the rest when
+        // its process answers.
+        if (value) {
+          value.setResources(this.resources);
+          this.loadResources();
+        }
       }
 
       get key() { return (this.cwd || "") + "::" + (this.sessionFile || ((this.incognito ? "__incognito__::" : "__new__::") + clientId + ":" + this.id)); }
@@ -335,6 +342,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         if (this === active) {
           await this.loadMessages();
           this.loadCommands();
+          this.loadResources();
           for (const t of tabs) {
             if (t !== this && !t.bound && !t.ended) t.subscribe();
           }
@@ -350,6 +358,23 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         // A theme only this page has (a child in another directory finds other custom themes) is
         // refused, and the child keeps the one it had: nothing to tell anyone.
         this.rpc({ type: "set_theme", theme }).catch(() => {});
+      }
+
+      /**
+       * What this conversation loaded — context files, skills, prompt templates, extensions — for
+       * the welcome to list as the TUI lists them under its header. Asked for while the welcome
+       * is up, and again on each bind: a new folder or a reload has other files.
+       */
+      loadResources() {
+        if (!this.bound || !this._emptyState) return Promise.resolve();
+        if (this.loadingResources) return this.loadingResources;
+        return this.loadingResources = (async () => {
+          try {
+            this.resources = await this.rpc({ type: "get_loaded_resources" });
+            this._emptyState?.setResources(this.resources);
+          } catch { /* a welcome without the list: nothing to tell anyone */ }
+          finally { this.loadingResources = null; }
+        })();
       }
 
       /** The commands the `/` list offers beyond the built-ins, as the TUI's list does. */
@@ -2967,6 +2992,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       else {
         if (tab.needsMessages) tab.loadMessages();
         if (tab.commands.length === 0) tab.loadCommands();
+        if (!tab.resources) tab.loadResources();
       }
 
       // Show friendly EmptyState if tab has no messages yet — but not for a conversation that is

@@ -24,6 +24,10 @@ use Pig\CodingAgent\Extensions\Events\SessionStartEvent;
 use Pig\CodingAgent\Extensions\ExtensionContext;
 use Pig\CodingAgent\Extensions\ExtensionError;
 use Pig\CodingAgent\Extensions\ExtensionRunner;
+use Pig\CodingAgent\Config;
+use Pig\CodingAgent\Extensions\ExtensionDiscovery;
+use Pig\CodingAgent\Prompt\PromptTemplate;
+use Pig\CodingAgent\Prompt\Skill;
 use JsonException;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\CompactionEndEvent;
@@ -494,6 +498,7 @@ final class RpcMode
             'get_image' => $this->image($command),
 
             'get_commands' => ['commands' => $this->commands()],
+            'get_loaded_resources' => $this->loadedResources(),
 
             // pig's: upstream's `navigateTree()` as a command, which its RPC mode only offers to
             // extensions (`commandContextActions.navigateTree`).
@@ -695,6 +700,40 @@ final class RpcMode
             // knowing the session format; the child already does.
             'cwd' => $this->session->cwd(),
             'opening' => $this->opening(),
+        ];
+    }
+
+    /**
+     * pig's own `get_loaded_resources`, with no upstream counterpart: what the terminal lists under
+     * its header at startup (`InteractiveMode::showLoadedResources()`) — [Context], [Skills],
+     * [Prompts], [Extensions] — for the web page to list under a new conversation. The same
+     * things in the same order; a section with nothing in it is an empty list, which the page
+     * leaves out as the terminal does.
+     *
+     * @return array{context: list<array{name: string, path: string}>, skills: list<string>, prompts: list<string>, extensions: list<string>}
+     */
+    private function loadedResources(): array
+    {
+        $home = Config::userHome();
+        $context = [];
+
+        foreach ($this->session->contextFiles() as $file) {
+            // The terminal's compact name and, expanded, its path with `~` for the home directory.
+            $context[$file->path] = [
+                'name' => basename($file->path),
+                'path' => $home !== '' && str_starts_with($file->path, $home) ? '~' . substr($file->path, strlen($home)) : $file->path,
+            ];
+        }
+
+        $prompts = array_map(static fn (PromptTemplate $template): string => "/{$template->name}", $this->session->fileCommands());
+        sort($prompts);
+
+        return [
+            'context' => array_values($context),
+            'skills' => array_map(static fn (Skill $skill): string => $skill->name, $this->session->skills()),
+            'prompts' => $prompts,
+            // Not the built-ins, which the terminal leaves out of [Extensions] too.
+            'extensions' => ExtensionDiscovery::discover($this->cwd, $this->extensionRunner?->paths() ?? []),
         ];
     }
 

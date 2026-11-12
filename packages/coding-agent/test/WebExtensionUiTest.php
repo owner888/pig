@@ -81,6 +81,13 @@ final class WebExtensionUiTest extends TestCase
             'successRgb' => sprintf('rgb(%d, %d, %d)', hexdec(substr($hex, 1, 2)), hexdec(substr($hex, 3, 2)), hexdec(substr($hex, 5, 2))),
             'requests' => $sent,
             'notifies' => $notifies,
+            // `RpcMode::loadedResources()`' shape (`RpcModeTest` holds it to this): no prompt templates here.
+            'resources' => [
+                'context' => [['name' => 'AGENTS.md', 'path' => '~/.pig/agent/AGENTS.md'], ['name' => 'AGENTS.md', 'path' => '/work/app/AGENTS.md']],
+                'skills' => ['release'],
+                'prompts' => [],
+                'extensions' => ['deploy.php', 'pig-antigravity'],
+            ],
             // `RpcMode::commands()`' shape: an extension's command, a prompt template, a skill.
             'commands' => ['commands' => [
                 ['name' => 'deploy', 'description' => 'Ship it', 'source' => 'extension'],
