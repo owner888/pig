@@ -145,6 +145,38 @@ final class SystemPromptTest extends ToolTestCase
         );
     }
 
+    /**
+     * Upstream's `docs` section, sent only when the documentation it names is on the machine: pig's
+     * user documentation is not in the package, and a prompt naming files that are not there sent
+     * the model to read them.
+     */
+    public function testTheDocsSectionIsSentOnlyWhenTheDocumentationIsThere(): void
+    {
+        $before = getenv('PIG_DOCS_DIR');
+        $docs = $this->home . '/docs';
+        mkdir($docs, 0o700, true);
+
+        try {
+            putenv("PIG_DOCS_DIR={$docs}");
+            $this->assertNull(SystemPrompt::docsSection(), 'a directory without the documentation in it');
+            $this->assertArrayNotHasKey('docs', SystemPrompt::sections('/work', ['read'], contextFiles: []));
+
+            file_put_contents($docs . '/extensions.md', '# Extensions');
+            $sections = SystemPrompt::sections('/work', ['read'], contextFiles: []);
+
+            $this->assertSame(['preamble', 'tools', 'rules', 'docs', 'cwd'], array_keys($sections));
+            $this->assertStringStartsWith("<docs>\nPig documentation (read only when the user asks about the harness itself", $sections['docs']);
+            $this->assertStringEndsWith("\n</docs>", $sections['docs']);
+            $this->assertStringContainsString("- Main documentation: " . Config::readmePath() . "\n- Additional docs: {$docs}\n- Examples: " . Config::examplesPath() . ' (extensions, custom tools, SDK)', $sections['docs']);
+            // Every page the section names is one of pig's.
+            $this->assertStringNotContainsString('codemode', $sections['docs']);
+            // A prompt of the person's own replaces the instructions, this section with them.
+            $this->assertArrayNotHasKey('docs', SystemPrompt::sections('/work', ['read'], 'Custom.', contextFiles: []));
+        } finally {
+            putenv($before === false ? 'PIG_DOCS_DIR' : "PIG_DOCS_DIR={$before}");
+        }
+    }
+
     public function testAHandlersSectionsAreTaggedAfterTheRestAndDiffIntoAPatch(): void
     {
         // Upstream's "diffs sections into a patch" with `sections: { plan_mode }`.
@@ -152,14 +184,14 @@ final class SystemPromptTest extends ToolTestCase
         $previous = SystemPrompt::withSections($base, ['plan_mode' => 'Plan only.']);
         $current = SystemPrompt::withSections($base, ['plan_mode' => 'Implementation allowed.']);
 
-        $this->assertSame(['preamble', 'tools', 'rules', 'docs', 'cwd', 'plan_mode'], array_keys($previous));
+        $this->assertSame(['preamble', 'tools', 'rules', 'cwd', 'plan_mode'], array_keys($previous));
         $this->assertSame(['plan_mode' => "<plan_mode>\nImplementation allowed.\n</plan_mode>"], SystemPrompt::diffSections($previous, $current));
         $this->assertNull(SystemPrompt::diffSections($previous, $previous));
         $this->assertSame(['plan_mode' => null], SystemPrompt::diffSections($previous, $base));
 
         // Empty content is left out; a name that is already a section replaces it where it stands.
         $this->assertSame($base, SystemPrompt::withSections($base, ['plan_mode' => '']));
-        $this->assertSame(['preamble', 'tools', 'rules', 'docs', 'cwd'], array_keys(SystemPrompt::withSections($base, ['tools' => 'x'])));
+        $this->assertSame(['preamble', 'tools', 'rules', 'cwd'], array_keys(SystemPrompt::withSections($base, ['tools' => 'x'])));
         $this->assertSame("<tools>\nx\n</tools>", SystemPrompt::withSections($base, ['tools' => 'x'])['tools']);
     }
 

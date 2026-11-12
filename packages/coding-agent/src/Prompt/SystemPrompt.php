@@ -92,7 +92,12 @@ final class SystemPrompt
         if ($custom !== null) {
             $sections['preamble'] = $custom;
         } else {
-            [$sections['preamble'], $sections['tools'], $sections['rules'], $sections['docs']] = self::instructions($tools, $toolSnippets, $toolGuidelines);
+            [$sections['preamble'], $sections['tools'], $sections['rules']] = self::instructions($tools, $toolSnippets, $toolGuidelines);
+            $docs = self::docsSection();
+
+            if ($docs !== null) {
+                $sections['docs'] = $docs;
+            }
         }
 
         if ($append !== null && trim($append) !== '') {
@@ -209,12 +214,12 @@ final class SystemPrompt
     }
 
     /**
-     * The default prompt's four sections: the role, the tool list, the rules, and the docs routing.
+     * The default prompt's three sections: the role, the tool list, and the rules.
      *
      * @param list<string> $tools the built-ins
      * @param array<string, string> $toolSnippets extension tools with something to say in the list, name => line
      * @param list<string> $toolGuidelines rules those tools add
-     * @return array{0: string, 1: string, 2: string, 3: string}
+     * @return array{0: string, 1: string, 2: string}
      */
     private static function instructions(array $tools, array $toolSnippets = [], array $toolGuidelines = []): array
     {
@@ -238,15 +243,29 @@ final class SystemPrompt
             array_keys($all),
         ));
 
-        return [self::ROLE, "Available tools:\n{$list}", "Guidelines:\n{$guidelines}", self::docsSection()];
+        return [self::ROLE, "Available tools:\n{$list}", "Guidelines:\n{$guidelines}"];
     }
 
-    /** Upstream's `promptSections.docs` in `buildSystemPromptSections()`. */
-    public static function docsSection(): string
+    /**
+     * Upstream's `promptSections.docs` in `buildSystemPromptSections()` — where pig's documentation
+     * is, for a question about pig itself.
+     *
+     * Null when the documentation is not on this machine, which is the developer's choice where
+     * upstream differs. Upstream's package carries its `docs/`; pig's user documentation lives in
+     * the site's repository (`Config::docsPath()`), so an installed pig has none, and a prompt
+     * that named thirteen files that are not there sent the model to read them. The section says
+     * where the documentation is or is not sent at all. `docs/codemode.md`, which upstream's list
+     * ends with, is left out until pig's documentation has that page.
+     */
+    public static function docsSection(): ?string
     {
         $readme = Config::readmePath();
         $docs = Config::docsPath();
         $examples = Config::examplesPath();
+
+        if (!is_file($docs . '/extensions.md')) {
+            return null;
+        }
 
         return <<<DOCS
 <docs>
@@ -255,7 +274,7 @@ Pig documentation (read only when the user asks about the harness itself, its SD
 - Additional docs: {$docs}
 - Examples: {$examples} (extensions, custom tools, SDK)
 - When reading pig docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory
-- When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), packages (docs/packages.md), environment variables (docs/environment-variables.md), MCP servers (docs/mcp.md), codemode scripts and non-LLM models such as classifiers and image models (docs/codemode.md)
+- When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), packages (docs/packages.md), environment variables (docs/environment-variables.md), MCP servers (docs/mcp.md)
 - Before implementing harness changes, read the relevant docs and examples in full, following related cross-references.
 </docs>
 DOCS;

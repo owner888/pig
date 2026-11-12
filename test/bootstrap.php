@@ -49,6 +49,12 @@ if (is_string($realHome) && $realHome !== '' && is_dir($realHome . '/.pig/agent/
 }
 $set('PATH', $path);
 
+// The system prompt says where pig's documentation is when it is on the machine, and it is on the
+// developer's (the site's repository beside this one) and on nobody else's. Pointed at a directory
+// that is not there, every test builds the same prompt everywhere; one about the `docs` section
+// points this at a directory of its own.
+$set('PIG_DOCS_DIR', $home . '/.no-docs');
+
 // No test asks pigagent.dev for a model catalog: a refresh with the network would otherwise fetch
 // every built-in provider's. A test that needs a catalog server starts its own and points this at it.
 $set('PIG_MODEL_CATALOG_URL', 'off');

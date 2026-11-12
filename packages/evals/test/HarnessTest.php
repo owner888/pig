@@ -19,6 +19,32 @@ final class HarnessTest extends TestCase
 {
     use AssertsThrows;
 
+    /** The documentation directory a test made, and what `PIG_DOCS_DIR` was before it. */
+    private ?string $docs = null;
+
+    private string|false $docsBefore = false;
+
+    #[\Override]
+    protected function tearDown(): void
+    {
+        if ($this->docs !== null) {
+            unlink($this->docs . '/extensions.md');
+            rmdir($this->docs);
+            putenv($this->docsBefore === false ? 'PIG_DOCS_DIR' : "PIG_DOCS_DIR={$this->docsBefore}");
+            $this->docs = null;
+        }
+    }
+
+    /** The default prompt carries its `docs` section only where pig's documentation is. */
+    private function withDocumentation(): void
+    {
+        $this->docsBefore = getenv('PIG_DOCS_DIR');
+        $this->docs = sys_get_temp_dir() . '/pig-eval-docs-' . bin2hex(random_bytes(4));
+        mkdir($this->docs, 0o700, true);
+        file_put_contents($this->docs . '/extensions.md', '# Extensions');
+        putenv("PIG_DOCS_DIR={$this->docs}");
+    }
+
     public function testPrefersAnExplicitHarnessModel(): void
     {
         $this->assertSame(
@@ -143,6 +169,7 @@ final class HarnessTest extends TestCase
 
     public function testStripsOnlyTheDocumentationRoutingSectionFromTheDefaultPrompt(): void
     {
+        $this->withDocumentation();
         $prompt = Harness::buildSystemPrompt('/workspace', Harness::DOCUMENTATION_EVAL_TOOLS);
 
         $this->assertStringContainsString("\n<docs>\nPig documentation (read only", $prompt);
@@ -163,6 +190,7 @@ final class HarnessTest extends TestCase
 
     public function testVerifiesThePromptThatWasSent(): void
     {
+        $this->withDocumentation();
         $prompt = Harness::buildSystemPrompt('/workspace', Harness::DOCUMENTATION_EVAL_TOOLS);
         $stripped = Harness::excludePigDocumentation($prompt);
 
