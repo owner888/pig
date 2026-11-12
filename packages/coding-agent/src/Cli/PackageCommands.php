@@ -49,8 +49,11 @@ final class PackageCommands
      * gone stale (`OauthError`, upstream's `ModelsError` code `oauth`) is a warning naming `pig auth
      * login <provider>`, and the others still refresh (upstream 6382d870); any other failure is
      * the command's.
+     *
+     * @param resource $errors where the warning and the error are written: the terminal's, and a
+     *        test's own stream — written to `STDERR` they landed in the middle of the suite's output
      */
-    public static function refreshModelCatalogs(?\Pig\CodingAgent\Auth $auth = null): int
+    public static function refreshModelCatalogs(?\Pig\CodingAgent\Auth $auth = null, $errors = STDERR): int
     {
         if ($auth === null) {
             $auth = \Pig\CodingAgent\Auth::discover();
@@ -77,7 +80,7 @@ final class PackageCommands
             foreach ($result->errors as $provider => $error) {
                 // A stale login only affects that provider's catalog; the others are still worth refreshing.
                 if ($error instanceof \Pig\Ai\Utils\Oauth\OauthError) {
-                    fwrite(STDERR, Style::yellow("Warning: skipped model catalog for {$provider}: {$error->getMessage()}\nLog in again with `pig auth login {$provider}` to refresh it.") . "\n");
+                    fwrite($errors, Style::yellow("Warning: skipped model catalog for {$provider}: {$error->getMessage()}\nLog in again with `pig auth login {$provider}` to refresh it.") . "\n");
                 } else {
                     $failures[] = "{$provider}: {$error->getMessage()}";
                 }
@@ -87,7 +90,7 @@ final class PackageCommands
                 throw new \RuntimeException('Could not refresh model catalogs: ' . implode('; ', $failures));
             }
         } catch (\Throwable $error) {
-            fwrite(STDERR, Style::red("Error: {$error->getMessage()}") . "\n");
+            fwrite($errors, Style::red("Error: {$error->getMessage()}") . "\n");
 
             return 1;
         }

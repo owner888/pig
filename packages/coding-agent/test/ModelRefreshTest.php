@@ -94,15 +94,32 @@ final class ModelRefreshTest extends TestCase
         $auth->setApiKey('zzr-stale', 'sk-stale');
         $auth->setApiKey('zzr-ok', 'sk-ok');
 
+        // What the command says goes to a stream of the test's, read back here, not to the terminal
+        // the suite is running in.
+        $errors = fopen('php://memory', 'w+');
+        $said = static function () use ($errors): string {
+            $text = (string) stream_get_contents($errors, offset: 0);
+            ftruncate($errors, 0);
+            rewind($errors);
+
+            return (string) preg_replace('/\x1b\[[0-9;]*m/', '', $text);
+        };
+
         try {
             $this->expectOutputRegex('/Model catalogs refreshed/');
-            $this->assertSame(0, \Pig\CodingAgent\Cli\PackageCommands::refreshModelCatalogs($auth), 'a stale login is a warning');
+            $this->assertSame(0, \Pig\CodingAgent\Cli\PackageCommands::refreshModelCatalogs($auth, $errors), 'a stale login is a warning');
             $this->assertSame([false, true], $refreshed, 'and the other catalogs still refresh');
+            $this->assertSame(
+                "Warning: skipped model catalog for zzr-stale: OAuth refresh failed for zzr-stale: invalid_grant\nLog in again with `pig auth login zzr-stale` to refresh it.\n",
+                $said(),
+            );
 
             ProviderRegistry::register($failing('zzr-down', new RuntimeException('connection refused')));
             $auth->setApiKey('zzr-down', 'sk-down');
-            $this->assertSame(1, \Pig\CodingAgent\Cli\PackageCommands::refreshModelCatalogs($auth), 'anything else fails the command');
+            $this->assertSame(1, \Pig\CodingAgent\Cli\PackageCommands::refreshModelCatalogs($auth, $errors), 'anything else fails the command');
+            $this->assertStringEndsWith("Error: Could not refresh model catalogs: zzr-down: connection refused\n", $said());
         } finally {
+            fclose($errors);
             putenv($previous === false ? 'PIG_MODEL_CATALOG_URL' : "PIG_MODEL_CATALOG_URL={$previous}");
         }
     }
