@@ -178,15 +178,13 @@ final class Harness
         array $toolSnippets = [],
         array $toolGuidelines = [],
     ): string {
-        $sections = SystemPrompt::sections(
+        return SystemPrompt::build(
             $cwd,
             $selectedTools,
             contextFiles: [],
             toolSnippets: $toolSnippets,
             toolGuidelines: $toolGuidelines,
         );
-
-        return Text::getSystemMessageText(new SystemMessage('', self::withDocsSection($sections)));
     }
 
     /**
@@ -460,24 +458,9 @@ docs;
             ): array {
                 $api = new ExtensionApi('.', '<inline:eval-system-prompt-transform>', 'eval-system-prompt-transform');
 
-                if ($transformPrompt instanceof Closure || $expectDocs !== null) {
-                    $api->on('before_agent_start', static function (BeforeAgentStartEvent $event) use (&$forcedSystemPrompt, $transformPrompt, $expectDocs): BeforeAgentStartEventResult {
-                        $prompt = $event->systemPrompt();
-
-                        if ($expectDocs !== null && !str_contains($prompt, "\n<docs>\n")) {
-                            $docsBlock = "<docs>\n" . self::documentationSectionText() . "\n</docs>";
-                            $cwdMarker = "\n\nCurrent working directory: ";
-                            $cwdPos = strrpos($prompt, $cwdMarker);
-                            $prompt = $cwdPos !== false
-                                ? substr($prompt, 0, $cwdPos) . "\n\n" . $docsBlock . substr($prompt, $cwdPos)
-                                : $prompt . "\n\n" . $docsBlock;
-                        }
-
-                        if ($transformPrompt instanceof Closure) {
-                            $prompt = (string) $transformPrompt($prompt);
-                        }
-
-                        $forcedSystemPrompt = $prompt;
+                if ($transformPrompt instanceof Closure) {
+                    $api->on('before_agent_start', static function (BeforeAgentStartEvent $event) use (&$forcedSystemPrompt, $transformPrompt): BeforeAgentStartEventResult {
+                        $forcedSystemPrompt = (string) $transformPrompt($event->systemPrompt());
 
                         return new BeforeAgentStartEventResult(systemPrompt: $forcedSystemPrompt);
                     });

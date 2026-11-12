@@ -7,6 +7,7 @@ namespace Pig\CodingAgent\Prompt;
 use Pig\Agent\AgentError;
 use Pig\Ai\SystemMessage;
 use Pig\Ai\Utils\Text;
+use Pig\CodingAgent\Config;
 use Pig\CodingAgent\Tools\ToolSet;
 
 /**
@@ -58,7 +59,7 @@ final class SystemPrompt
      * later change to one of them reaches the model as a system message that replaces that section
      * alone (`diffSections()`), rather than as a second copy of the whole prompt.
      *
-     * The names are upstream's — `preamble`, `tools`, `rules`, `addendum`, `project_context`,
+     * The names are upstream's — `preamble`, `tools`, `rules`, `docs`, `addendum`, `project_context`,
      * `skills`, `cwd` — and the text is pig's own: upstream wraps every section but the preamble in a
      * tag of its name, and pig's prompt has always been the plain text below, so the sections hold
      * that text verbatim and render, joined by blank lines, to exactly the prompt pig sent before.
@@ -91,7 +92,7 @@ final class SystemPrompt
         if ($custom !== null) {
             $sections['preamble'] = $custom;
         } else {
-            [$sections['preamble'], $sections['tools'], $sections['rules']] = self::instructions($tools, $toolSnippets, $toolGuidelines);
+            [$sections['preamble'], $sections['tools'], $sections['rules'], $sections['docs']] = self::instructions($tools, $toolSnippets, $toolGuidelines);
         }
 
         if ($append !== null && trim($append) !== '') {
@@ -208,12 +209,12 @@ final class SystemPrompt
     }
 
     /**
-     * The default prompt's three sections: the role, the tool list, and the rules.
+     * The default prompt's four sections: the role, the tool list, the rules, and the docs routing.
      *
      * @param list<string> $tools the built-ins
      * @param array<string, string> $toolSnippets extension tools with something to say in the list, name => line
      * @param list<string> $toolGuidelines rules those tools add
-     * @return array{0: string, 1: string, 2: string}
+     * @return array{0: string, 1: string, 2: string, 3: string}
      */
     private static function instructions(array $tools, array $toolSnippets = [], array $toolGuidelines = []): array
     {
@@ -237,7 +238,27 @@ final class SystemPrompt
             array_keys($all),
         ));
 
-        return [self::ROLE, "Available tools:\n{$list}", "Guidelines:\n{$guidelines}"];
+        return [self::ROLE, "Available tools:\n{$list}", "Guidelines:\n{$guidelines}", self::docsSection()];
+    }
+
+    /** Upstream's `promptSections.docs` in `buildSystemPromptSections()`. */
+    public static function docsSection(): string
+    {
+        $readme = Config::readmePath();
+        $docs = Config::docsPath();
+        $examples = Config::examplesPath();
+
+        return <<<DOCS
+<docs>
+Pig documentation (read only when the user asks about the harness itself, its SDK, extensions, themes, skills, or TUI):
+- Main documentation: {$readme}
+- Additional docs: {$docs}
+- Examples: {$examples} (extensions, custom tools, SDK)
+- When reading pig docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory
+- When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), packages (docs/packages.md), environment variables (docs/environment-variables.md), MCP servers (docs/mcp.md), codemode scripts and non-LLM models such as classifiers and image models (docs/codemode.md)
+- Before implementing harness changes, read the relevant docs and examples in full, following related cross-references.
+</docs>
+DOCS;
     }
 
     /**

@@ -402,6 +402,66 @@ final class SystemMessageTranscriptTest extends TestCase
     }
 
     /**
+     * Upstream #11996, "keeps restored tools when an extension deactivates only its own tool before
+     * they register": an extension registers a loader tool and hides it at `session_start`. The
+     * restore activates the loader as a tool the branch never recorded, the extension turns it off
+     * again, and that used to drop the tools still waiting for their server.
+     */
+    public function testHidingAToolOutsideTheRestoredLoadoutKeepsTheToolsStillToRegister(): void
+    {
+        $late = static fn (): ToolDefinition => new ToolDefinition('late', 'late', 'A tool that registers late.', ['type' => 'object'], static fn () => null);
+        $loader = static fn (): ToolDefinition => new ToolDefinition('loader', 'loader', "Loads the extension's tools.", ['type' => 'object'], static fn () => null);
+        [$first, $firstExtension] = self::extensionTools();
+        $firstExtension->registerTool($late());
+        [$session, $store] = $this->session(['one'], customTools: $first);
+        Async::run(static fn () => $session->prompt('first'));
+
+        [$tools, $extension] = self::extensionTools();
+        $extension->registerTool($loader());
+        [$resumed] = $this->session([], customTools: $tools, resume: SessionManager::open($store->path));
+        $this->assertSame(['read', 'bash', 'loader'], $resumed->activeTools(), 'a tool the branch never mentioned arrives active');
+
+        $resumed->setActiveTools(array_values(array_diff($resumed->activeTools(), ['loader'])));
+        $this->assertTrue($resumed->isToolPending('late'));
+
+        $extension->registerTool($late());
+        $this->assertSame(['read', 'bash', 'late'], $resumed->activeTools());
+
+        // Turning off a tool the transcript recorded is still a replacement, and drops them.
+        [$tools, $extension] = self::extensionTools();
+        $extension->registerTool($loader());
+        [$replaced] = $this->session([], customTools: $tools, resume: SessionManager::open($store->path));
+        $replaced->setActiveTools(['read', 'loader']);
+        $this->assertFalse($replaced->isToolPending('late'));
+    }
+
+    /** Upstream #11996, the same after `/reload`: the loadout kept is the one active before it. */
+    public function testHidingAToolOutsideTheReloadedLoadoutKeepsTheToolsStillToRegister(): void
+    {
+        $loader = new ToolDefinition('loader', 'loader', "Loads the extension's tools.", ['type' => 'object'], static fn () => null);
+        [$first, $firstExtension] = self::extensionTools();
+        $firstExtension->registerTool(new ToolDefinition('late', 'late', 'A tool that registers late.', ['type' => 'object'], static fn () => null));
+        [$session] = $this->session(['one'], customTools: $first);
+        $this->assertSame(['read', 'bash', 'late'], $session->activeTools());
+
+        // The reloaded extensions have registered the loader, and not yet the late tool.
+        [$tools, $extension] = self::extensionTools();
+        $extension->registerTool($loader);
+        $loadout = $session->loadout();
+        $this->assertNotNull($loadout);
+        $tools->onChange(static fn () => $loadout->refresh());
+        $loadout->reloaded($tools, [], []);
+        $this->assertTrue($session->isToolPending('late'));
+
+        $session->setActiveTools(array_values(array_diff($session->activeTools(), ['loader'])));
+        $this->assertTrue($session->isToolPending('late'));
+
+        $loadout->reloaded($tools, [], []);
+        $session->setActiveTools(['read']);
+        $this->assertFalse($session->isToolPending('late'), 'bash was of the reloaded loadout');
+    }
+
+    /**
      * A custom tool set fed by one extension, so a test can register a tool after the session exists.
      *
      * @return array{0: CustomToolSet, 1: ExtensionApi}

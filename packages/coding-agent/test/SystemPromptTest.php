@@ -152,14 +152,14 @@ final class SystemPromptTest extends ToolTestCase
         $previous = SystemPrompt::withSections($base, ['plan_mode' => 'Plan only.']);
         $current = SystemPrompt::withSections($base, ['plan_mode' => 'Implementation allowed.']);
 
-        $this->assertSame(['preamble', 'tools', 'rules', 'cwd', 'plan_mode'], array_keys($previous));
+        $this->assertSame(['preamble', 'tools', 'rules', 'docs', 'cwd', 'plan_mode'], array_keys($previous));
         $this->assertSame(['plan_mode' => "<plan_mode>\nImplementation allowed.\n</plan_mode>"], SystemPrompt::diffSections($previous, $current));
         $this->assertNull(SystemPrompt::diffSections($previous, $previous));
         $this->assertSame(['plan_mode' => null], SystemPrompt::diffSections($previous, $base));
 
         // Empty content is left out; a name that is already a section replaces it where it stands.
         $this->assertSame($base, SystemPrompt::withSections($base, ['plan_mode' => '']));
-        $this->assertSame(['preamble', 'tools', 'rules', 'cwd'], array_keys(SystemPrompt::withSections($base, ['tools' => 'x'])));
+        $this->assertSame(['preamble', 'tools', 'rules', 'docs', 'cwd'], array_keys(SystemPrompt::withSections($base, ['tools' => 'x'])));
         $this->assertSame("<tools>\nx\n</tools>", SystemPrompt::withSections($base, ['tools' => 'x'])['tools']);
     }
 

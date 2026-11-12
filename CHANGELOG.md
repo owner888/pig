@@ -43,6 +43,28 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Changed
+
+- Changed the llama.cpp provider's default server address to `http://127.0.0.1:9931`, llama.cpp's own default port, from `:8080` (upstream #12001). A server kept on 8080 is reached by giving that address to `/login llama.cpp`.
+- Changed the default for Anthropic message threads to go by endpoint, not by provider id: any provider whose `baseUrl` is on `api.anthropic.com` — a second account configured as `anthropic-1-api`, say — now continues the server-side thread and sends only the new messages; a gateway still needs `supportsMessageThreads: true` (upstream #11987).
+
+### Fixed
+
+- Fixed `find` answering "No files found matching pattern" for a pattern that starts with `./` (`./src/*.ts`, `./*.json`): fd's full paths never contain `/./`, so the leading `./` is dropped before fd is asked (upstream #12020).
+- Fixed tools that `tool_search` had loaded being lost on resume or `/reload` when an extension registers a loader tool and hides it at `session_start`: hiding a tool outside the restored loadout no longer drops the MCP tools still waiting for their server; replacing the loadout still does (upstream #11996).
+- Fixed Kitty images going blank after a fullscreen full redraw (a resize, a theme change): the redraw cleared the screen with ED 2 after deleting the placements, which makes Kitty free the uploaded image data the next placement reuses. Every row is cleared on its own already, so the screen clear is skipped while uploads are held (upstream #12010).
+- Fixed hard line breaks after an inline image in Markdown being drawn as one row with newlines inside it, which pushed everything below the image out of place (upstream #12017).
+- Fixed a strict tool whose schema has a node without a type (`items: {}`, a bare `const`, an "any" value) being sent strict and refused by OpenAI: with `strict: "prefer"` it now goes non-strict, with `"require"` it fails before the request; an enum without a type stays strict (upstream #12049).
+
+## [2.0.10] - 2026-11-12
+
+### Added
+
+- `SystemPrompt::sections()` now includes the `docs` routing section (`<docs>…</docs>` naming `Config::readmePath()`, `Config::docsPath()` and `Config::examplesPath()`), matching upstream's `buildSystemPromptSections()`.
+- Added `examples/extensions/hello.php` and `examples/extensions/custom-footer.php` (ported from upstream's `hello.ts` and `custom-footer.ts`).
+
 ## [2.0.9] - 2026-11-12
 
 ### Changed
