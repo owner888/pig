@@ -26,12 +26,15 @@ export class EmptyState {
     if (box) box.innerHTML = this.resourcesHtml();
   }
 
-  /** One block per section, as the terminal draws them: the name in brackets, the list under it. */
+  /**
+   * One row per section — its name and how many, then each thing as a tag — in one panel as wide
+   * as the page allows. The terminal's contents, drawn as a page draws a list.
+   */
   resourcesHtml() {
     return loadedResourceSections(this.resources).map((section) => `
       <div class="empty-state-resource">
-        <div class="resource-name">[${escapeHtml(section.name)}]</div>
-        <div class="resource-items">${section.items.map((item) => `<span${item.title ? ` title="${escapeHtml(item.title)}"` : ""}>${escapeHtml(item.text)}</span>`).join(", ")}</div>
+        <div class="resource-name">${escapeHtml(t(`empty_resources_${section.name.toLowerCase()}`))}<span class="resource-count">${section.items.length}</span></div>
+        <div class="resource-items">${section.items.map((item) => `<span class="resource-item"${item.title ? ` title="${escapeHtml(item.title)}"` : ""}>${escapeHtml(item.text)}</span>`).join("")}</div>
       </div>
     `).join("");
   }

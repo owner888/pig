@@ -47,7 +47,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ### Added
 
-- Added the loaded resources to the web UI's welcome: a new conversation lists `[Context]`, `[Skills]`, `[Prompts]` and `[Extensions]` under its quick-action chips, the sections the terminal lists under its header at startup, in the same order and with the same names (a context file by name, its path on hover). Behind it is `get_loaded_resources`, a pig-only RPC command.
+- Added the loaded resources to the web UI's welcome: a new conversation lists its context files, skills, prompt templates and extensions in a panel under its quick-action chips — what the terminal lists under its header at startup as `[Context]`, `[Skills]`, `[Prompts]` and `[Extensions]`, in the same order (a context file by name, its path on hover). Behind it is `get_loaded_resources`, a pig-only RPC command.
 
 ### Changed
 
