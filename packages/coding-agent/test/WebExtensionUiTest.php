@@ -87,6 +87,7 @@ final class WebExtensionUiTest extends TestCase
                 'skills' => ['release'],
                 'prompts' => [],
                 'extensions' => ['deploy.php', 'pig-antigravity'],
+                'tools' => ['read', 'bash', 'codemode'],
             ],
             // `RpcMode::commands()`' shape: an extension's command, a prompt template, a skill.
             'commands' => ['commands' => [

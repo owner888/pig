@@ -43,11 +43,11 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
-## Unreleased
+## [2.0.12] - 2026-11-12
 
 ### Added
 
-- Added the loaded resources to the web UI's welcome: a new conversation lists its context files, skills, prompt templates and extensions in a panel under its quick-action chips — what the terminal lists under its header at startup as `[Context]`, `[Skills]`, `[Prompts]` and `[Extensions]`, in the same order (a context file by name, its path on hover). Behind it is `get_loaded_resources`, a pig-only RPC command.
+- Added the loaded resources to the web UI's welcome: a new conversation lists its context files, skills, prompt templates and extensions in a panel under its quick-action chips — what the terminal lists under its header at startup as `[Context]`, `[Skills]`, `[Prompts]` and `[Extensions]`, in the same order (a context file by its path, so the global `AGENTS.md` and the project's are told apart). A last row lists the conversation's active tools, which is where a built-in extension's tool such as `codemode` shows as on or off. Behind it is `get_loaded_resources`, a pig-only RPC command.
 
 ### Changed
 

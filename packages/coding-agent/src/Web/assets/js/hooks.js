@@ -105,20 +105,23 @@ export function slashCommandsFrom(data) {
 /**
  * `get_loaded_resources`' answer as the sections the terminal lists under its header at startup
  * (`InteractiveMode::showLoadedResources()`): [Context], [Skills], [Prompts], [Extensions], in
- * that order, each only when it has something in it. A context file is its name, with its path
- * for whoever wants it — the terminal's compact and expanded forms.
+ * that order, and then the active tools, which only the page lists; each only when it has
+ * something in it. A context file is its path — the terminal's
+ * expanded form: its compact one is the bare name, and with a global `AGENTS.md` and a project's
+ * that is "AGENTS.md, AGENTS.md", which says nothing about which two.
  */
 export function loadedResourceSections(data) {
   const names = (list) => (Array.isArray(list) ? list : []).filter((item) => typeof item === "string" && item !== "");
   const context = (Array.isArray(data?.context) ? data.context : [])
     .filter((file) => file && typeof file.name === "string" && file.name !== "")
-    .map((file) => ({ text: file.name, title: typeof file.path === "string" ? file.path : "" }));
+    .map((file) => ({ text: typeof file.path === "string" && file.path !== "" ? file.path : file.name, title: "" }));
   const plain = (list) => names(list).map((text) => ({ text, title: "" }));
   return [
     { name: "Context", items: context },
     { name: "Skills", items: plain(data?.skills) },
     { name: "Prompts", items: plain(data?.prompts) },
     { name: "Extensions", items: plain(data?.extensions) },
+    { name: "Tools", items: plain(data?.tools) },
   ].filter((section) => section.items.length > 0);
 }
 

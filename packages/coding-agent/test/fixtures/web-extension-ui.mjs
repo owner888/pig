@@ -61,12 +61,14 @@ assert.deepEqual(hooks.slashCommandsFrom(fixture.commands).map((c) => c.name), [
 assert.deepEqual(hooks.slashCommandsFrom(null), []);
 
 // What a new conversation's welcome lists, as the terminal's header does: the sections in its
-// order, an empty one left out, a context file by name with its path beside it.
+// order, an empty one left out, a context file by its path so that two of one name are told apart.
 assert.deepEqual(hooks.loadedResourceSections(fixture.resources), [
-  { name: 'Context', items: [{ text: 'AGENTS.md', title: '~/.pig/agent/AGENTS.md' }, { text: 'AGENTS.md', title: '/work/app/AGENTS.md' }] },
+  { name: 'Context', items: [{ text: '~/.pig/agent/AGENTS.md', title: '' }, { text: '/work/app/AGENTS.md', title: '' }] },
   { name: 'Skills', items: [{ text: 'release', title: '' }] },
   { name: 'Extensions', items: [{ text: 'deploy.php', title: '' }, { text: 'pig-antigravity', title: '' }] },
+  { name: 'Tools', items: [{ text: 'read', title: '' }, { text: 'bash', title: '' }, { text: 'codemode', title: '' }] },
 ]);
+assert.deepEqual(hooks.loadedResourceSections({ context: [{ name: 'AGENTS.md' }] }), [{ name: 'Context', items: [{ text: 'AGENTS.md', title: '' }] }]);
 assert.deepEqual(hooks.loadedResourceSections(null), []);
 assert.deepEqual(hooks.loadedResourceSections({ context: 'no', skills: [3, ''], prompts: null }), []);
 

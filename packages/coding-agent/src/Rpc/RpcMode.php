@@ -710,7 +710,12 @@ final class RpcMode
      * things in the same order; a section with nothing in it is an empty list, which the page
      * leaves out as the terminal does.
      *
-     * @return array{context: list<array{name: string, path: string}>, skills: list<string>, prompts: list<string>, extensions: list<string>}
+     * And `tools`, which the terminal does not list and the developer asked the page for: the
+     * tools active in this conversation. [Extensions] cannot say whether `codemode` is on — it is
+     * a built-in extension, loaded always and left out of that list, and its tool is active only
+     * where `defaultTools` or the conversation's own record says so.
+     *
+     * @return array{context: list<array{name: string, path: string}>, skills: list<string>, prompts: list<string>, extensions: list<string>, tools: list<string>}
      */
     private function loadedResources(): array
     {
@@ -734,6 +739,7 @@ final class RpcMode
             'prompts' => $prompts,
             // Not the built-ins, which the terminal leaves out of [Extensions] too.
             'extensions' => ExtensionDiscovery::discover($this->cwd, $this->extensionRunner?->paths() ?? []),
+            'tools' => $this->session->activeTools(),
         ];
     }
 

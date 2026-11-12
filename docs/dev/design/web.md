@@ -95,8 +95,10 @@ interactive `/web restart`, `/web status`, and `/web stop` controls;
 showed nothing, so which `AGENTS.md` and which extensions a web conversation runs with could not be
 seen. The page cannot work it out — the child loaded them, in its own directory — so the child
 says: **`get_loaded_resources`**, pig's own RPC command (`RpcMode::loadedResources()`), answers
-`{context: [{name, path}], skills, prompts, extensions}` with the terminal's contents in the
-terminal's order (built-in extensions left out, as there). `hooks.js`'s `loadedResourceSections()`
+`{context: [{name, path}], skills, prompts, extensions, tools}` with the terminal's contents in the
+terminal's order (built-in extensions left out, as there). `tools` is the page's own addition,
+asked for the same day: the active tools, because a built-in extension such as codemode is never
+in `extensions` and its being loaded says nothing about its tool being active. `hooks.js`'s `loadedResourceSections()`
 turns it into sections, dropping the empty ones, and `EmptyState` draws them under the chips.
 
 Asked for only while the welcome is up, and again on each bind, because the folder picker starts a

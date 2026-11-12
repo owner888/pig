@@ -1085,7 +1085,7 @@ final class RpcModeTest extends TestCase
         // A session with no loadout has no context files and no skills; `SystemMessageTranscriptTest`
         // has the ones a loadout carries.
         $this->assertSame(
-            ['context' => [], 'skills' => [], 'prompts' => ['/audit', '/review'], 'extensions' => ['deploy.php']],
+            ['context' => [], 'skills' => [], 'prompts' => ['/audit', '/review'], 'extensions' => ['deploy.php'], 'tools' => $this->session->activeTools()],
             $this->data(['type' => 'get_loaded_resources']),
         );
     }
