@@ -70,7 +70,7 @@ final class BuiltinCatalog
      * catalog server must be newer than to count (`RemoteCatalog::isNewer()`). `generate-models.php`
      * rewrites it with the rows.
      */
-    public const string GENERATED_AT = '2026-11-12T18:48:52Z';
+    public const string GENERATED_AT = '2026-11-12T20:23:36Z';
 
     /** Upstream's generator `CODEX_BASE_URL`. */
     private const string OPENAI_CODEX_BASE_URL = 'https://chatgpt.com/backend-api';
@@ -1673,6 +1673,7 @@ final class BuiltinCatalog
         'gemini-3.8-flash' => ['Gemini 3.8 Flash', Api::GoogleGenerativeAi, 1_048_576, 65_536, true, true, 0.75, 3.75, 0.075, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'gemini-4-argon' => ['Gemini 4 Argon', Api::GoogleGenerativeAi, 1_048_576, 65_536, true, true, 2.0, 10.0, 0.1, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'gemini-4-carbon' => ['Gemini 4 Carbon', Api::GoogleGenerativeAi, 1_048_576, 65_536, true, true, 2.0, 10.0, 0.1, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'gemini-4-hydrogen' => ['Gemini 4 Hydrogen', Api::GoogleGenerativeAi, 1_048_576, 65_536, true, true, 1.5, 7.5, 0.075, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null], 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'glm-5' => ['GLM-5', Api::OpenAiCompletions, 204_800, 131_072, true, false, 1.0, 3.2, 0.2, 0.0],
         'glm-5.1' => ['GLM-5.1', Api::OpenAiCompletions, 204_800, 131_072, true, false, 1.4, 4.4, 0.26, 0.0],
         'glm-5.2' => ['GLM-5.2', Api::OpenAiCompletions, 1_000_000, 131_072, true, false, 1.4, 4.4, 0.26, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
@@ -1822,6 +1823,7 @@ final class BuiltinCatalog
         'anthropic/claude-sonnet-5.5' => ['Anthropic: Claude Sonnet 5.5', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'anthropic/claude-sonnet-5.5:batch' => ['Anthropic: Claude Sonnet 5.5 (batch)', Api::OpenAiCompletions, 1_000_000, 128_000, true, true, 1.0, 5.0, 0.05, 1.25, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'anthropic/claude-sonnet-5:batch' => ['Anthropic: Claude Sonnet 5 (batch)', Api::OpenAiCompletions, 1_000_000, 128_000, true, true, 1.0, 5.0, 0.1, 1.25, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
+        'apodex/apodex-1.1-mini:free' => ['Apodex: Apodex 1.1 Mini (free)', Api::OpenAiCompletions, 262_144, 235_929, true, false, 0.0, 0.0, 0.0, 0.0],
         'auto' => ['Auto', Api::OpenAiCompletions, 2_000_000, 30_000, true, true, 0.0, 0.0, 0.0, 0.0],
         'baidu/ernie-5.5-flash-preview:free' => ['Baidu: ERNIE-5.5-Flash-Preview (free)', Api::OpenAiCompletions, 1_024_000, 921_600, true, false, 0.0, 0.0, 0.0, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'baidu/ernie-light-dt-1.0-intl' => ['Baidu: ERNIE-Light-DT-1.0', Api::OpenAiCompletions, 1_024_000, 131_072, true, false, 1.13, 3.94, 0.113, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
@@ -1845,7 +1847,7 @@ final class BuiltinCatalog
         'deepseek/deepseek-v4-flash-0731' => ['DeepSeek: DeepSeek V4 Flash 0731', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.0434, 0.3, 0.035, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'deepseek/deepseek-v4-flash-0731:batch' => ['DeepSeek: DeepSeek V4 Flash 0731 (batch)', Api::OpenAiCompletions, 1_048_576, 384_000, true, false, 0.048, 0.144, 0.012, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'deepseek/deepseek-v4-flash-vision-exp' => ['DeepSeek: DeepSeek V4 Flash Vision Exp', Api::OpenAiCompletions, 1_048_575, 943_717, true, true, 0.44, 1.32, 0.014, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'deepseek/deepseek-v4-pro' => ['DeepSeek: DeepSeek V4 Pro 0423', Api::OpenAiCompletions, 1_024_000, 384_000, true, false, 0.892272, 1.784544, 0.074356, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+        'deepseek/deepseek-v4-pro' => ['DeepSeek: DeepSeek V4 Pro 0423', Api::OpenAiCompletions, 1_024_000, 384_000, true, false, 0.888966, 1.777932, 0.074081, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'deepseek/deepseek-v4-pro-0813' => ['DeepSeek: DeepSeek V4 Pro 0813', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.111, 4.44, 0.097, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'deepseek/deepseek-v4.1-flash' => ['DeepSeek: DeepSeek V4.1 Flash', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 0.3, 1.2, 0.006, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'deepseek/deepseek-v4.1-flash-1017' => ['DeepSeek: DeepSeek V4.1 Flash 1017', Api::OpenAiCompletions, 1_048_576, 393_216, true, true, 0.15, 0.6, 0.003, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
@@ -2087,7 +2089,7 @@ final class BuiltinCatalog
         'qwen/qwen3.5-27b' => ['Qwen: Qwen3.5-27B', Api::OpenAiCompletions, 262_144, 81_920, true, true, 0.26, 2.6, 0.0, 0.0],
         'qwen/qwen3.5-35b-a3b' => ['Qwen: Qwen3.5-35B-A3B', Api::OpenAiCompletions, 262_144, 81_920, true, true, 0.14, 1.0, 0.05, 0.0],
         'qwen/qwen3.5-397b-a17b' => ['Qwen: Qwen3.5 397B A17B', Api::OpenAiCompletions, 256_000, 64_000, true, true, 0.6, 3.6, 0.12, 0.0],
-        'qwen/qwen3.5-9b' => ['Qwen: Qwen3.5-9B', Api::OpenAiCompletions, 262_144, 40_960, true, true, 0.167, 0.246, 0.151, 0.0],
+        'qwen/qwen3.5-9b' => ['Qwen: Qwen3.5-9B', Api::OpenAiCompletions, 262_144, 40_960, true, true, 0.147, 0.216, 0.132, 0.0],
         'qwen/qwen3.5-flash-02-23' => ['Qwen: Qwen3.5-Flash', Api::OpenAiCompletions, 1_000_000, 65_536, true, true, 0.065, 0.26, 0.0, 0.0],
         'qwen/qwen3.5-plus-02-15' => ['Qwen: Qwen3.5 Plus 2026-02-15', Api::OpenAiCompletions, 1_000_000, 65_536, true, true, 0.26, 1.56, 0.0, 0.0, 'tiers' => [[256_000, 0.325, 1.95, 0.0, 0.0]]],
         'qwen/qwen3.5-plus-20260420' => ['Qwen: Qwen3.5 Plus 2026-04-20', Api::OpenAiCompletions, 1_000_000, 65_536, true, true, 0.3, 1.8, 0.0, 0.375, 'tiers' => [[256_000, 0.375, 2.25, 0.0, 0.46875]]],

@@ -1719,6 +1719,32 @@
     },
     {
         "type": "chat",
+        "id": "apodex/apodex-1.1-mini:free",
+        "name": "Apodex: Apodex 1.1 Mini (free)",
+        "api": "openai-completions",
+        "provider": "openrouter",
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "reasoning": true,
+        "input": [
+            "text"
+        ],
+        "cost": {
+            "input": 0.0,
+            "output": 0.0,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 262144,
+        "maxTokens": 235929,
+        "compat": {
+            "supportsDeveloperRole": false,
+            "supportsStrictMode": true,
+            "thinkingFormat": "openrouter",
+            "sendSessionAffinityHeaders": true
+        }
+    },
+    {
+        "type": "chat",
         "id": "auto",
         "name": "Auto",
         "api": "openai-completions",
@@ -2499,9 +2525,9 @@
             "text"
         ],
         "cost": {
-            "input": 0.892272,
-            "output": 1.784544,
-            "cacheRead": 0.074356,
+            "input": 0.888966,
+            "output": 1.777932,
+            "cacheRead": 0.074081,
             "cacheWrite": 0.0
         },
         "contextWindow": 1024000,
@@ -12315,9 +12341,9 @@
             "image"
         ],
         "cost": {
-            "input": 0.167,
-            "output": 0.246,
-            "cacheRead": 0.151,
+            "input": 0.147,
+            "output": 0.216,
+            "cacheRead": 0.132,
             "cacheWrite": 0.0
         },
         "contextWindow": 262144,
