@@ -37,7 +37,7 @@ final class LlamaProvider
 {
     public const string LLAMA_PROVIDER_ID = 'llama.cpp';
 
-    public const string DEFAULT_LLAMA_SERVER_URL = 'http://127.0.0.1:8080';
+    public const string DEFAULT_LLAMA_SERVER_URL = 'http://127.0.0.1:9931';
 
     /** @var list<Model> */
     private array $models = [];

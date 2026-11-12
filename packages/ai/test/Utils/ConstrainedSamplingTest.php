@@ -65,6 +65,44 @@ final class ConstrainedSamplingTest extends TestCase
         }
     }
 
+    /** Upstream #12049: OpenAI strict mode rejects a schema node without a type. */
+    public function testANodeWithoutATypeIsRefusedAndABareEnumIsNot(): void
+    {
+        foreach ([
+            'untyped array items' => ['type' => 'object', 'properties' => ['commandArguments' => ['type' => 'array', 'items' => []]]],
+            'any value' => ['type' => 'object', 'properties' => ['value' => ['description' => 'Any JSON value']], 'required' => ['value']],
+            'bare const' => ['type' => 'object', 'properties' => ['mode' => ['const' => 'fast']], 'required' => ['mode']],
+        ] as $case => $schema) {
+            $error = null;
+
+            try {
+                ConstrainedSampling::makeStrictJsonSchema($schema);
+            } catch (UnsupportedStrictJsonSchema $refused) {
+                $error = $refused->getMessage();
+            }
+
+            $this->assertSame('schemas without a type are unsupported', $error, $case);
+        }
+
+        // "keeps strict mode for enum-only schemas"
+        $enum = ['type' => 'object', 'properties' => ['level' => ['enum' => ['low', 'high']]], 'required' => ['level']];
+        $this->assertSame(['enum' => ['low', 'high']], ConstrainedSampling::makeStrictJsonSchema($enum)['properties']['level']);
+        $this->assertTrue(ConstrainedSampling::resolveJsonSchemaStrictSampling(
+            new Tool('t', 'd', $enum, ['type' => 'json_schema', 'strict' => 'prefer']),
+            true,
+        ));
+        // With "prefer" an untyped node falls back to a tool that is not strict.
+        $untyped = ['type' => 'object', 'properties' => ['value' => ['description' => 'Any JSON value']]];
+        $this->assertNull(ConstrainedSampling::resolveJsonSchemaStrictSampling(new Tool('t', 'd', $untyped, ['type' => 'json_schema', 'strict' => 'prefer']), true));
+        // And with "require" it fails here, before the provider can refuse it.
+        try {
+            ConstrainedSampling::resolveJsonSchemaStrictSampling(new Tool('t', 'd', $untyped, ['type' => 'json_schema', 'strict' => 'require']), true);
+            $this->fail('expected a refusal');
+        } catch (\Pig\Ai\ProviderError $error) {
+            $this->assertSame('Tool "t" requires JSON-schema constrained sampling, but schemas without a type are unsupported.', $error->getMessage());
+        }
+    }
+
     public function testOnlyAToolThatAsksIsStrict(): void
     {
         // Upstream's default is no: a tool without `constrainedSampling` (or with `false`) goes as

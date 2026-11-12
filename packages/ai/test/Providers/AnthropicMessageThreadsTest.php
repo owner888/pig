@@ -537,7 +537,9 @@ final class AnthropicMessageThreadsTest extends TestCase
     {
         yield 'anthropic on api.anthropic.com' => ['anthropic', 'https://api.anthropic.com', null, true];
         yield 'anthropic elsewhere' => ['anthropic', 'https://gateway.example.com', null, false];
-        yield 'another provider on api.anthropic.com' => ['openrouter', 'https://api.anthropic.com', null, false];
+        // #11987: the endpoint decides, whatever the provider is called.
+        yield 'another provider id on api.anthropic.com' => ['anthropic-1-api', 'https://api.anthropic.com', null, true];
+        yield 'another provider id elsewhere' => ['anthropic-1-api', 'https://gateway.example.com', null, false];
         yield 'turned off' => ['anthropic', 'https://api.anthropic.com', false, false];
         yield 'turned on for a gateway' => ['custom', 'https://gateway.example.com', true, true];
     }

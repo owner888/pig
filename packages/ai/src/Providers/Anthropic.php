@@ -1045,8 +1045,9 @@ final class Anthropic
      */
     private static function supportsMessageThreads(Model $model): bool
     {
-        return self::compat($model)?->supportsMessageThreads
-            ?? ($model->provider === 'anthropic' && str_contains($model->baseUrl, 'api.anthropic.com'));
+        // By endpoint, not by provider id (#11987): a second Anthropic account configured as
+        // `anthropic-1-api` is on the same endpoint and continues its threads the same way.
+        return self::compat($model)?->supportsMessageThreads ?? str_contains($model->baseUrl, 'api.anthropic.com');
     }
 
     /**

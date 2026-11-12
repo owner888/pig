@@ -223,6 +223,12 @@ final class ConstrainedSampling
             }
         }
 
+        // "OpenAI strict mode rejects nodes without a type; a bare enum counts as typed, a bare const
+        // does not." (upstream #12049)
+        if (!array_key_exists('type', $schema) && !array_key_exists('anyOf', $schema) && !array_key_exists('enum', $schema)) {
+            throw new UnsupportedStrictJsonSchema('schemas without a type are unsupported');
+        }
+
         if (array_key_exists('anyOf', $schema)) {
             if (!self::isList($schema['anyOf']) || $schema['anyOf'] === []) {
                 throw new UnsupportedStrictJsonSchema('anyOf must contain at least one schema');

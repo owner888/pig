@@ -281,6 +281,25 @@ final class SearchToolsTest extends ToolTestCase
         $this->assertCount(3, $this->lines(strstr($this->textOf($this->execute(new FindTool($this->cwd), ['pattern' => '*.php', 'limit' => 3])), "\n\n[", true) ?: ''), 'one past the limit is cut');
     }
 
+    /** Upstream #12020: fd matches nothing for a leading "./", so the tool drops it. */
+    public function testFindIgnoresALeadingDotSlashInThePattern(): void
+    {
+        $this->needsFd();
+
+        $this->file('src/a.ts', 'a');
+        $this->file('package.json', '{}');
+
+        foreach (['./src/*.ts', './src/**/*.ts', '././src/*.ts'] as $pattern) {
+            $this->assertSame('src/a.ts', $this->textOf($this->execute(new FindTool($this->cwd), ['pattern' => $pattern])), $pattern);
+        }
+
+        // Without a "/" left, "./*.json" matches names at any depth, like "*.json".
+        $this->file('src/b.json', '{}');
+        $found = $this->lines($this->textOf($this->execute(new FindTool($this->cwd), ['pattern' => './*.json'])));
+        sort($found);
+        $this->assertSame(['package.json', 'src/b.json'], $found);
+    }
+
     /** Upstream #5960: inside a repository, its .gitignore stops at a nested repository. */
     public function testFindInsideARepositoryLetsANestedOneKeepItsOwnFiles(): void
     {

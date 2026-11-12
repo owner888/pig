@@ -316,7 +316,7 @@ final class LlamaExtensionTest extends TestCase
         };
         $credential = Async::run(static fn () => $auth->loginApiKey('llama.cpp', $provider->provider->apiKeyAuth, $onPrompt));
 
-        $this->assertSame([['llama.cpp server URL', 'http://127.0.0.1:8080'], ['API key (optional)', '']], $prompts);
+        $this->assertSame([['llama.cpp server URL', 'http://127.0.0.1:9931'], ['API key (optional)', '']], $prompts);
         $this->assertSame('key-1', $credential?->key);
         $saved = json_decode((string) file_get_contents($this->dir . '/auth.json'), true);
         $this->assertSame(['type' => 'api_key', 'key' => 'key-1', 'env' => ['LLAMA_BASE_URL' => $url]], $saved['llama.cpp']);
@@ -480,10 +480,10 @@ final class LlamaExtensionTest extends TestCase
 
     public function testServerUrlsAreNormalizedToTheRouterRoot(): void
     {
-        $this->assertSame('http://127.0.0.1:8080', LlamaClient::normalizeLlamaServerUrl(' http://127.0.0.1:8080/v1/ '));
+        $this->assertSame('http://127.0.0.1:9931', LlamaClient::normalizeLlamaServerUrl(' http://127.0.0.1:9931/v1/ '));
         $this->assertSame('https://example.com/prefix', LlamaClient::normalizeLlamaServerUrl('https://Example.com:443/prefix/v1?x=1#y'));
         $this->assertSame('http://host', LlamaClient::normalizeLlamaServerUrl('http://host/'));
-        $this->assertSame('http://host:8080/v1', LlamaClient::llamaInferenceUrl('http://host:8080'));
+        $this->assertSame('http://host:9931/v1', LlamaClient::llamaInferenceUrl('http://host:9931'));
 
         try {
             LlamaClient::normalizeLlamaServerUrl('ftp://host');

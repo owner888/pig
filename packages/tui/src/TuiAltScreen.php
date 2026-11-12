@@ -2178,10 +2178,14 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
         $buffer = self::BEGIN_SYNCHRONIZED_OUTPUT;
         if ($fullRedraw) {
             $this->fullRedrawCount++;
-            $clearImages = $this->imageProtocol === ImageProtocol::Kitty && $hadUploadedKittyImages
-                ? TerminalImage::deleteAllKittyPlacements()
-                : $this->deleteKittyImages();
-            $buffer .= $clearImages . "\x1b[2J";
+            if ($this->imageProtocol === ImageProtocol::Kitty && $hadUploadedKittyImages) {
+                // Kitty frees image data without placements on ED 2, which would break placement-only
+                // reuse. Every row is cleared with EL 2 below, so keep the uploads and skip the screen
+                // clear (upstream #12010).
+                $buffer .= TerminalImage::deleteAllKittyPlacements();
+            } else {
+                $buffer .= $this->deleteKittyImages() . "\x1b[2J";
+            }
         } elseif ($imagesNeedRedraw) {
             if ($this->imageProtocol === ImageProtocol::ITerm2) {
                 $buffer .= "\x1b[2J";

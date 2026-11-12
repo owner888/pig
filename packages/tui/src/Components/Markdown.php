@@ -240,7 +240,15 @@ final class Markdown implements Component
         $margin = str_repeat(' ', $this->paddingX);
         $lines = [];
 
+        // "Image lines skip wrapping, so split them here: hard breaks after an image must stay
+        // separate rows" (upstream #12017) — the wrapper is what splits any other line.
+        $tokenLines = [];
+
         foreach ($this->block($token, $contentWidth, $next) as $line) {
+            array_push($tokenLines, ...(TerminalImage::isImageLine($line) ? explode("\n", $line) : [$line]));
+        }
+
+        foreach ($tokenLines as $line) {
             // Image protocols (Kitty / iTerm2) put tens of kilobytes inline;
             // skip wrapping and padding them to avoid huge CPU overhead and broken sequences.
             if (TerminalImage::isImageLine($line)) {

@@ -5,9 +5,15 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Test;
 
 use Pig\Agent\AgentError;
+use Pig\Async\AbortController;
+use Pig\Async\AbortError;
+use Pig\Async\AbortSignal;
+use Pig\CodingAgent\Tools\LocalReadOperations;
+use Pig\CodingAgent\Tools\ReadOperations;
 use Pig\CodingAgent\Tools\ReadTool;
 use Pig\CodingAgent\Tools\Truncate;
 use Pig\CodingAgent\Tools\Truncation;
+use Pig\Test\AssertsThrows;
 
 /**
  * Upstream #11750: `read` streams the file instead of loading it whole. The whole-file algorithm
@@ -16,6 +22,8 @@ use Pig\CodingAgent\Tools\Truncation;
  */
 final class ReadStreamingTest extends ToolTestCase
 {
+    use AssertsThrows;
+
     public function testTheStreamedReadIsTheWholeFileReadForEveryRangeAndChunkSize(): void
     {
         $files = [
@@ -107,6 +115,81 @@ final class ReadStreamingTest extends ToolTestCase
         $this->assertStringContainsString('2 more lines in file. Use offset=400000 to continue', $this->textOf($result));
         // 40 MB on disk; a chunk and the answer in memory.
         $this->assertLessThan(8 << 20, memory_get_peak_usage() - $before);
+    }
+
+    /**
+     * Upstream #11956, "stops reading a local file when aborted mid-read". Its other half — an
+     * abort while the file is opened crashing Node on an unwatched stream error — has no PHP
+     * counterpart: the stream here never held the signal, the tool looks at it between chunks and
+     * the generator's `finally` closes the file. What can be held is that an abort stops the read
+     * at the next look, with most of the file unread.
+     */
+    public function testAnAbortStopsTheReadWithMostOfTheFileUnread(): void
+    {
+        $path = $this->file('abort-mid-read.txt', '');
+        $handle = fopen($path, 'wb');
+
+        for ($i = 0; $i < 24; $i++) {
+            fwrite($handle, str_repeat('x', 1 << 20));
+        }
+
+        fclose($handle);
+
+        $controller = new AbortController();
+        $operations = new class ($controller) implements ReadOperations {
+            public int $chunks = 0;
+
+            public bool $closed = false;
+
+            private readonly LocalReadOperations $local;
+
+            public function __construct(private readonly AbortController $controller)
+            {
+                $this->local = new LocalReadOperations();
+            }
+
+            #[\Override]
+            public function readFile(string $absolutePath): string
+            {
+                return $this->local->readFile($absolutePath);
+            }
+
+            #[\Override]
+            public function access(string $absolutePath): void
+            {
+                $this->local->access($absolutePath);
+            }
+
+            #[\Override]
+            public function detectImageMimeType(string $absolutePath): ?string
+            {
+                return $this->local->detectImageMimeType($absolutePath);
+            }
+
+            #[\Override]
+            public function createReadStream(string $absolutePath, ?AbortSignal $signal = null): iterable
+            {
+                try {
+                    foreach ($this->local->createReadStream($absolutePath, $signal) as $chunk) {
+                        $this->chunks++;
+                        $this->controller->abort();
+
+                        yield $chunk;
+                    }
+                } finally {
+                    $this->closed = true;
+                }
+            }
+        };
+
+        $this->assertThrows(
+            AbortError::class,
+            fn () => (new ReadTool($this->cwd, operations: $operations))->execute('call-1', ['path' => 'abort-mid-read.txt'], $controller->signal),
+        );
+        // 24 chunks on disk; the signal is looked at every 8 MB.
+        $this->assertSame(8, $operations->chunks);
+        gc_collect_cycles();
+        $this->assertTrue($operations->closed, 'leaving the loop closes the stream');
     }
 
     /**

@@ -56,11 +56,19 @@ final class ToolLoadout
      * Tools of the restored or reloaded loadout that are not registered yet — upstream's
      * `_pendingToolNames`: "such as tools of MCP servers that are still connecting. They are
      * activated when they are registered, and dropped when `setActiveToolsByName()` deactivates a
-     * tool or the next agent run starts."
+     * tool of that loadout or the next agent run starts."
      *
      * @var array<string, true>
      */
     private array $pending = [];
+
+    /**
+     * "The restored or reloaded loadout that `_pendingToolNames` belongs to" — upstream's
+     * `_restoredToolNames` (#11996).
+     *
+     * @var array<string, true>
+     */
+    private array $restored = [];
 
     /** @var list<string>|null every tool registered as of the last `apply()`; null before the first */
     private ?array $registered = null;
@@ -123,6 +131,8 @@ final class ToolLoadout
         foreach ($this->activeNames() as $name) {
             $this->pending[$name] = true;
         }
+
+        $this->restored = array_fill_keys($this->activeNames(), true);
 
         $this->customTools = $customTools;
         $this->contextFiles = $contextFiles;
@@ -330,15 +340,31 @@ final class ToolLoadout
      * `--exclude-tools` keep out of the pending set what they would keep out of the registry.
      *
      * @param list<string> $names
+     * @param list<string> $recorded the tools the transcript recorded, without the ones registered
+     *        since — the loadout an extension has to narrow for the pending tools to be dropped
      */
-    public function restore(array $names): void
+    public function restore(array $names, array $recorded): void
     {
         $filter = $this->customTools->filter();
         $this->pending = array_fill_keys(
             $filter === null ? $names : array_values(array_filter($names, static fn (string $name): bool => $filter($name))),
             true,
         );
+        $this->restored = array_fill_keys($recorded, true);
         $this->setActive($names);
+    }
+
+    /** Forget the restored loadout and its pending tools, as a new restore begins by doing. */
+    public function forgetRestored(): void
+    {
+        $this->pending = [];
+        $this->restored = [];
+    }
+
+    /** Whether $name is a tool of the restored or reloaded loadout. */
+    public function isRestored(string $name): bool
+    {
+        return isset($this->restored[$name]);
     }
 
     /** The registered custom tools' names — every registered tool that is not a built-in. @return list<string> */

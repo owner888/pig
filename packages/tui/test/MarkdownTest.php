@@ -925,4 +925,18 @@ final class MarkdownTest extends TestCase
         // A comment inside a code span is code.
         $this->assertSame(['a <!-- c --> b'], $this->rows('a `<!-- c -->` b', 60));
     }
+
+    /** Upstream #12017, "keeps hard breaks after an inline image as separate rows". */
+    public function testHardBreaksAfterAnInlineImageStaySeparateRows(): void
+    {
+        $image = "\x1b_Ga=T,f=100,q=2,c=20,r=3,C=1;AAAA\x1b\\";
+        $lines = (new Markdown("`{$image}`  \n` `  \n` `\n\n- one", paddingX: 0))->render(80);
+
+        foreach ($lines as $line) {
+            $this->assertStringNotContainsString("\n", $line);
+        }
+
+        $this->assertStringContainsString($image, $lines[0]);
+        $this->assertSame(['', '', '', '- one'], array_map(static fn (string $line): string => trim(Ansi::strip($line)), array_slice($lines, 1)));
+    }
 }

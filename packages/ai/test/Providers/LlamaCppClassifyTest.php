@@ -278,9 +278,9 @@ final class LlamaCppClassifyTest extends TestCase
 
     public function testTheServerRootIsTheOpenAiCompatibleBaseUrlWithoutV1(): void
     {
-        $this->assertSame('http://127.0.0.1:8080', LlamaCppClassify::llamaServerRoot('http://127.0.0.1:8080/v1/'));
+        $this->assertSame('http://127.0.0.1:9931', LlamaCppClassify::llamaServerRoot('http://127.0.0.1:9931/v1/'));
         $this->assertSame('https://example.com/prefix', LlamaCppClassify::llamaServerRoot('https://example.com/prefix/v1'));
-        $this->assertSame('http://127.0.0.1:8080', LlamaCppClassify::llamaServerRoot('http://127.0.0.1:8080'));
+        $this->assertSame('http://127.0.0.1:9931', LlamaCppClassify::llamaServerRoot('http://127.0.0.1:9931'));
     }
 
     public function testTypesafesConfidenceAndTheExpectedScore(): void

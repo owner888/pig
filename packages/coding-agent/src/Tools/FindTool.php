@@ -116,6 +116,9 @@ final class FindTool implements AgentTool, ReplayableTool
         }
 
         $fd = $elsewhere !== null ? 'fd' : ExternalTool::fd();
+        // Upstream #12020: "fd's full paths never contain "/./", so "./src/*.ts" would find nothing;
+        // drop the "./"." For fd only — a custom `glob()` above gets the pattern as it was written.
+        $pattern = (string) preg_replace('#^(?:\./)+#', '', $pattern);
 
         $command = [
             $fd,

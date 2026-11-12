@@ -60,14 +60,14 @@ final class LlamaViewTest extends TestCase
                 $view->handleInput("\r");
             });
 
-            return [$view->showModels('http://127.0.0.1:8080', $catalog), $view->showModels('http://127.0.0.1:8080', $catalog)];
+            return [$view->showModels('http://127.0.0.1:9931', $catalog), $view->showModels('http://127.0.0.1:9931', $catalog)];
         });
 
         $this->assertSame('model', $first['type']);
         $this->assertSame('a-warm', $first['model']['id']);
         $this->assertSame(['type' => 'download'], $second);
         $this->assertStringContainsString('llama.cpp models', $screen);
-        $this->assertStringContainsString('http://127.0.0.1:8080', $screen);
+        $this->assertStringContainsString('http://127.0.0.1:9931', $screen);
         $this->assertStringContainsString('loaded · 33k context', $screen);
         $this->assertStringContainsString('Download model…', $screen);
         $this->assertStringContainsString('enter load/unload/download', $screen);

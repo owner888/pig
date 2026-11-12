@@ -15,7 +15,7 @@ declare(strict_types=1);
  * - **the `llama.cpp` provider** — the router's loaded and sleeping models (and, with router autoload,
  *   its unloaded presets) as chat models on `openai-completions` at `<router>/v1`, and every one of them
  *   as a classifier with the same id;
- * - **`/login llama.cpp`** — the router URL (`http://127.0.0.1:8080` by default) and an optional API
+ * - **`/login llama.cpp`** — the router URL (`http://127.0.0.1:9931` by default) and an optional API
  *   key, kept as an `api_key` credential with `env.LLAMA_BASE_URL`; `LLAMA_BASE_URL` and
  *   `LLAMA_API_KEY` configure the same without it;
  * - **`/llama`** — load or unload a model, download one from Hugging Face, Escape to stop either.

@@ -1230,6 +1230,33 @@ final class TuiAltScreenTest extends TestCase
         return false;
     }
 
+    public function testKeepsUploadedKittyImagesAcrossAFullRedraw(): void
+    {
+        // Regression test for #12010: Kitty frees image data without placements on ED 2, so a full
+        // redraw that deleted placements and then cleared the screen left placement-only reuse
+        // pointing at nothing.
+        TerminalImage::setCapabilities(new TerminalCapabilities(ImageProtocol::Kitty, true, true));
+        $terminal = new FakeTerminal(20, 6);
+        $imageId = 12010;
+        $imageLine = TerminalImage::encodeKitty('AAAA', columns: 2, rows: 3, imageId: $imageId, moveCursor: false);
+        TerminalImage::registerKittyImageMetadata(new KittyImageMetadata($imageId, 2, 3, 100, 100));
+        $tui = new TuiAltScreen($terminal);
+        $tui->setLayoutRoot(self::linesComponent(static fn (): array => ['before', $imageLine, '', '', 'after']));
+        $this->start($tui);
+        $eventCount = count($terminal->events);
+
+        $terminal->resize(20, 8);
+        self::settle();
+        $redrawWrites = self::writesSince($terminal, $eventCount);
+
+        $this->assertStringContainsString("\x1b_Ga=p,q=2", $redrawWrites);
+        $this->assertStringNotContainsString("\x1b_Ga=T", $redrawWrites);
+        $this->assertStringNotContainsString("\x1b[2J", $redrawWrites);
+        // Every row of the new size is cleared on its own instead.
+        $this->assertSame(8, substr_count($redrawWrites, "\x1b[2K"));
+        $this->assertStringContainsString('after', $redrawWrites);
+    }
+
     public function testRedrawsKittyImagesAfterWritesToCoveredRows(): void
     {
         // Regression test for #10319: a scrollbar update below an unchanged image anchor erased its

@@ -79,7 +79,7 @@ final readonly class AnthropicMessagesCompat
      * @param bool|null $supportsMessageThreads requests of a session continue the server-side
      *        thread of the previous reply and send only the new messages
      *        (`message-threads-2026-08-12`) — upstream's `supportsMessageThreads` (default: true for
-     *        the `anthropic` provider on `api.anthropic.com`, false otherwise, since a gateway that
+     *        a `baseUrl` on `api.anthropic.com`, false otherwise, since a gateway that
      *        drops the `thread` field would silently lose the earlier conversation)
      */
     public function __construct(

@@ -824,7 +824,7 @@ final class AgentSession
             return;
         }
 
-        $this->loadout->clearPending();
+        $this->loadout->forgetRestored();
         // "All system messages on the branch, including those before a compaction. Compaction
         // snapshots are derived from these, so replaying them gives the current loadout."
         $systemMessages = array_values(array_filter(
@@ -857,10 +857,11 @@ final class AgentSession
         ));
 
         // "The recorded loadout plus the new tools, with `--tools +name`/`-name` applied."
-        $this->loadout->restore(Settings::applyToolModifiers(
-            [...array_map(static fn (Tool $tool): string => $tool->name, Transcript::getCurrentTools($systemMessages)), ...$newTools],
-            $modifiers,
-        ));
+        $recorded = array_map(static fn (Tool $tool): string => $tool->name, Transcript::getCurrentTools($systemMessages));
+        $this->loadout->restore(
+            Settings::applyToolModifiers([...$recorded, ...$newTools], $modifiers),
+            Settings::applyToolModifiers($recorded, $modifiers),
+        );
     }
 
     /**
@@ -1560,14 +1561,16 @@ final class AgentSession
             throw new AgentError('This session has no tool loadout to narrow.');
         }
 
-        // Upstream's `setActiveToolsByName()`: "A loadout that deactivates a tool replaces the
-        // restored one, whose pending tools are dropped. One that only adds tools, like activating
-        // tool_search, keeps them."
+        // Upstream's `setActiveToolsByName()`: "A loadout that deactivates a tool of the restored one
+        // replaces it, and its pending tools are dropped. One that only adds tools, like activating
+        // tool_search, keeps them, and so does one that only deactivates tools outside the restored
+        // loadout, such as an extension's own tool that the restore or reload activated as newly
+        // registered." (#11996)
         $previous = $this->loadout->activeNames();
         $this->loadout->setActive($names);
         $active = $this->loadout->activeNames();
 
-        if (array_diff($previous, $active) !== []) {
+        if (array_filter(array_diff($previous, $active), $this->loadout->isRestored(...)) !== []) {
             $this->loadout->clearPending();
         }
     }
