@@ -2499,9 +2499,9 @@
             "text"
         ],
         "cost": {
-            "input": 0.88044,
-            "output": 1.76088,
-            "cacheRead": 0.07337,
+            "input": 0.892272,
+            "output": 1.784544,
+            "cacheRead": 0.074356,
             "cacheWrite": 0.0
         },
         "contextWindow": 1024000,
@@ -2572,9 +2572,9 @@
             "image"
         ],
         "cost": {
-            "input": 0.051,
-            "output": 0.567,
-            "cacheRead": 0.018,
+            "input": 0.3,
+            "output": 1.2,
+            "cacheRead": 0.006,
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
@@ -2619,60 +2619,13 @@
             "image"
         ],
         "cost": {
-            "input": 0.006,
-            "output": 0.5,
-            "cacheRead": 0.005,
+            "input": 0.15,
+            "output": 0.6,
+            "cacheRead": 0.003,
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
-        "maxTokens": 943718,
-        "compat": {
-            "supportsDeveloperRole": false,
-            "requiresReasoningContentOnAssistantMessages": true,
-            "supportsStrictMode": true,
-            "thinkingFormat": "openrouter",
-            "sendSessionAffinityHeaders": true
-        },
-        "inputLimits": {
-            "images": {
-                "resize": {
-                    "maxWidth": 2000,
-                    "maxHeight": 2000,
-                    "maxBytes": 4718592,
-                    "jpegQuality": 80
-                }
-            }
-        }
-    },
-    {
-        "type": "chat",
-        "id": "deepseek/deepseek-v4.1-flash-1017:batch",
-        "name": "DeepSeek: DeepSeek V4.1 Flash 1017 (batch)",
-        "api": "openai-completions",
-        "provider": "openrouter",
-        "baseUrl": "https://openrouter.ai/api/v1",
-        "reasoning": true,
-        "thinkingLevelMap": {
-            "off": "none",
-            "minimal": null,
-            "low": "low",
-            "medium": null,
-            "high": "high",
-            "xhigh": null,
-            "max": "max"
-        },
-        "input": [
-            "text",
-            "image"
-        ],
-        "cost": {
-            "input": 0.011,
-            "output": 0.2,
-            "cacheRead": 0.002,
-            "cacheWrite": 0.0
-        },
-        "contextWindow": 1048576,
-        "maxTokens": 943718,
+        "maxTokens": 393216,
         "compat": {
             "supportsDeveloperRole": false,
             "requiresReasoningContentOnAssistantMessages": true,
@@ -4111,6 +4064,98 @@
     },
     {
         "type": "chat",
+        "id": "google/gemini-4-hydrogen",
+        "name": "Google: Gemini 4 Hydrogen",
+        "api": "openai-completions",
+        "provider": "openrouter",
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": null,
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": "xhigh",
+            "max": null
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 1.5,
+            "output": 7.5,
+            "cacheRead": 0.075,
+            "cacheWrite": 0.083333
+        },
+        "contextWindow": 1048576,
+        "maxTokens": 943718,
+        "compat": {
+            "supportsDeveloperRole": false,
+            "supportsStrictMode": true,
+            "thinkingFormat": "openrouter",
+            "sendSessionAffinityHeaders": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
+        "id": "google/gemini-4-hydrogen:batch",
+        "name": "Google: Gemini 4 Hydrogen (batch)",
+        "api": "openai-completions",
+        "provider": "openrouter",
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": null,
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": "xhigh",
+            "max": null
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 0.75,
+            "output": 3.75,
+            "cacheRead": 0.0375,
+            "cacheWrite": 0.083333
+        },
+        "contextWindow": 1048576,
+        "maxTokens": 943718,
+        "compat": {
+            "supportsDeveloperRole": false,
+            "supportsStrictMode": true,
+            "thinkingFormat": "openrouter",
+            "sendSessionAffinityHeaders": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
         "id": "google/gemini-nano-banana-2.1",
         "name": "Google: Nano Banana 2.1",
         "api": "openai-completions",
@@ -4242,9 +4287,9 @@
             "image"
         ],
         "cost": {
-            "input": 0.08,
-            "output": 0.1,
-            "cacheRead": 0.046,
+            "input": 0.09,
+            "output": 0.28,
+            "cacheRead": 0.049,
             "cacheWrite": 0.0
         },
         "contextWindow": 256000,
@@ -4399,7 +4444,7 @@
         ],
         "cost": {
             "input": 0.06,
-            "output": 0.25,
+            "output": 0.15,
             "cacheRead": 0.015,
             "cacheWrite": 0.0
         },
@@ -4427,6 +4472,58 @@
             "input": 0.021,
             "output": 0.063,
             "cacheRead": 0.0042,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 262144,
+        "maxTokens": 32768,
+        "compat": {
+            "supportsDeveloperRole": false,
+            "supportsStrictMode": true,
+            "thinkingFormat": "openrouter",
+            "sendSessionAffinityHeaders": true
+        }
+    },
+    {
+        "type": "chat",
+        "id": "inclusionai/ling-3.0-flash-fin",
+        "name": "inclusionAI: Ling 3.0 Flash Fin",
+        "api": "openai-completions",
+        "provider": "openrouter",
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "reasoning": true,
+        "input": [
+            "text"
+        ],
+        "cost": {
+            "input": 0.042,
+            "output": 0.1232,
+            "cacheRead": 0.0084,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 262144,
+        "maxTokens": 32768,
+        "compat": {
+            "supportsDeveloperRole": false,
+            "supportsStrictMode": true,
+            "thinkingFormat": "openrouter",
+            "sendSessionAffinityHeaders": true
+        }
+    },
+    {
+        "type": "chat",
+        "id": "inclusionai/ling-3.0-flash-sante",
+        "name": "inclusionAI: Ling 3.0 Flash Sante",
+        "api": "openai-completions",
+        "provider": "openrouter",
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "reasoning": true,
+        "input": [
+            "text"
+        ],
+        "cost": {
+            "input": 0.042,
+            "output": 0.1232,
+            "cacheRead": 0.0084,
             "cacheWrite": 0.0
         },
         "contextWindow": 262144,
@@ -6249,7 +6346,7 @@
             "cacheRead": 0.07,
             "cacheWrite": 0.0
         },
-        "contextWindow": 256000,
+        "contextWindow": 262144,
         "maxTokens": 4096,
         "compat": {
             "supportsDeveloperRole": false,
@@ -6414,9 +6511,9 @@
             "image"
         ],
         "cost": {
-            "input": 2.0,
-            "output": 10.0,
-            "cacheRead": 0.2,
+            "input": 0.2375,
+            "output": 8.7856,
+            "cacheRead": 0.19,
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
@@ -9189,17 +9286,17 @@
             "image"
         ],
         "cost": {
-            "input": 4.0,
-            "output": 20.0,
-            "cacheRead": 0.4,
-            "cacheWrite": 5.0,
+            "input": 4.4,
+            "output": 22.0,
+            "cacheRead": 0.44,
+            "cacheWrite": 5.5,
             "tiers": [
                 {
                     "inputTokensAbove": 272000,
-                    "input": 8.0,
-                    "output": 30.0,
-                    "cacheRead": 0.8,
-                    "cacheWrite": 10.0
+                    "input": 8.8,
+                    "output": 33.0,
+                    "cacheRead": 0.88,
+                    "cacheWrite": 11.0
                 }
             ]
         },
@@ -11613,13 +11710,13 @@
             "text"
         ],
         "cost": {
-            "input": 0.1,
-            "output": 0.22,
+            "input": 0.12,
+            "output": 0.24,
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
         "contextWindow": 40960,
-        "maxTokens": 36864,
+        "maxTokens": 16384,
         "compat": {
             "supportsDeveloperRole": false,
             "supportsStrictMode": true,
@@ -12218,13 +12315,13 @@
             "image"
         ],
         "cost": {
-            "input": 0.17,
-            "output": 0.25,
-            "cacheRead": 0.0,
+            "input": 0.167,
+            "output": 0.246,
+            "cacheRead": 0.151,
             "cacheWrite": 0.0
         },
         "contextWindow": 262144,
-        "maxTokens": 235929,
+        "maxTokens": 40960,
         "compat": {
             "supportsDeveloperRole": false,
             "supportsStrictMode": true,
@@ -13925,6 +14022,43 @@
     },
     {
         "type": "chat",
+        "id": "unbiased/pareto-26.10-preview",
+        "name": "Pareto 26.10 Preview",
+        "api": "openai-completions",
+        "provider": "openrouter",
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "reasoning": false,
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 0.8,
+            "output": 3.2,
+            "cacheRead": 0.03,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 1048576,
+        "maxTokens": 131072,
+        "compat": {
+            "supportsDeveloperRole": false,
+            "supportsStrictMode": true,
+            "thinkingFormat": "openrouter",
+            "sendSessionAffinityHeaders": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
         "id": "unbiased/pareto-26.9",
         "name": "Pareto 26.9",
         "api": "openai-completions",
@@ -14952,12 +15086,12 @@
             "text"
         ],
         "cost": {
-            "input": 1.33,
-            "output": 4.18,
-            "cacheRead": 0.247,
+            "input": 1.4,
+            "output": 4.4,
+            "cacheRead": 0.26,
             "cacheWrite": 0.0
         },
-        "contextWindow": 202745,
+        "contextWindow": 202752,
         "maxTokens": 131072,
         "compat": {
             "supportsDeveloperRole": false,
@@ -15022,9 +15156,9 @@
             "text"
         ],
         "cost": {
-            "input": 0.527,
-            "output": 1.075,
-            "cacheRead": 0.178,
+            "input": 0.322,
+            "output": 0.989,
+            "cacheRead": 0.109,
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
@@ -15139,13 +15273,13 @@
             "image"
         ],
         "cost": {
-            "input": 0.047,
-            "output": 0.061,
-            "cacheRead": 0.02,
+            "input": 0.05,
+            "output": 0.18,
+            "cacheRead": 0.01,
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
-        "maxTokens": 943718,
+        "maxTokens": 131072,
         "compat": {
             "supportsDeveloperRole": false,
             "supportsStrictMode": true,
@@ -15565,9 +15699,9 @@
             "image"
         ],
         "cost": {
-            "input": 0.006,
-            "output": 0.5,
-            "cacheRead": 0.005,
+            "input": 0.022,
+            "output": 0.4,
+            "cacheRead": 0.004,
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
@@ -15674,7 +15808,7 @@
             "low": "low",
             "medium": "medium",
             "high": "high",
-            "xhigh": null,
+            "xhigh": "xhigh",
             "max": null
         },
         "input": [
@@ -15682,13 +15816,13 @@
             "image"
         ],
         "cost": {
-            "input": 0.75,
-            "output": 3.75,
+            "input": 1.5,
+            "output": 7.5,
             "cacheRead": 0.075,
-            "cacheWrite": 0.041667
+            "cacheWrite": 0.083333
         },
         "contextWindow": 1048576,
-        "maxTokens": 65536,
+        "maxTokens": 943718,
         "compat": {
             "supportsDeveloperRole": false,
             "supportsStrictMode": true,
@@ -16364,7 +16498,7 @@
             "image"
         ],
         "cost": {
-            "input": 0.038,
+            "input": 0.019,
             "output": 0.0,
             "cacheRead": 0.0,
             "cacheWrite": 0.0
@@ -16717,6 +16851,29 @@
     },
     {
         "type": "classifier",
+        "id": "perplexity/pplx-decider-flash-v1.3:free",
+        "name": "Perplexity: Decider Flash V1.3 (free)",
+        "api": "typesafe-system-one",
+        "provider": "openrouter",
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 0.0,
+            "output": 0.0,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 262144,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
+    },
+    {
+        "type": "classifier",
         "id": "perplexity/pplx-decider-v1.2",
         "name": "Perplexity: Decider V1.2",
         "api": "typesafe-system-one",
@@ -16728,6 +16885,29 @@
         ],
         "cost": {
             "input": 0.02,
+            "output": 0.0,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 262144,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
+        }
+    },
+    {
+        "type": "classifier",
+        "id": "perplexity/pplx-decider-v1.3:free",
+        "name": "Perplexity: Decider V1.3 (free)",
+        "api": "typesafe-system-one",
+        "provider": "openrouter",
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 0.0,
             "output": 0.0,
             "cacheRead": 0.0,
             "cacheWrite": 0.0
@@ -17043,7 +17223,7 @@
             "image"
         ],
         "cost": {
-            "input": 0.019,
+            "input": 0.02,
             "output": 0.0,
             "cacheRead": 0.0,
             "cacheWrite": 0.0
