@@ -43,6 +43,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [2.0.9] - 2026-11-12
+
+### Changed
+
+- `Pig\Evals\Harness` stages an isolated package directory (`PIG_PACKAGE_DIR` / `PIG_DOCS_DIR`) for `with_docs` runs, restricts file tools to the eval sandbox roots via a `tool_call` guard, keeps the eval session JSONL outside `~/.pig/agent`, and shares the host `Auth` instance across turns so extension providers such as `pig-antigravity` retain multi-account failover and token refresh.
+
+### Fixed
+
+- `Pig\Evals\Harness` read `$event->systemPrompt` as a property instead of calling `$event->systemPrompt()` in the `before_agent_start` prompt-transform handler, and `Cli::artifactRunId()` called `Uuid::v4()` instead of `Uuid::v7()`.
+- `Pig\Evals\Evals\TuiDocsEval::inspectContextFooter()` initializes the default `dark` theme before rendering the reference `FooterComponent` when run standalone from `Cli`.
+
 ## [2.0.8] - 2026-11-11
 
 ### New Features

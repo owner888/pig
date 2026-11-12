@@ -226,6 +226,7 @@ final class Cli
             json_encode(array_map(static fn (EvalTask $t): array => $t->toArray(), $tasks), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n",
         );
 
+        \Pig\Ai\Http\HttpClient::useIdleTimeout(45.0);
         $observations = [];
         $totalTasks = count($tasks);
 
@@ -341,6 +342,8 @@ final class Cli
         $taskDir = $artifactDirectory . '/tasks/' . hash('sha256', $identity);
         mkdir($taskDir, 0o700, true);
         $reportPath = $taskDir . '/vitest.json';
+        $startedAt = hrtime(true);
+        \Pig\Async\Loop::reset();
 
         try {
             $outcome = $runner([
@@ -348,6 +351,13 @@ final class Cli
                 'variant' => $task->variant,
                 'model' => $modelSelection,
             ]);
+            printf(
+                "  -> score=%s (%dms, %d tools, %d tokens)\n",
+                (string) $outcome['score'],
+                $outcome['run']['timings']['totalMs'] ?? 0,
+                $outcome['run']['usage']['toolCalls'] ?? 0,
+                $outcome['run']['usage']['totalTokens'] ?? 0,
+            );
             $status = 'passed';
             $meta = [
                 'eval' => [
@@ -362,6 +372,8 @@ final class Cli
             ];
         } catch (Throwable $error) {
             $status = 'failed';
+            $elapsedMs = (int) round((hrtime(true) - $startedAt) / 1e6);
+            echo "  -> errored ({$elapsedMs}ms): {$error->getMessage()}\n";
             $meta = [
                 'eval' => [
                     'avgScore' => null,
@@ -376,7 +388,7 @@ final class Cli
                             'provider' => $modelSelection['provider'],
                             'model' => $modelSelection['id'],
                         ],
-                        'timings' => ['totalMs' => 0],
+                        'timings' => ['totalMs' => $elapsedMs],
                         'artifacts' => [],
                         'errors' => [['message' => $error->getMessage()]],
                     ],
@@ -497,7 +509,7 @@ final class Cli
 
     private static function artifactRunId(): string
     {
-        return str_replace(':', '-', gmdate('Y-m-d\TH:i:s\Z')) . '_' . Uuid::v4();
+        return str_replace(':', '-', gmdate('Y-m-d\TH:i:s\Z')) . '_' . Uuid::v7();
     }
 
     private static function env(string $name): ?string

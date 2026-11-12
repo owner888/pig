@@ -4,7 +4,8 @@
 
 # PHPUnit — phpunit.xml.dist is the tracked template, phpunit.xml the local override
 /phpunit.xml
-/.phpunit.cache/
+/.phpunit.cache
+/packages/evals/.eval/
 /.phpunit.result.cache
 /coverage/
 /clover.xml

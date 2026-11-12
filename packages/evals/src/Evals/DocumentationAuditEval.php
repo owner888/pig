@@ -61,6 +61,7 @@ final class DocumentationAuditEval
             'name' => 'documentation-page-audit',
             'tools' => ['read', 'grep', 'find', 'ls', self::TOOL_NAME],
             'customTools' => [$submitAudit],
+            'allowedPaths' => [$repositoryRoot, $docsRoot],
         ]);
 
         $toolName = self::TOOL_NAME;

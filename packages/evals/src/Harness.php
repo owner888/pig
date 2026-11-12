@@ -21,7 +21,9 @@ use Pig\Ai\ToolResultMessage;
 use Pig\Ai\UserMessage;
 use Pig\Ai\Utils\Text;
 use Pig\Ai\Utils\Transcript;
+use Pig\Async\AbortController;
 use Pig\Async\AbortSignal;
+use Pig\Async\Loop;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\CodingAgent;
 use Pig\CodingAgent\Config;
@@ -30,6 +32,7 @@ use Pig\CodingAgent\Extensions\CustomToolSet;
 use Pig\CodingAgent\Extensions\Events\BeforeAgentStartEvent;
 use Pig\CodingAgent\Extensions\Events\SessionShutdownEvent;
 use Pig\CodingAgent\Extensions\Events\SessionStartEvent;
+use Pig\CodingAgent\Extensions\Events\ToolCallEvent;
 use Pig\CodingAgent\Extensions\ExtensionApi;
 use Pig\CodingAgent\Extensions\ExtensionError;
 use Pig\CodingAgent\Extensions\ExtensionLoader;
@@ -37,13 +40,16 @@ use Pig\CodingAgent\Extensions\ExtensionRunner;
 use Pig\CodingAgent\Extensions\LoadedExtension;
 use Pig\CodingAgent\Extensions\RegisteredTool;
 use Pig\CodingAgent\Extensions\Results\BeforeAgentStartEventResult;
+use Pig\CodingAgent\Extensions\Results\ToolCallEventResult;
 use Pig\CodingAgent\Extensions\ToolDefinition;
 use Pig\CodingAgent\McpServerRegistry;
 use Pig\CodingAgent\ModelRefresh;
+use Pig\CodingAgent\Packages\PackageManager;
 use Pig\CodingAgent\Prompt\SystemPrompt;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Settings;
+use Pig\CodingAgent\Tools\Paths;
 use Pig\CodingAgent\Tools\ToolLoadout;
 use Pig\CodingAgent\Tools\ToolSelection;
 use Pig\CodingAgent\Tools\ToolSet;
@@ -67,6 +73,8 @@ final class Harness
      * @var list<string>
      */
     public const array DOCUMENTATION_EVAL_TOOLS = ['read', 'write', 'edit', 'grep', 'find', 'ls'];
+
+    private static ?Auth $sharedHostAuth = null;
 
     /**
      * @param array{provider?: string, id?: string}|null $explicitModel
@@ -100,11 +108,17 @@ final class Harness
      */
     public static function applyIsolatedEnvironment(string $home, string $agentDir): Closure
     {
+        $realHome = self::env('HOME');
+        $realBin = $realHome !== null && $realHome !== '' ? $realHome . '/.pig/agent/bin' : null;
+        $currentPath = self::env('PATH') ?? '';
         $overrides = [
             'HOME' => $home,
             'USERPROFILE' => $home,
             'PIG_CODING_AGENT_DIR' => $agentDir,
             'PI_CODING_AGENT_DIR' => $agentDir,
+            ...($realBin !== null && is_dir($realBin) && !str_contains($currentPath, $realBin)
+                ? ['PATH' => $currentPath . PATH_SEPARATOR . $realBin]
+                : []),
         ];
         $previous = [];
         $currentEnv = [...getenv(), ...$_ENV];
@@ -331,18 +345,45 @@ docs;
         $signal?->throwIfAborted();
         $selection = self::resolveModelSelection(is_array($options['model'] ?? null) ? $options['model'] : null);
 
-        // Read credentials from the host before isolating HOME and PIG_CODING_AGENT_DIR.
-        $hostAuth = Auth::discover();
-        $hostKey = $hostAuth->apiKey($selection['provider']);
-        $hostCreds = $hostAuth->credentials($selection['provider']);
+        // Read credentials (and any extension provider the selected model comes from) from the host
+        // before isolating HOME and PIG_CODING_AGENT_DIR.
+        $hostSettings = Settings::load(getcwd() ?: '.');
+        $hostAuth = self::$sharedHostAuth ??= Auth::discover(settings: $hostSettings);
 
+        if (Models::find($selection['provider'], $selection['id']) === null) {
+            try {
+                $hostPackages = (new PackageManager(getcwd() ?: '.', $hostSettings))->resolve(static fn (): string => 'skip');
+                ExtensionLoader::load(
+                    getcwd() ?: '.',
+                    $hostSettings->extensions(),
+                    auth: $hostAuth,
+                    projectTrusted: true,
+                    disabled: ['pig-mcp', 'pig-llama', 'pig-codemode', 'pig-tool-search', 'pig-schedule'],
+                    packageExtensions: static fn (): array => $hostPackages->enabled('extensions'),
+                );
+            } catch (Throwable) {
+            }
+        }
+
+        $hostProvider = ProviderRegistry::get($selection['provider']);
+        $hostModel = Models::find($selection['provider'], $selection['id']);
+        $hostProviderModels = array_values(array_filter(
+            Models::all(),
+            static fn (\Pig\Ai\Model $m): bool => $m->provider === $selection['provider'],
+        ));
+
+        $hostPackageDir = Config::packageDir();
+        $hostDocsDir = Config::docsPath();
         $root = sys_get_temp_dir() . '/pig-eval-' . bin2hex(random_bytes(6));
         $workspace = $root . '/workspace';
         $isolatedHome = $root . '/home';
         $agentDir = $isolatedHome . '/.pig/agent';
         $sessionsDir = $root . '/sessions';
+        $stagedPkg = sys_get_temp_dir() . '/pig-eval-pkg-' . bin2hex(random_bytes(6));
 
         $restoreEnvironment = self::applyIsolatedEnvironment($isolatedHome, $agentDir);
+        $previousPkgDir = self::env('PIG_PACKAGE_DIR');
+        $previousDocsDir = self::env('PIG_DOCS_DIR');
         $artifacts = [];
         $session = null;
         $store = null;
@@ -351,61 +392,116 @@ docs;
             mkdir($workspace, 0o700, true);
             mkdir($agentDir, 0o700, true);
             mkdir($sessionsDir, 0o700, true);
+            mkdir($stagedPkg, 0o700, true);
+
+            $expectDocs = $options['expectedPigDocumentation'] ?? null;
+
+            if ($expectDocs === true) {
+                if (is_file($hostPackageDir . '/README.md')) {
+                    copy($hostPackageDir . '/README.md', $stagedPkg . '/README.md');
+                }
+                if (is_file($hostPackageDir . '/CHANGELOG.md')) {
+                    copy($hostPackageDir . '/CHANGELOG.md', $stagedPkg . '/CHANGELOG.md');
+                }
+                if (is_dir($hostDocsDir)) {
+                    self::copyTree($hostDocsDir, $stagedPkg . '/docs');
+                }
+                if (is_dir($hostPackageDir . '/examples')) {
+                    self::copyTree($hostPackageDir . '/examples', $stagedPkg . '/examples');
+                }
+                if (is_dir($hostPackageDir . '/packages/coding-agent/schemas')) {
+                    self::copyTree($hostPackageDir . '/packages/coding-agent/schemas', $stagedPkg . '/schemas');
+                }
+            }
+
+            self::setEnv('PIG_PACKAGE_DIR', $stagedPkg);
+            self::setEnv('PIG_DOCS_DIR', $stagedPkg . '/docs');
 
             if (is_array($options['workspaceFiles'] ?? null)) {
                 self::seedWorkspace($workspace, $options['workspaceFiles']);
             }
 
-            $auth = Auth::discover($agentDir . '/auth.json');
+            $auth = Auth::inMemory($hostSettings);
 
-            if ($hostCreds !== null) {
-                $auth->setCredentials($selection['provider'], $hostCreds);
-            } elseif ($hostKey !== null && $hostKey !== '') {
-                $auth->setRuntimeApiKey($selection['provider'], $hostKey);
+            if ($hostProvider !== null && ProviderRegistry::get($selection['provider']) === null) {
+                ProviderRegistry::register($hostProvider);
+            }
+
+            if ($hostProviderModels !== []) {
+                Models::register($hostProviderModels, replace: true);
             }
 
             CustomModels::discover()->install($auth);
-            $model = Models::find($selection['provider'], $selection['id']);
+            $model = Models::find($selection['provider'], $selection['id']) ?? $hostModel;
 
             if ($model === null) {
                 throw new RuntimeException("Eval model not found: {$selection['provider']}/{$selection['id']}");
             }
 
-            if (!$auth->hasKeyFor($selection['provider'])) {
+            if (!$hostAuth->hasKeyFor($selection['provider']) && !$auth->hasKeyFor($selection['provider'])) {
                 throw new RuntimeException("Eval model has no configured authentication: {$selection['provider']}/{$selection['id']}");
             }
 
             $forcedSystemPrompt = null;
             $transformPrompt = $options['transformSystemPrompt'] ?? null;
-            $expectDocs = $options['expectedPigDocumentation'] ?? null;
+            $allowedRoots = array_values(array_filter([
+                $workspace,
+                $isolatedHome,
+                $expectDocs === true ? $stagedPkg : null,
+                ...(is_array($options['allowedPaths'] ?? null) ? $options['allowedPaths'] : []),
+            ], is_string(...)));
 
-            $buildInlineExtensions = static function () use (&$forcedSystemPrompt, $transformPrompt, $expectDocs): array {
-                if (!$transformPrompt instanceof Closure && $expectDocs === null) {
-                    return [];
+            $buildInlineExtensions = static function () use (
+                &$forcedSystemPrompt,
+                $transformPrompt,
+                $expectDocs,
+                $workspace,
+                $allowedRoots,
+            ): array {
+                $api = new ExtensionApi('.', '<inline:eval-system-prompt-transform>', 'eval-system-prompt-transform');
+
+                if ($transformPrompt instanceof Closure || $expectDocs !== null) {
+                    $api->on('before_agent_start', static function (BeforeAgentStartEvent $event) use (&$forcedSystemPrompt, $transformPrompt, $expectDocs): BeforeAgentStartEventResult {
+                        $prompt = $event->systemPrompt();
+
+                        if ($expectDocs !== null && !str_contains($prompt, "\n<docs>\n")) {
+                            $docsBlock = "<docs>\n" . self::documentationSectionText() . "\n</docs>";
+                            $cwdMarker = "\n\nCurrent working directory: ";
+                            $cwdPos = strrpos($prompt, $cwdMarker);
+                            $prompt = $cwdPos !== false
+                                ? substr($prompt, 0, $cwdPos) . "\n\n" . $docsBlock . substr($prompt, $cwdPos)
+                                : $prompt . "\n\n" . $docsBlock;
+                        }
+
+                        if ($transformPrompt instanceof Closure) {
+                            $prompt = (string) $transformPrompt($prompt);
+                        }
+
+                        $forcedSystemPrompt = $prompt;
+
+                        return new BeforeAgentStartEventResult(systemPrompt: $forcedSystemPrompt);
+                    });
                 }
 
-                $api = new ExtensionApi('.', '<inline:eval-system-prompt-transform>', 'eval-system-prompt-transform');
-                $api->on('before_agent_start', static function (BeforeAgentStartEvent $event) use (&$forcedSystemPrompt, $transformPrompt, $expectDocs): BeforeAgentStartEventResult {
-                    $prompt = $event->systemPrompt;
-
-                    if ($expectDocs !== null && !str_contains($prompt, "\n<docs>\n")) {
-                        $sections = $event->systemPromptOptions->sections;
-                        $docsBlock = "<docs>\n" . self::documentationSectionText() . "\n</docs>";
-                        $cwdMarker = "\n\nCurrent working directory: ";
-                        $cwdPos = strrpos($prompt, $cwdMarker);
-                        $prompt = $cwdPos !== false
-                            ? substr($prompt, 0, $cwdPos) . "\n\n" . $docsBlock . substr($prompt, $cwdPos)
-                            : $prompt . "\n\n" . $docsBlock;
-                        unset($sections);
+                $api->on('tool_call', static function (ToolCallEvent $event) use ($workspace, $allowedRoots): ?ToolCallEventResult {
+                    if (!in_array($event->toolName, ['read', 'write', 'edit', 'ls', 'find', 'grep'], true)) {
+                        return null;
                     }
 
-                    if ($transformPrompt instanceof Closure) {
-                        $prompt = (string) $transformPrompt($prompt);
+                    $rawPath = is_string($event->input['path'] ?? null) && $event->input['path'] !== ''
+                        ? $event->input['path']
+                        : '.';
+                    $resolved = Paths::resolve($rawPath, $workspace);
+
+                    foreach ($allowedRoots as $allowed) {
+                        $normalized = Paths::collapse($allowed);
+
+                        if ($resolved === $normalized || str_starts_with($resolved, $normalized . '/')) {
+                            return null;
+                        }
                     }
 
-                    $forcedSystemPrompt = $prompt;
-
-                    return new BeforeAgentStartEventResult(systemPrompt: $forcedSystemPrompt);
+                    return new ToolCallEventResult(block: true, reason: "EACCES: permission denied, '{$rawPath}' is outside the eval sandbox.");
                 });
 
                 return [new LoadedExtension(
@@ -418,7 +514,7 @@ docs;
 
             $inlineExtensions = $buildInlineExtensions();
             $settings = Settings::load($workspace);
-            $store = SessionManager::create($workspace, $sessionsDir);
+            $store = SessionManager::create($workspace, $sessionsDir . '/session.jsonl');
             $artifacts['runId'] = $store->id;
 
             $noTools = is_string($options['noTools'] ?? null) ? $options['noTools'] : null;
@@ -470,7 +566,9 @@ docs;
                 $model,
                 $workspace,
                 $builtIn,
-                getApiKey: $auth->apiKey(...),
+                getApiKey: static fn (string $provider): ?string => $provider === $selection['provider']
+                    ? ($hostAuth->apiKey($provider) ?? $auth->apiKey($provider))
+                    : $auth->apiKey($provider),
                 contextFiles: [],
                 thinking: ThinkingLevel::Off,
                 skills: [],
@@ -497,7 +595,7 @@ docs;
                 loadout: $loadout,
                 usesDefaultTools: false,
             );
-            $extensionRunner->wire($session);
+            $extensionRunner->wire($session, null);
 
             /** @var list<LoadedExtension> $currentExtensions */
             $currentExtensions = $inlineExtensions;
@@ -510,6 +608,8 @@ docs;
                 $store,
                 $session,
                 $loadout,
+                $hostProvider,
+                $hostProviderModels,
                 $buildInlineExtensions,
                 $buildCustomToolSet,
                 &$extensionRunner,
@@ -518,6 +618,12 @@ docs;
             ): void {
                 $extensionRunner->emit(new SessionShutdownEvent('reload'));
                 ProviderRegistry::forget();
+                if ($hostProvider !== null) {
+                    ProviderRegistry::register($hostProvider);
+                }
+                if ($hostProviderModels !== []) {
+                    Models::register($hostProviderModels, replace: true);
+                }
                 ExtensionApi::forgetHttpRoutes();
                 ExtensionApi::forgetWebPanels();
                 ExtensionApi::forgetFlags();
@@ -539,7 +645,7 @@ docs;
                 $currentExtensionErrors = $problems;
                 $extensionRunner = new ExtensionRunner($currentExtensions, $workspace, $store);
                 $session->setExtensionRunner($extensionRunner);
-                $extensionRunner->wire($session);
+                $extensionRunner->wire($session, null);
 
                 $newCustomTools = $buildCustomToolSet($currentExtensions);
                 $newCustomTools->withContext(static fn () => $extensionRunner->context());
@@ -550,15 +656,36 @@ docs;
 
             $steps = is_string($input) ? [['type' => 'prompt', 'content' => $input]] : $input;
             $response = null;
+            $timeoutSeconds = is_int($options['timeoutSeconds'] ?? null) || is_float($options['timeoutSeconds'] ?? null)
+                ? (float) $options['timeoutSeconds']
+                : 300.0;
+            $timeoutController = new AbortController();
+            $signalListener = $signal?->onAbort(static fn () => $timeoutController->abort($signal->reason()));
+            $timer = $timeoutSeconds > 0
+                ? Loop::get()->delay($timeoutSeconds, static function () use ($timeoutController, $session, $timeoutSeconds): void {
+                    $timeoutController->abort("Eval run timed out after {$timeoutSeconds}s.");
+                    $session->abort();
+                })
+                : null;
 
-            foreach ($steps as $step) {
-                if (($step['type'] ?? null) === 'reload') {
-                    $reloadSession();
+            try {
+                foreach ($steps as $step) {
+                    if (($step['type'] ?? null) === 'reload') {
+                        $reloadSession();
 
-                    continue;
+                        continue;
+                    }
+
+                    $response = self::promptAgent($session, (string) ($step['content'] ?? ''), $timeoutController->signal);
+                }
+            } finally {
+                if ($timer !== null) {
+                    Loop::get()->cancel($timer);
                 }
 
-                $response = self::promptAgent($session, (string) ($step['content'] ?? ''), $signal);
+                if ($signalListener !== null) {
+                    $signal?->removeListener($signalListener);
+                }
             }
 
             if ($response === null) {
@@ -581,7 +708,7 @@ docs;
                 'model' => $model->id,
                 'inputTokens' => $stats->input,
                 'outputTokens' => $stats->output,
-                'totalTokens' => $stats->totalTokens,
+                'totalTokens' => $stats->totalTokens(),
                 'toolCalls' => $stats->toolCalls,
                 'metadata' => [
                     'cacheReadTokens' => $stats->cacheRead,
@@ -620,7 +747,12 @@ docs;
             } catch (Throwable) {
             }
 
+            Models::useOverlay(null);
+            Models::useClassifierOverlay(null);
+            self::setEnv('PIG_PACKAGE_DIR', $previousPkgDir);
+            self::setEnv('PIG_DOCS_DIR', $previousDocsDir);
             self::removeTree($root);
+            self::removeTree($stagedPkg);
             $restoreEnvironment();
         }
     }
@@ -746,6 +878,31 @@ docs;
 
             file_put_contents($path, $content);
             chmod($path, 0o600);
+        }
+    }
+
+    private static function copyTree(string $from, string $to): void
+    {
+        if (!is_dir($to)) {
+            mkdir($to, 0o700, true);
+        }
+
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($from, FilesystemIterator::SKIP_DOTS),
+            RecursiveIteratorIterator::SELF_FIRST,
+        );
+
+        /** @var SplFileInfo $item */
+        foreach ($iterator as $item) {
+            $target = $to . '/' . $iterator->getSubPathname();
+
+            if ($item->isDir()) {
+                if (!is_dir($target)) {
+                    mkdir($target, 0o700, true);
+                }
+            } else {
+                copy($item->getPathname(), $target);
+            }
         }
     }
 

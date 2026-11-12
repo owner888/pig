@@ -24,6 +24,7 @@ use Pig\CodingAgent\Interactive\InteractiveMode;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Settings;
+use Pig\CodingAgent\Theme\Themes;
 use Pig\Evals\Harness;
 use Pig\Evals\Judge;
 use Pig\Evals\RecordingTerminal;
@@ -174,6 +175,7 @@ final class TuiDocsEval
         $terminal = new RecordingTerminal();
         $previousOffline = getenv('PIG_OFFLINE');
         putenv('PIG_OFFLINE=1');
+        Themes::initTheme('dark', true);
 
         try {
             $firstFixture = self::CONTEXT_FIXTURES[0];
