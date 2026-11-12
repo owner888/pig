@@ -409,7 +409,7 @@ php scripts/eval.php --docs --provider anthropic --model claude-sonnet-4-5
 ## 官方文档与资源
 
 完整使用手册、扩展开发指南与 SDK 说明请访问官方网站：
-- **官方文档**：[https://pigagent.dev/docs](https://pigagent.dev/docs)
+- **官方文档**：[https://pigagent.dev/docs](https://pigagent.dev/docs)。同样的页面（英文）随包放在 `docs/` 下，你问 pig 关于它自己的问题时（比如“默认开启 codemode”），它读的就是这里。
 - **模型大全**：[https://pigagent.dev/models](https://pigagent.dev/models)
 - **扩展目录**：[https://pigagent.dev/packages](https://pigagent.dev/packages)
 - **更新日志**：[https://pigagent.dev/changelog](https://pigagent.dev/changelog)

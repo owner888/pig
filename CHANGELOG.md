@@ -43,6 +43,17 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [2.0.13] - 2026-11-13
+
+### Added
+
+- Added pig's user documentation to the package: `docs/*.md` is a copy of the site's English pages (`php scripts/sync-docs.php`, run before each release), so the system prompt's `docs` section has pages to name on every machine and not only where the site's repository sits beside pig. Asked about pig itself on an installed machine, the model had nothing to read and searched the source.
+- Added a line of pig's own to the `docs` section: settings (`docs/settings.md`), command-line options and which tools are on (`docs/cli.md`), slash commands, and that every other page is named for its topic.
+
+### Fixed
+
+- Fixed `cli.md` saying that naming a built-in extension's tool in `--tools` or `defaultTools` does not turn it on, a paragraph above the one on enabling `codemode` by exactly that: it is true of `tool_search` only. The page now also documents the `schedule` tool.
+
 ## [2.0.12] - 2026-11-12
 
 ### Added

@@ -168,8 +168,11 @@ final class SystemPromptTest extends ToolTestCase
             $this->assertStringStartsWith("<docs>\nPig documentation (read only when the user asks about the harness itself", $sections['docs']);
             $this->assertStringEndsWith("\n</docs>", $sections['docs']);
             $this->assertStringContainsString("- Main documentation: " . Config::readmePath() . "\n- Additional docs: {$docs}\n- Examples: " . Config::examplesPath() . ' (extensions, custom tools, SDK)', $sections['docs']);
-            // Every page the section names is one of pig's.
-            $this->assertStringNotContainsString('codemode', $sections['docs']);
+            // Every page the section names is one of pig's (`DocsTest`): upstream's `docs/codemode.md` is not.
+            $this->assertStringNotContainsString('codemode.md', $sections['docs']);
+            // pig's own line: where its settings and tools are written, and that the rest is by name.
+            $this->assertStringContainsString('settings and defaults (docs/settings.md), command-line options and which tools are on, such as enabling codemode (docs/cli.md)', $sections['docs']);
+            $this->assertStringContainsString('every page is named for what it covers', $sections['docs']);
             // A prompt of the person's own replaces the instructions, this section with them.
             $this->assertArrayNotHasKey('docs', SystemPrompt::sections('/work', ['read'], 'Custom.', contextFiles: []));
         } finally {

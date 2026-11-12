@@ -250,12 +250,17 @@ final class SystemPrompt
      * Upstream's `promptSections.docs` in `buildSystemPromptSections()` — where pig's documentation
      * is, for a question about pig itself.
      *
-     * Null when the documentation is not on this machine, which is the developer's choice where
-     * upstream differs. Upstream's package carries its `docs/`; pig's user documentation lives in
-     * the site's repository (`Config::docsPath()`), so an installed pig has none, and a prompt
-     * that named thirteen files that are not there sent the model to read them. The section says
-     * where the documentation is or is not sent at all. `docs/codemode.md`, which upstream's list
-     * ends with, is left out until pig's documentation has that page.
+     * The package carries the pages, as upstream's does: `docs/*.md` is a copy of the site's English
+     * documentation, made by `scripts/sync-docs.php` before each release. Null when they are not
+     * there all the same (a checkout cut down, a `PIG_DOCS_DIR` that points nowhere): a prompt that
+     * names files that do not exist sends the model to read them.
+     *
+     * Two things differ from upstream's text, both the developer's choice. `docs/codemode.md`,
+     * which upstream's list ends with, is left out until pig's documentation has that page. And
+     * the last topic line is pig's own: asked to turn `codemode` on by default, the model had no
+     * page named for settings or tools and read the source instead, so the list names
+     * `settings.md` and `cli.md` and says that every other page is named for its topic — which is
+     * what keeps a new tool or setting findable without this text being edited for it.
      */
     public static function docsSection(): ?string
     {
@@ -275,6 +280,7 @@ Pig documentation (read only when the user asks about the harness itself, its SD
 - Examples: {$examples} (extensions, custom tools, SDK)
 - When reading pig docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory
 - When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), packages (docs/packages.md), environment variables (docs/environment-variables.md), MCP servers (docs/mcp.md)
+- When asked to change how pig itself behaves: settings and defaults (docs/settings.md), command-line options and which tools are on, such as enabling codemode (docs/cli.md), slash commands (docs/slash-commands.md). For any other topic, list Additional docs: every page is named for what it covers, and a link to /docs/latest/<page> is the file docs/<page>.md
 - Before implementing harness changes, read the relevant docs and examples in full, following related cross-references.
 </docs>
 DOCS;

@@ -430,7 +430,7 @@ php scripts/eval.php --docs --provider anthropic --model claude-sonnet-4-5
 ## Documentation
 
 Full guides, configuration specifications, and SDK manuals are available on the official website:
-- **Documentation**: [https://pigagent.dev/docs](https://pigagent.dev/docs)
+- **Documentation**: [https://pigagent.dev/docs](https://pigagent.dev/docs). The same pages ship in `docs/`, which is what pig reads when you ask it about itself ("turn codemode on by default").
 - **Model Catalog**: [https://pigagent.dev/models](https://pigagent.dev/models)
 - **Extension Packages**: [https://pigagent.dev/packages](https://pigagent.dev/packages)
 - **Changelog**: [https://pigagent.dev/changelog](https://pigagent.dev/changelog)
