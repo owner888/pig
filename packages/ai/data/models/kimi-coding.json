@@ -27,7 +27,7 @@
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
-        "maxTokens": 131072,
+        "maxTokens": 1048576,
         "compat": {
             "supportsStore": false,
             "supportsDeveloperRole": false,
@@ -78,7 +78,7 @@
             "cacheWrite": 0.0
         },
         "contextWindow": 262144,
-        "maxTokens": 131072,
+        "maxTokens": 262144,
         "compat": {
             "supportsStore": false,
             "supportsDeveloperRole": false,
@@ -129,7 +129,7 @@
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
-        "maxTokens": 131072,
+        "maxTokens": 1048576,
         "compat": {
             "supportsStore": false,
             "supportsDeveloperRole": false,
@@ -180,7 +180,7 @@
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
-        "maxTokens": 131072,
+        "maxTokens": 1048576,
         "compat": {
             "supportsStore": false,
             "supportsDeveloperRole": false,

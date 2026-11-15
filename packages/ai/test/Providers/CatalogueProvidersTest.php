@@ -101,7 +101,7 @@ final class CatalogueProvidersTest extends TestCase
         $this->assertSame([Api::OpenAiCompletions, 'https://api.together.ai/v1', true], [$model->api, $model->baseUrl, $model->reasoning]);
         $this->assertSame(['minimal' => null, 'low' => null, 'medium' => null], $model->thinkingLevelMap);
         $this->assertSame(['text', 'image'], $model->input);
-        $this->assertSame([1_048_576, 131_072], [$model->contextWindow, $model->maxTokens]);
+        $this->assertSame([1_048_576, 1_048_576], [$model->contextWindow, $model->maxTokens]);
         $this->assertSame([3.0, 15.0, 0.3, 0.0], [$model->pricing->input, $model->pricing->output, $model->pricing->cacheRead, $model->pricing->cacheWrite]);
         $this->assertEquals(new OpenAiCompat(
             store: false,

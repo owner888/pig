@@ -555,6 +555,53 @@
     },
     {
         "type": "chat",
+        "id": "@cf/thinkingmachines/inkling-2-small",
+        "name": "Inkling 2 Small",
+        "api": "openai-completions",
+        "provider": "cloudflare-workers-ai",
+        "baseUrl": "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": "none",
+            "minimal": "minimal",
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": null,
+            "max": "max"
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 0.3,
+            "output": 1.0,
+            "cacheRead": 0.1,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 1048576,
+        "maxTokens": 1048576,
+        "compat": {
+            "supportsStore": false,
+            "supportsDeveloperRole": false,
+            "supportsStrictMode": true,
+            "supportsLongCacheRetention": false,
+            "sendSessionAffinityHeaders": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
         "id": "@cf/zai-org/glm-4.7-flash",
         "name": "GLM-4.7-Flash",
         "api": "openai-completions",

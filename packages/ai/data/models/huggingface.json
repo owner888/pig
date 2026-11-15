@@ -1809,7 +1809,51 @@
             "cacheWrite": 0.0
         },
         "contextWindow": 1000000,
-        "maxTokens": 131072,
+        "maxTokens": 1000000,
+        "compat": {
+            "supportsDeveloperRole": false,
+            "supportsStrictMode": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
+        "id": "moonshotai/Kimi-K3.1-Pro",
+        "name": "Kimi K3.1 Pro",
+        "api": "openai-completions",
+        "provider": "huggingface",
+        "baseUrl": "https://router.huggingface.co/v1",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": null,
+            "minimal": null,
+            "low": "low",
+            "medium": null,
+            "high": "high",
+            "xhigh": null,
+            "max": "max"
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 2.0,
+            "output": 10.0,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 1048576,
+        "maxTokens": 1048576,
         "compat": {
             "supportsDeveloperRole": false,
             "supportsStrictMode": true
@@ -1852,7 +1896,7 @@
             "cacheWrite": 0.0
         },
         "contextWindow": 131072,
-        "maxTokens": 32768,
+        "maxTokens": 131072,
         "compat": {
             "supportsDeveloperRole": false,
             "supportsStrictMode": true
@@ -1885,7 +1929,7 @@
             "cacheWrite": 0.0
         },
         "contextWindow": 131072,
-        "maxTokens": 32768,
+        "maxTokens": 131072,
         "compat": {
             "supportsDeveloperRole": false,
             "supportsStrictMode": true
@@ -2071,6 +2115,50 @@
     },
     {
         "type": "chat",
+        "id": "thinkingmachines/Inkling-2-Small",
+        "name": "Inkling 2 Small",
+        "api": "openai-completions",
+        "provider": "huggingface",
+        "baseUrl": "https://router.huggingface.co/v1",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": "none",
+            "minimal": "minimal",
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": null,
+            "max": "max"
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 0.3,
+            "output": 1.0,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 1048576,
+        "maxTokens": 131072,
+        "compat": {
+            "supportsDeveloperRole": false,
+            "supportsStrictMode": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
         "id": "thinkingmachines/Inkling-Small",
         "name": "Inkling Small",
         "api": "openai-completions",
@@ -2088,7 +2176,7 @@
             "cacheWrite": 0.0
         },
         "contextWindow": 524288,
-        "maxTokens": 1048576,
+        "maxTokens": 524288,
         "compat": {
             "supportsDeveloperRole": false,
             "supportsStrictMode": true
