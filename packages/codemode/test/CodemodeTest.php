@@ -199,6 +199,77 @@ final class CodemodeTest extends TestCase
         $this->assertStringContainsString('nope', $strict['error']['message']);
     }
 
+    /**
+     * One arm of a strict `parallel()` fails, the script ends and the child exits while the
+     * other arm's tool is still at work in the host. Its answer then has nowhere to go: that is
+     * not a notice on the user's terminal ("fwrite(): Write of 101 bytes failed with errno=32
+     * Broken pipe"), and the script's own failure is still what the run reports.
+     */
+    public function testAnAnswerForAScriptThatAlreadyEndedIsDroppedQuietly(): void
+    {
+        $tools = [
+            ['name' => 'bad', 'execute' => static function (): never { throw new \RuntimeException('nope'); }],
+            // Blocks the host, as a file tool does, long enough for the child to be gone.
+            ['name' => 'busy', 'execute' => static function (): string { usleep(300_000); return str_repeat('x', 80); }],
+        ];
+
+        $notices = [];
+        set_error_handler(static function (int $no, string $message) use (&$notices): bool {
+            $notices[] = $message;
+
+            return true;
+        });
+
+        try {
+            $result = $this->script('return parallel([fn () => $tools->bad([]), fn () => $tools->busy([])]);', $tools);
+        } finally {
+            restore_error_handler();
+        }
+
+        $this->assertSame([], $notices);
+        $this->assertFalse($result['ok']);
+        $this->assertSame('script', $result['error']['kind']);
+        $this->assertStringContainsString('nope', $result['error']['message']);
+    }
+
+    /**
+     * "Calls still running when the script ends are cancelled" is what the tool's description
+     * tells the model, and upstream's sandbox does it. A call left running would go on changing
+     * things after the model was told the script had failed.
+     */
+    public function testACallStillRunningWhenTheScriptEndsIsCancelled(): void
+    {
+        $seen = [];
+        $waits = static function (string $label) use (&$seen): \Closure {
+            return static function (array $args, \Pig\Async\AbortSignal $signal) use (&$seen, $label): string {
+                $at = microtime(true);
+
+                while (!$signal->aborted() && microtime(true) - $at < 3.0) {
+                    Async::delay(0.02);
+                }
+
+                $seen[$label] = $signal->aborted() ? $signal->reason() : 'ran to the end';
+
+                return 'late';
+            };
+        };
+        $bad = ['name' => 'bad', 'execute' => static function (): never { throw new \RuntimeException('nope'); }];
+
+        $at = microtime(true);
+        $failed = $this->script('return parallel([fn () => $tools->bad([]), fn () => $tools->slow([])]);', [$bad, ['name' => 'slow', 'execute' => $waits('failed')]]);
+        $timedOut = $this->script('return $tools->slow([]);', [['name' => 'slow', 'execute' => $waits('timeout')]], 0.3);
+        $global = $this->script('return parallel([fn () => $tools->bad([]), fn () => search_tools("x")]);', [$bad], globals: ['search_tools' => static fn (array $args, \Pig\Async\AbortSignal $signal) => $waits('global')($args, $signal)]);
+
+        // A cancelled call notices on its next turn of the loop, which a run of its own gives it.
+        Async::run(static fn () => Async::delay(0.1));
+
+        $this->assertFalse($failed['ok']);
+        $this->assertSame('timeout', $timedOut['error']['kind']);
+        $this->assertFalse($global['ok']);
+        $this->assertSame(['failed' => 'The script ended', 'timeout' => 'The script ended', 'global' => 'The script ended'], $seen);
+        $this->assertLessThan(2.5, microtime(true) - $at, 'nothing waited its three seconds out');
+    }
+
     public function testAChainedCallInsideAnArmWorks(): void
     {
         $result = $this->script(

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\Codemode;
 
 use Closure;
+use Pig\Async\AbortController;
 use Pig\Async\AbortSignal;
 use Pig\Async\Async;
 use Pig\Async\Deferred;
@@ -180,23 +181,44 @@ final class CodemodeSandbox
         };
 
         $write = static function (array $message) use ($stdin): void {
-            if (is_resource($stdin)) {
+            if (!is_resource($stdin)) {
+                return;
+            }
+
+            // The child can be gone while a tool it asked for is still at work here: one arm of
+            // a strict `parallel()` failed and the script ended, or the script died. The answer
+            // then has no reader, and PHP says so with a notice ("errno=32 Broken pipe") that
+            // lands on the user's terminal. Nothing is lost by dropping it: the child's end is
+            // already reported through its `done` line or the end of its stdout. `@` is not
+            // allowed, hence the handler.
+            set_error_handler(static fn (): bool => true);
+
+            try {
                 fwrite($stdin, json_encode($message, JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE) . "\n");
                 fflush($stdin);
+            } finally {
+                restore_error_handler();
             }
         };
 
-        $answer = function (string $kind, array $request) use ($write, $signal): void {
+        // What the nested calls are given instead of `$signal`: it ends with the script, however
+        // the script ends. "Calls still running when the script ends are cancelled" is what the
+        // tool's description promises and what upstream's sandbox does; a call left running
+        // would go on changing things after the model was told the script had failed.
+        $calls = new AbortController();
+        $callSignal = $calls->signal;
+
+        $answer = function (string $kind, array $request) use ($write, $callSignal): void {
             $id = (int) ($request['id'] ?? 0);
             $name = (string) ($request['name'] ?? '');
             $args = $request['args'] ?? [];
 
             // Each request in a fiber of its own: that is what makes `parallel()` parallel.
-            Async::spawn(function () use ($kind, $id, $name, $args, $write, $signal): void {
+            Async::spawn(function () use ($kind, $id, $name, $args, $write, $callSignal): void {
                 try {
                     $value = $kind === 'call'
-                        ? $this->callTool($name, is_array($args) ? $args : [], $signal)
-                        : $this->callGlobal($name, is_array($args) ? $args : [], $signal);
+                        ? $this->callTool($name, is_array($args) ? $args : [], $callSignal)
+                        : $this->callGlobal($name, is_array($args) ? $args : [], $callSignal);
                     $write(['result' => ['id' => $id, 'ok' => true, 'value' => $value]]);
                 } catch (\Throwable $error) {
                     $write(['result' => ['id' => $id, 'ok' => false, 'error' => $error->getMessage()]]);
@@ -268,7 +290,10 @@ final class CodemodeSandbox
         $timer = $this->timeout !== null
             ? $loop->delay($this->timeout, static fn () => $finish(['ok' => false, 'error' => ['kind' => 'timeout', 'message' => 'the script ran out of time']]))
             : null;
-        $abortListener = $signal?->onAbort(static fn () => $finish(['ok' => false, 'error' => ['kind' => 'aborted', 'message' => $signal->reason()]]));
+        $abortListener = $signal?->onAbort(static function () use ($finish, $signal, $calls): void {
+            $calls->abort($signal->reason());
+            $finish(['ok' => false, 'error' => ['kind' => 'aborted', 'message' => $signal->reason()]]);
+        });
 
         $write(['boot' => ['code' => $code, 'tools' => array_map(static fn (array $t): array => ['name' => $t['name'], 'phpName' => $t['phpName'], 'description' => $t['description']], $this->tools), 'store' => $store === [] ? new \stdClass() : $store]]);
 
@@ -297,6 +322,9 @@ final class CodemodeSandbox
             }
 
             proc_close($process);
+
+            // After the pipes are closed, so a cancelled call's answer is not written anywhere.
+            $calls->abort($signal?->aborted() ? $signal->reason() : 'The script ended');
         }
 
         $result['output'] = $output;
@@ -312,11 +340,11 @@ final class CodemodeSandbox
     }
 
     /** @param array<string, mixed> $args */
-    private function callTool(string $name, array $args, ?AbortSignal $signal): mixed
+    private function callTool(string $name, array $args, AbortSignal $signal): mixed
     {
         foreach ($this->tools as $tool) {
             if ($tool['name'] === $name) {
-                return ($tool['execute'])($args, $signal ?? (new \Pig\Async\AbortController())->signal);
+                return ($tool['execute'])($args, $signal);
             }
         }
 
@@ -324,7 +352,7 @@ final class CodemodeSandbox
     }
 
     /** @param list<mixed> $args */
-    private function callGlobal(string $name, array $args, ?AbortSignal $signal): mixed
+    private function callGlobal(string $name, array $args, AbortSignal $signal): mixed
     {
         $global = $this->globals[$name] ?? null;
 
@@ -332,7 +360,7 @@ final class CodemodeSandbox
             throw new RuntimeException("Unknown global \"{$name}\"");
         }
 
-        return $global($args, $signal ?? (new \Pig\Async\AbortController())->signal);
+        return $global($args, $signal);
     }
 
     /** @return array{ok: false, output: list<never>, storeWrites: array{set: array<never, never>, delete: list<never>}, error: array{kind: string, message: string}} */

@@ -43,6 +43,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Fixed
+
+- Fixed a PHP notice printed over the interface during a `codemode` run: `fwrite(): Write of 101 bytes failed with errno=32 Broken pipe in …/CodemodeSandbox.php`. When one arm of a script's `parallel()` failed, the script ended and its process exited while the other arms' tools were still at work; their answers were then written to a pipe nobody read. Such an answer is now dropped quietly, and the run reports the script's own failure as before.
+- Fixed `codemode` leaving a script's tool calls running after the script had ended. The tool's description tells the model that "calls still running when the script ends are cancelled", and they were only marked so: a call that one arm of a `parallel()` had started kept going after another arm failed, and after a timeout, so files could still change once the model had been told the script failed. Every nested call now gets a signal that ends with the script, as upstream's sandbox gives it.
+
 ## [2.0.13] - 2026-11-13
 
 ### Added
