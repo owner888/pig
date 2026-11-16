@@ -70,7 +70,7 @@ final class BuiltinCatalog
      * catalog server must be newer than to count (`RemoteCatalog::isNewer()`). `generate-models.php`
      * rewrites it with the rows.
      */
-    public const string GENERATED_AT = '2026-11-16T07:38:58Z';
+    public const string GENERATED_AT = '2026-11-16T08:54:51Z';
 
     /** Upstream's generator `CODEX_BASE_URL`. */
     private const string OPENAI_CODEX_BASE_URL = 'https://chatgpt.com/backend-api';
@@ -2101,7 +2101,7 @@ final class BuiltinCatalog
         'qwen/qwen3.5-27b' => ['Qwen: Qwen3.5-27B', Api::OpenAiCompletions, 262_144, 81_920, true, true, 0.26, 2.6, 0.0, 0.0],
         'qwen/qwen3.5-35b-a3b' => ['Qwen: Qwen3.5-35B-A3B', Api::OpenAiCompletions, 262_144, 81_920, true, true, 0.14, 1.0, 0.05, 0.0],
         'qwen/qwen3.5-397b-a17b' => ['Qwen: Qwen3.5 397B A17B', Api::OpenAiCompletions, 262_144, 81_920, true, true, 0.45, 3.0, 0.22, 0.0],
-        'qwen/qwen3.5-9b' => ['Qwen: Qwen3.5-9B', Api::OpenAiCompletions, 262_144, 40_960, true, true, 0.051, 0.075, 0.046, 0.0],
+        'qwen/qwen3.5-9b' => ['Qwen: Qwen3.5-9B', Api::OpenAiCompletions, 262_144, 40_960, true, true, 0.037, 0.055, 0.033, 0.0],
         'qwen/qwen3.5-flash-02-23' => ['Qwen: Qwen3.5-Flash', Api::OpenAiCompletions, 1_000_000, 65_536, true, true, 0.065, 0.26, 0.0, 0.0],
         'qwen/qwen3.5-plus-02-15' => ['Qwen: Qwen3.5 Plus 2026-02-15', Api::OpenAiCompletions, 1_000_000, 65_536, true, true, 0.26, 1.56, 0.0, 0.0, 'tiers' => [[256_000, 0.325, 1.95, 0.0, 0.0]]],
         'qwen/qwen3.5-plus-20260420' => ['Qwen: Qwen3.5 Plus 2026-04-20', Api::OpenAiCompletions, 1_000_000, 65_536, true, true, 0.3, 1.8, 0.0, 0.375, 'tiers' => [[256_000, 0.375, 2.25, 0.0, 0.46875]]],
