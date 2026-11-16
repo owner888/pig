@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Fixed
+
+- Fixed the web page asking who is logged in on every failed reconnect. With the server gone (its computer asleep, the tunnel down) each retry failed twice, the socket and `/api/login/state`, and filled the browser's console: 198 lines in half an hour. It is asked once per run of failures, and again when the page is looked at, the network returns, or a connection that was up is lost.
+
 ## [2.0.15] - 2026-11-16
 
 ### Changed

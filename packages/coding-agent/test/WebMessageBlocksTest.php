@@ -164,6 +164,68 @@ final class WebMessageBlocksTest extends TestCase
         $this->assertSame(2, $result['binds'], 'the tab bound again, which reloads its conversation and state');
     }
 
+    public function testWithTheServerGoneWhoIsLoggedInIsAskedOnceNotOnEveryRetry(): void
+    {
+        // The server's computer asleep: every retry failed twice in the browser's console, the
+        // socket and `/api/login/state`, 198 lines in half an hour. The question is asked once per
+        // run of failures, and again once somebody is back or the connection has been up.
+        $node = trim((string) shell_exec('command -v node'));
+        if ($node === '') {
+            $this->markTestSkipped('node is not available to run the browser code');
+        }
+
+        $script = <<<'JS'
+            const fs = require('fs');
+            let src = fs.readFileSync(process.argv[1], 'utf8')
+                .replace(/^import .*$/m, 'const t = (k) => k;')
+                .replace(/^export /gm, '');
+            const timers = [];
+            const sockets = [];
+            const listeners = {};
+            let asked = 0;
+            const sandbox = {
+                Date: { now: () => 1_000_000 },
+                setInterval: () => 0,
+                setTimeout: (fn) => { timers.push(fn); return timers.length; }, clearTimeout: () => {},
+                sessionStorage: { getItem: () => 'id', setItem: () => {} },
+                fetch: () => { asked++; return Promise.reject(new Error('timed out')); },
+                location: { protocol: 'http:', host: 'localhost' },
+                window: { addEventListener: (type, fn) => { listeners[type] = fn; } },
+                document: { visibilityState: 'visible', addEventListener: (type, fn) => { listeners[type] = fn; } },
+                WebSocket: class { static OPEN = 1; static CONNECTING = 0; constructor() { this.readyState = 0; sockets.push(this); } close() {} send() {} },
+                console,
+            };
+            const make = new Function(...Object.keys(sandbox), src + '\nreturn network;');
+            const network = make(...Object.values(sandbox));
+            network.init({ getTabs: () => [] });
+            const fail = () => { const ws = sockets[sockets.length - 1]; ws.readyState = 3; ws.onerror(); ws.onclose(); };
+            const retry = () => timers.pop()();
+
+            network.connect();
+            for (let i = 0; i < 20; i++) { fail(); retry(); }
+            const whileGone = asked;
+
+            listeners.visibilitychange();                 // somebody looks at the page again
+            fail(); retry(); fail(); retry();
+            const afterALook = asked;
+
+            const ws = sockets[sockets.length - 1];       // the server is back, then drops
+            ws.readyState = 1; ws.onopen();
+            fail(); retry(); fail(); retry();
+            console.log(JSON.stringify({ tries: sockets.length, whileGone, afterALook, afterADrop: asked }));
+            JS;
+        $out = [];
+        $code = 0;
+        exec(escapeshellarg($node) . ' -e ' . escapeshellarg($script) . ' ' . escapeshellarg(realpath(__DIR__ . '/../src/Web/assets/js/network.js')) . ' 2>&1', $out, $code);
+        $this->assertSame(0, $code, implode("\n", $out));
+        $result = json_decode(implode('', $out), true);
+
+        $this->assertGreaterThan(20, $result['tries'], 'it keeps trying to connect');
+        $this->assertSame(1, $result['whileGone'], 'twenty failed tries, one question');
+        $this->assertSame(2, $result['afterALook'], 'asked again when the page is looked at');
+        $this->assertSame(3, $result['afterADrop'], 'and again when a connection that was up is lost');
+    }
+
     public function testAPageAwayKeepsOnlyWhatTheNextDrawNeedsAndALongLiveRunDrawsItsLastPageAgain(): void
     {
         // `catchup.js` run as it is: hidden for a moment draws as ever, hidden past `AWAY_AFTER`

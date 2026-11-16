@@ -53,6 +53,8 @@ export class SharedNetwork {
     // alarming as the real one, or the real one as calm as the routine.
     this.everOpened = false;
     this.failedTries = 0;
+    // Whether this run of failures has already asked the server who is logged in.
+    this.loginChecked = false;
     this.hideStatus = () => {};
     this.onReachable = () => {};
 
@@ -85,6 +87,7 @@ export class SharedNetwork {
     // The sleep is answered; the next connection's messages are measured from now.
     this.lastTick = Date.now();
     if (this.closed) return;
+    this.loginChecked = false;
     if (this.ws) {
       try {
         this.ws.onopen = this.ws.onmessage = this.ws.onclose = this.ws.onerror = null;
@@ -129,10 +132,19 @@ export class SharedNetwork {
   connectionLost() {
     // A connection refused or dropped because the session is gone (logged out elsewhere, a new
     // password) is a trip to the login page, not a reconnect loop.
-    fetch("/api/login/state", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((state) => { if (state.loggedIn === false) location.replace("/login"); })
-      .catch(() => {});
+    //
+    // Asked once per run of failures, not once per try: with the server gone (its computer
+    // asleep, the tunnel down) every retry failed twice, the socket and this question, and the
+    // question has no answer until something can give one. It is asked again when the connection
+    // comes back and drops, and when the page is looked at or the network returns
+    // (`reconnectNow()`, `restart()`), which is when somebody is there to be sent to the login.
+    if (!this.loginChecked) {
+      this.loginChecked = true;
+      fetch("/api/login/state", { cache: "no-store" })
+        .then((r) => r.json())
+        .then((state) => { if (state.loggedIn === false) location.replace("/login"); })
+        .catch(() => {});
+    }
     for (const t of this.getTabs()) t.onConnectionLost();
     for (const listener of this.closeListeners) {
       try { listener(); } catch (err) { console.error("Close listener error:", err); }
@@ -160,6 +172,7 @@ export class SharedNetwork {
     ws.onopen = () => {
       this.everOpened = true;
       this.failedTries = 0;
+      this.loginChecked = false;
       this.hideStatus();
       this.onReachable();
       this.reconnectDelay = 1000;
@@ -234,6 +247,7 @@ export class SharedNetwork {
         this.reconnectTimer = null;
       }
       this.reconnectDelay = 1000;
+      this.loginChecked = false;
       this.connect();
     }
   }
