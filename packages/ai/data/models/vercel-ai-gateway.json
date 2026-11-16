@@ -823,6 +823,40 @@
     },
     {
         "type": "chat",
+        "id": "alibaba/qwen4-max",
+        "name": "Qwen 4 Max",
+        "api": "anthropic-messages",
+        "provider": "vercel-ai-gateway",
+        "baseUrl": "https://ai-gateway.vercel.sh",
+        "reasoning": true,
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 1.5,
+            "output": 4.5,
+            "cacheRead": 0.075,
+            "cacheWrite": 1.875
+        },
+        "contextWindow": 1000000,
+        "maxTokens": 384000,
+        "compat": {
+            "allowEmptySignature": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
         "id": "amazon/nova-2-lite",
         "name": "Nova 2 Lite",
         "api": "anthropic-messages",
@@ -9737,6 +9771,40 @@
             "input": 0.417,
             "output": 1.2505,
             "cacheRead": 0.021,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 1024000,
+        "maxTokens": 64000,
+        "compat": {
+            "allowEmptySignature": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
+        "id": "tencent/hy4-flash",
+        "name": "Tencent Hy4 Flash",
+        "api": "anthropic-messages",
+        "provider": "vercel-ai-gateway",
+        "baseUrl": "https://ai-gateway.vercel.sh",
+        "reasoning": true,
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 0.035,
+            "output": 0.1405,
+            "cacheRead": 0.0015,
             "cacheWrite": 0.0
         },
         "contextWindow": 1024000,

@@ -2380,13 +2380,13 @@
             "text"
         ],
         "cost": {
-            "input": 0.0434,
-            "output": 0.3,
-            "cacheRead": 0.035,
+            "input": 0.06,
+            "output": 0.18,
+            "cacheRead": 0.015,
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
-        "maxTokens": 943718,
+        "maxTokens": 384000,
         "compat": {
             "supportsDeveloperRole": false,
             "requiresReasoningContentOnAssistantMessages": true,
@@ -2572,9 +2572,9 @@
             "image"
         ],
         "cost": {
-            "input": 0.0507,
-            "output": 0.2028,
-            "cacheRead": 0.001014,
+            "input": 0.14,
+            "output": 0.42,
+            "cacheRead": 0.0042,
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
@@ -2619,13 +2619,13 @@
             "image"
         ],
         "cost": {
-            "input": 0.02,
-            "output": 0.108,
-            "cacheRead": 0.007,
+            "input": 0.3,
+            "output": 1.2,
+            "cacheRead": 0.006,
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
-        "maxTokens": 384000,
+        "maxTokens": 393216,
         "compat": {
             "supportsDeveloperRole": false,
             "requiresReasoningContentOnAssistantMessages": true,
@@ -2666,9 +2666,9 @@
             "image"
         ],
         "cost": {
-            "input": 0.029,
-            "output": 0.253,
-            "cacheRead": 0.003,
+            "input": 0.043,
+            "output": 0.384,
+            "cacheRead": 0.004,
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
@@ -4334,9 +4334,9 @@
             "image"
         ],
         "cost": {
-            "input": 0.0675,
-            "output": 0.225,
-            "cacheRead": 0.0375,
+            "input": 0.09,
+            "output": 0.3,
+            "cacheRead": 0.05,
             "cacheWrite": 0.0
         },
         "contextWindow": 262144,
@@ -5422,13 +5422,13 @@
             "text"
         ],
         "cost": {
-            "input": 0.27,
-            "output": 0.95,
-            "cacheRead": 0.03,
+            "input": 0.295,
+            "output": 1.2,
+            "cacheRead": 0.06,
             "cacheWrite": 0.0
         },
-        "contextWindow": 198000,
-        "maxTokens": 32768,
+        "contextWindow": 196608,
+        "maxTokens": 176947,
         "compat": {
             "supportsDeveloperRole": false,
             "supportsStrictMode": true,
@@ -5524,9 +5524,9 @@
             "image"
         ],
         "cost": {
-            "input": 0.075,
-            "output": 0.3,
-            "cacheRead": 0.0075,
+            "input": 0.15,
+            "output": 0.6,
+            "cacheRead": 0.015,
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
@@ -6537,8 +6537,8 @@
             "image"
         ],
         "cost": {
-            "input": 2.0,
-            "output": 10.0,
+            "input": 0.2403,
+            "output": 8.4023,
             "cacheRead": 0.2,
             "cacheWrite": 0.0
         },
@@ -9338,17 +9338,17 @@
             "image"
         ],
         "cost": {
-            "input": 4.4,
-            "output": 22.0,
-            "cacheRead": 0.44,
-            "cacheWrite": 5.5,
+            "input": 4.0,
+            "output": 20.0,
+            "cacheRead": 0.4,
+            "cacheWrite": 5.0,
             "tiers": [
                 {
                     "inputTokensAbove": 272000,
-                    "input": 8.8,
-                    "output": 33.0,
-                    "cacheRead": 0.88,
-                    "cacheWrite": 11.0
+                    "input": 8.0,
+                    "output": 30.0,
+                    "cacheRead": 0.8,
+                    "cacheWrite": 10.0
                 }
             ]
         },
@@ -11055,13 +11055,13 @@
             "text"
         ],
         "cost": {
-            "input": 0.03,
-            "output": 0.13,
-            "cacheRead": 0.03,
+            "input": 0.075,
+            "output": 0.3,
+            "cacheRead": 0.0375,
             "cacheWrite": 0.0
         },
         "contextWindow": 131072,
-        "maxTokens": 117964,
+        "maxTokens": 65536,
         "compat": {
             "supportsStrictMode": true,
             "thinkingFormat": "openrouter",
@@ -12336,13 +12336,13 @@
             "image"
         ],
         "cost": {
-            "input": 0.6,
-            "output": 3.6,
-            "cacheRead": 0.12,
+            "input": 0.45,
+            "output": 3.0,
+            "cacheRead": 0.22,
             "cacheWrite": 0.0
         },
-        "contextWindow": 256000,
-        "maxTokens": 64000,
+        "contextWindow": 262144,
+        "maxTokens": 81920,
         "compat": {
             "supportsDeveloperRole": false,
             "supportsStrictMode": true,
@@ -12373,9 +12373,9 @@
             "image"
         ],
         "cost": {
-            "input": 0.044,
-            "output": 0.064,
-            "cacheRead": 0.039,
+            "input": 0.051,
+            "output": 0.075,
+            "cacheRead": 0.046,
             "cacheWrite": 0.0
         },
         "contextWindow": 262144,
@@ -13195,6 +13195,52 @@
     },
     {
         "type": "chat",
+        "id": "qwen/qwen4-max",
+        "name": "Qwen: Qwen4 Max",
+        "api": "openai-completions",
+        "provider": "openrouter",
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": "none",
+            "minimal": null,
+            "low": "low",
+            "medium": null,
+            "high": "high",
+            "xhigh": "xhigh",
+            "max": null
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 1.5,
+            "output": 4.5,
+            "cacheRead": 0.075,
+            "cacheWrite": 1.875
+        },
+        "contextWindow": 1000000,
+        "maxTokens": 393216,
+        "compat": {
+            "supportsDeveloperRole": false,
+            "supportsStrictMode": true,
+            "thinkingFormat": "openrouter",
+            "sendSessionAffinityHeaders": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
         "id": "recursive/flint-v1.0:free",
         "name": "Recursive: Flint (free)",
         "api": "openai-completions",
@@ -13661,9 +13707,9 @@
             "text"
         ],
         "cost": {
-            "input": 0.0825,
-            "output": 0.33,
-            "cacheRead": 0.020625,
+            "input": 0.132,
+            "output": 0.528,
+            "cacheRead": 0.033,
             "cacheWrite": 0.0
         },
         "contextWindow": 262144,
@@ -13777,9 +13823,9 @@
             "text"
         ],
         "cost": {
-            "input": 0.7506,
-            "output": 2.2509,
-            "cacheRead": 0.0378,
+            "input": 0.834,
+            "output": 2.501,
+            "cacheRead": 0.042,
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
@@ -14931,9 +14977,9 @@
             "text"
         ],
         "cost": {
-            "input": 0.2,
-            "output": 1.1,
-            "cacheRead": 0.03,
+            "input": 0.13,
+            "output": 0.85,
+            "cacheRead": 0.025,
             "cacheWrite": 0.0
         },
         "contextWindow": 131072,
@@ -15231,9 +15277,9 @@
             "text"
         ],
         "cost": {
-            "input": 0.084,
-            "output": 3.6,
-            "cacheRead": 0.079,
+            "input": 0.0699,
+            "output": 1.4,
+            "cacheRead": 0.0689,
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
@@ -15739,13 +15785,13 @@
             "image"
         ],
         "cost": {
-            "input": 0.02,
-            "output": 0.108,
-            "cacheRead": 0.007,
+            "input": 0.036,
+            "output": 0.5,
+            "cacheRead": 0.01,
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
-        "maxTokens": 384000,
+        "maxTokens": 943718,
         "compat": {
             "supportsDeveloperRole": false,
             "supportsStrictMode": true,
