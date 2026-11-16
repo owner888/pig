@@ -43,6 +43,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Changed
+
+- Changed what a fullscreen frame draws when the window's width changes: the rows in view are wrapped again at once and the rest of the conversation afterwards, in the background. Dragging the window's edge in a long session was sluggish, because every frame re-wrapped every message and tool call: about 300ms a frame with 1,700 tool calls, where the screen shows fifty rows (upstream pi takes about 800ms on the same session). Such a frame now takes about 20ms whatever the session's length, and a view scrolled up keeps showing the same rows while what is above it is re-wrapped. Regular mode is unchanged.
+
 ## [2.0.14] - 2026-11-15
 
 ### Fixed

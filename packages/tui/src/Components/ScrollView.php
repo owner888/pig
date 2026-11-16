@@ -235,6 +235,25 @@ final class ScrollView extends Container implements LayoutComponent, ScrollLayou
         }
     }
 
+    /** The one child, for the renderer that brings a `ViewportAware` one up to date. pig's own. */
+    public function content(): Component
+    {
+        return $this->child;
+    }
+
+    /**
+     * What lies above the viewport changed height by `$rows`: move with it, so the same rows
+     * stay in view. pig's own — `WindowedContainer::refine()` re-wraps children above the view
+     * after a resize. Not clamped: the next layout knows the content's new height and this does
+     * not. Following the end needs nothing; the next layout puts it there.
+     */
+    public function shiftBy(int $rows): void
+    {
+        if (!$this->followingEnd) {
+            $this->currentScrollTop = max(0, $this->currentScrollTop + $rows);
+        }
+    }
+
     #[\Override]
     public function updateLayout(int $contentHeight, int $viewportHeight, Closure $requestRender): void
     {

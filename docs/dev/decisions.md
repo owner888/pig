@@ -94,6 +94,23 @@ pig follows upstream `main` (AGENTS.md); these are the developer's choices that 
   nothing else. Taken out in 0.6.75 when the TUI was aligned with upstream, and put back at the
   developer's request.
 
+- **A resize re-wraps what is on screen first** (fullscreen mode). Upstream renders a scroll view's
+  content whole every frame, and at a new width that means every message and tool call wraps its
+  text again: a frame costs as much as the conversation is long. Measured on one session of 1,670
+  tool calls (34,000 rows) at 120 columns: 270–320ms a frame in pig, 640–870ms in upstream pi 1.5.2
+  on Node 22 — while the window is being dragged, so neither drew more than a frame or two of the
+  drag. With a 1M-token context a session reaches that size before it is ever compacted.
+  pig asks the content for the rows in view (`ViewportAware::renderWindow()`, called from
+  `Layout`'s scroll node); `WindowedContainer` — the transcript and the document around it — draws
+  the children that fill those rows and answers the others as they were last drawn, which keeps
+  every child's height and so the scroll position. `TuiAltScreen` then re-wraps the rest
+  (`refine()`) 120ms after the width last changed, 8ms at a time, moving a scrolled-up view by
+  what changed above it. The same session: 20–25ms a frame, 39 of 40 frames of a drag.
+  The developer's choice, made after measuring upstream. `render()` is unchanged, so regular mode,
+  the transcript printed on exit and anything else that renders the tree get every row at the
+  width they asked for. Not covered: a change that invalidates every child at the *same* width
+  (a theme change, expanding all tool output) still renders them all.
+
 ## Extensions
 
 `ext-mbstring`, `ext-json`, `ext-openssl` and `ext-pcre` are required and are in every build worth

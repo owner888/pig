@@ -139,6 +139,25 @@ final class Layout
         return $widths[$safeWidth];
     }
 
+    /**
+     * Render a scroll view's content for the rows it shows, and have the rest of this frame use
+     * that. pig's own — see `ViewportAware`. Upstream renders the content whole, which at a new
+     * width re-wraps the entire conversation for a viewport of fifty rows.
+     */
+    private static function renderViewport(LayoutContext $context, ViewportAware $content, ScrollLayoutState $state, int $width, int $viewportHeight): void
+    {
+        $following = $state instanceof ScrollView && $state->isFollowingEnd();
+        $lines = $content->renderWindow($width, $following ? null : $state->scrollTop(), $viewportHeight);
+
+        // Shorter at this width than the scroll position allows for: the layout below will clamp
+        // the position to the end, so the end is what has to be drawn.
+        if (!$following && $state->scrollTop() > max(0, count($lines) - $viewportHeight)) {
+            $lines = $content->renderWindow($width, null, $viewportHeight);
+        }
+
+        $context->renderCache[$content] = [$width => $lines];
+    }
+
     private static function measureHeight(LayoutContext $context, Component $component, int $width): int
     {
         return count(self::renderCached($context, $component, $width));
@@ -200,6 +219,9 @@ final class Layout
             $state = $node->state;
             $previousScrollTop = $state->scrollTop();
             $contentWidth = $state->getContentWidth($safeWidth);
+            if ($node->component instanceof ViewportAware && $height !== null) {
+                self::renderViewport($context, $node->component, $state, $contentWidth, max(0, $height));
+            }
             $childBox = self::layoutComponent($context, $node->component, $x, $y - $previousScrollTop, $contentWidth, null, $clip);
             $contentHeight = $childBox->rect->height;
             $viewportHeight = $height === null ? $contentHeight : max(0, $height);

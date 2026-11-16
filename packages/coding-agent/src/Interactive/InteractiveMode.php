@@ -147,6 +147,7 @@ use Pig\Tui\Components\SettingItem;
 use Pig\Tui\Components\SettingsList;
 use Pig\Tui\Components\Spacer;
 use Pig\Tui\Components\TruncatedText;
+use Pig\Tui\Components\WindowedContainer;
 use Pig\Tui\Container;
 use Pig\Tui\Process;
 use Pig\Tui\ProcessTerminal;
@@ -471,7 +472,9 @@ final class InteractiveMode
             fn () => $this->paintBorder(),
             $themeSetting,
         );
-        $this->chat = new Container();
+        // Windowed, as the document it sits in: at a new width only what is in view is wrapped
+        // again at once. The developer's choice; `docs/dev/decisions.md`.
+        $this->chat = new WindowedContainer();
         $this->pending = new Container();
         $this->status = new Container();
         $this->overlay = new Container();
@@ -1077,7 +1080,7 @@ final class InteractiveMode
         // in order, fullscreen mounts the same ones and draws the `ChatViewport` laid over them.
         // Upstream's `headerContainer`, `loadedResourcesContainer` and `chatContainer`, with pig's
         // extension header (upstream swaps it in for the built-in one) above them.
-        $document = new Container();
+        $document = new WindowedContainer();
         $document->addChild($this->customHeader);
         $document->addChild($headerContainer);
         $document->addChild($this->loadedResourcesContainer);

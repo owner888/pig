@@ -73,6 +73,18 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
 
     private ?LayoutFrame $currentLayout = null;
 
+    /**
+     * How long after the width last changed the rest of the transcript is re-wrapped. A window
+     * being dragged changes it dozens of times a second, and each of those frames should cost what
+     * is on screen and nothing else. pig's own — see `ViewportAware`.
+     */
+    private const float REFINE_DELAY = 0.12;
+
+    /** One turn of that work: short enough for a keystroke to get in between two of them. */
+    private const float REFINE_SLICE = 0.008;
+
+    private ?string $refineTimer = null;
+
     private readonly Component $implicitDocument;
 
     private readonly ScrollView $implicitScrollView;
@@ -734,10 +746,67 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
         return $this->altScreenActive;
     }
 
+    /**
+     * After a frame that left part of the transcript as it was drawn at an earlier width
+     * (`ViewportAware`): bring the rest up to date once the width has stopped changing.
+     */
+    private function scheduleRefine(LayoutFrame $layout, bool $widthChanged): void
+    {
+        $content = ($layout->primaryScrollView ?? $this->implicitScrollView)->content();
+
+        if (!$content instanceof ViewportAware || $content->staleCount() === 0) {
+            return;
+        }
+
+        if ($widthChanged) {
+            $this->cancelRefine();
+        }
+
+        $this->refineTimer ??= Loop::get()->delay(self::REFINE_DELAY, $this->refine(...));
+    }
+
+    private function cancelRefine(): void
+    {
+        if ($this->refineTimer !== null) {
+            Loop::get()->cancel($this->refineTimer);
+            $this->refineTimer = null;
+        }
+    }
+
+    private function refine(): void
+    {
+        $this->refineTimer = null;
+
+        if ($this->stopped || !$this->altScreenActive) {
+            return;
+        }
+
+        $scrollView = $this->getPrimaryScrollView();
+        $content = $scrollView->content();
+
+        if (!$content instanceof ViewportAware || $content->staleCount() === 0) {
+            return;
+        }
+
+        // What it re-wraps above the view changes height; the view moves by as much, so the rows
+        // being read stay where they are.
+        $scrollView->shiftBy($content->refine(self::REFINE_SLICE, $scrollView->isFollowingEnd() ? null : $scrollView->scrollTop()));
+
+        if ($content->staleCount() > 0) {
+            $this->refineTimer = Loop::get()->delay(0.001, $this->refine(...));
+
+            return;
+        }
+
+        // The scrollbar and the content's height are now what they will stay.
+        $this->requestRender();
+    }
+
     #[\Override]
     protected function beforeTerminalStop(TuiStopOptions $options): void
     {
         $this->closeSearch();
+        $this->cancelRefine();
         $this->stopSelectionAutoScroll();
         $this->selectionPressActive = false;
         $this->stopScrollbarHover();
@@ -2245,10 +2314,12 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
             $frame[] = $screen[$row] ?? '';
         }
         $this->previousScreen = $frame;
+        $widthChanged = $this->previousWidth !== $width;
         $this->previousWidth = $width;
         $this->previousHeight = $height;
         self::releaseLayout($this->currentLayout);
         $this->currentLayout = $nextLayout;
+        $this->scheduleRefine($nextLayout, $widthChanged);
     }
 
     /**

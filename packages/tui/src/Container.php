@@ -11,7 +11,7 @@ class Container implements Component, MouseHandler
     protected array $children = [];
 
     /** @var array{width: int, children: list<array{component: Component, height: int}>}|null where each child landed in the last render, for mouse routing */
-    private ?array $mouseLayout = null;
+    protected ?array $mouseLayout = null;
 
     public function addChild(Component $child): void
     {
