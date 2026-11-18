@@ -43,6 +43,20 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Added
+
+- Added `PromptTemplatesDocsEval`, upstream's `prompt-templates.docs.eval.ts`: the model creates a `/current-time` prompt template for the project or for the user, `reload` loads it, and invoking it must send exactly the requested prompt — with the template in the requested scope and nothing in the other. The eval harness now loads skills and prompt templates as a session does, at startup and on `reload`.
+- Added `php scripts/eval.php --audit`, upstream's `eval:audit`: the documentation audit runs on its own switch, since it scans every page.
+
+### Changed
+
+- Changed `php scripts/eval.php --host` to run the smoke eval only, as upstream's `eval:host` does; the documentation audit moved to `--audit`.
+- Changed the documentation audit to require evidence: a run that did not read the page and at least one file under `packages/coding-agent/src` fails, whatever its verdict.
+- Changed `Pig\Evals\Report::readTaskObservation()` to read only the assertion whose `fullName` is the task's, so a sibling case in the same suite file no longer turns an observation into `errored`; `classifyCaseStatus()` is private, as upstream's is.
+- Removed the extensions eval's `toolLoaded` field, which the tool result already proves.
+
 ## [2.0.16] - 2026-11-16
 
 ### Fixed

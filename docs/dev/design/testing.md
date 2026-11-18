@@ -324,10 +324,19 @@ the agent better or worse at a task — that is what `packages/evals` (ported fr
   events, token/cost telemetry and the session snapshot.
 - `AcmeServer` (`acme-server.ts`) and `ConfiguredRuntime` (`configured-runtime.ts`) provide the
   loopback OpenAI-compatible and custom NDJSON streaming fixture servers and `ModelRegistry` probes.
-- Seven eval suites under `Pig\Evals\Evals\`: `SmokeEval`, `DocumentationAuditEval`,
-  `ExtensionsDocsEval`, `ModelsDocsEval`, `OpenAiProviderDocsEval`, `CustomProviderDocsEval`, and
-  `TuiDocsEval` (with `RecordingTerminal` and `ContextFooterJudge`), reachable via
-  `php scripts/eval.php --host` and `php scripts/eval.php --docs`.
+- Eight eval suites under `Pig\Evals\Evals\`: `SmokeEval`, `DocumentationAuditEval`,
+  `ExtensionsDocsEval`, `PromptTemplatesDocsEval`, `ModelsDocsEval`, `OpenAiProviderDocsEval`,
+  `CustomProviderDocsEval`, and `TuiDocsEval` (with `RecordingTerminal` and `ContextFooterJudge`).
+  `php scripts/eval.php --host` runs the smoke eval, `--audit` the documentation audit — its own
+  switch, as upstream's `eval:audit` is, because it scans every page — and `--docs` the
+  documentation-lift comparisons.
+- The documentation audit counts only with evidence: the run must have read the page and at
+  least one file under `packages/coding-agent/src`, besides calling the verdict tool once.
+- A suite file may hold several eval sets (`PromptTemplatesDocsEval`'s project and user scopes);
+  `Cli` hands each task its `evalSet` and `caseId`, and `Report` reads only the assertion whose
+  `fullName` is the task's, so a sibling case does not invalidate the observation.
+- The harness loads skills and prompt templates as a session does
+  (`CodingAgent::resources()`, the workspace trusted), at startup and again on `reload`.
 
 Alongside `packages/evals`, `scripts/eval.php` also runs `evals/<name>/CASE.md`: frontmatter with
 the assertions, the prompt below it, and an
@@ -349,6 +358,19 @@ line per case or as one JSON document with `--json`; a baseline is a redirect. O
 go to `bin/pig`, so `php scripts/eval.php -- --model google/gemini-2.5-pro` compares models and
 `-- --no-extensions` runs without the machine's extensions (a permission gate under `NoUi` denies every
 tool call, which looks like the model refusing to work).
+
+**A case's name starts with its level**, so `--filter l2-` runs one level:
+
+- `l1-` — one file, and the prompt says which. A smoke test: a model that works passes all of
+  them, so a failure here means the agent is broken, not that the model is weaker.
+- `l2-` — several files; the model finds the place itself and runs the check to know it is done
+  (a bug under `src/`, a rename that must miss a same-named method, an option added to a CLI).
+- `l3-` — the cause is not where the symptom shows, or the task has a constraint the shortcut
+  breaks: no dependency to install, one copy of a rule instead of three.
+
+Models are compared at `l2` and `l3`, several runs each, since one run of one case is mostly
+noise. A case guards the files that judge it — `tests/`, the fixture's data — with a
+`sha1_file` check, because rewriting the test is the cheapest way to pass it.
 
 ## How much of it has been read against upstream
 

@@ -8,8 +8,6 @@ use Pig\Ai\ToolResultMessage;
 use Pig\Ai\Utils\Text;
 use Pig\Async\Async;
 use Pig\CodingAgent\Extensions\ExtensionError;
-use Pig\CodingAgent\Extensions\LoadedExtension;
-use Pig\CodingAgent\Extensions\ToolDefinition;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\Evals\Harness;
 use Pig\Evals\Judge;
@@ -55,22 +53,8 @@ final class ExtensionsDocsEval
             'output' => static function (array $ctx): array {
                 /** @var AgentSession $session */
                 $session = $ctx['session'];
-                /** @var list<LoadedExtension> $extensions */
-                $extensions = $ctx['extensions'] ?? [];
                 /** @var list<ExtensionError> $errors */
                 $errors = $ctx['extensionErrors'] ?? [];
-
-                $toolLoaded = false;
-
-                foreach ($extensions as $ext) {
-                    foreach ($ext->api->tools() as $tool) {
-                        if ($tool instanceof ToolDefinition && $tool->name === self::TOOL_NAME) {
-                            $toolLoaded = true;
-
-                            break 2;
-                        }
-                    }
-                }
 
                 $toolResult = null;
 
@@ -88,7 +72,6 @@ final class ExtensionsDocsEval
                         static fn (ExtensionError $e): string => "{$e->path}: {$e->message}",
                         $errors,
                     ),
-                    'toolLoaded' => $toolLoaded,
                     'toolResult' => $toolResult,
                 ];
             },
@@ -110,7 +93,6 @@ final class ExtensionsDocsEval
             Judge::structuredOutput([
                 'response' => self::TOOL_RESULT,
                 'extensionErrors' => [],
-                'toolLoaded' => true,
                 'toolResult' => self::TOOL_RESULT,
             ], 'strict', false),
             Judge::toolCalls([

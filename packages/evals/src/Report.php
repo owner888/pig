@@ -26,7 +26,7 @@ final class Report
     /**
      * @return 'errored'|'skipped'|'pending'|null
      */
-    public static function classifyCaseStatus(string $status): ?string
+    private static function classifyCaseStatus(string $status): ?string
     {
         return match ($status) {
             'failed' => 'errored',
@@ -76,17 +76,21 @@ final class Report
             }
 
             foreach ($result['assertionResults'] as $assertion) {
-                $assertions[] = $assertion;
+                // The requested case only: a sibling case in the same file (skipped by `-t`, or
+                // another scenario of the same suite) does not invalidate the observation.
+                if (is_array($assertion) && ($assertion['fullName'] ?? null) === $reportedFullName) {
+                    $assertions[] = $assertion;
+                }
             }
         }
 
-        if (count($assertions) !== 1 || !is_array($assertions[0])) {
+        if (count($assertions) !== 1) {
             return [...$identity, 'outcome' => 'errored'];
         }
 
         $assertion = $assertions[0];
 
-        if (($assertion['fullName'] ?? null) !== $reportedFullName || !is_string($assertion['status'] ?? null)) {
+        if (!is_string($assertion['status'] ?? null)) {
             return [...$identity, 'outcome' => 'errored'];
         }
 

@@ -11,14 +11,15 @@ use Pig\Evals\Evals\DocumentationAuditEval;
 use Pig\Evals\Evals\ExtensionsDocsEval;
 use Pig\Evals\Evals\ModelsDocsEval;
 use Pig\Evals\Evals\OpenAiProviderDocsEval;
+use Pig\Evals\Evals\PromptTemplatesDocsEval;
 use Pig\Evals\Evals\SmokeEval;
 use Pig\Evals\Evals\TuiDocsEval;
 use RuntimeException;
 use Throwable;
 
 /**
- * Upstream's `packages/evals/src/cli.ts`: orchestrates host evals (`smoke`, `documentation-audit`)
- * and paired documentation-lift comparisons (`without_docs` vs `with_docs`).
+ * Upstream's `packages/evals/src/cli.ts`: orchestrates the host smoke eval, the on-demand
+ * documentation audit, and paired documentation-lift comparisons (`without_docs` vs `with_docs`).
  */
 final class Cli
 {
@@ -259,73 +260,79 @@ final class Cli
     }
 
     /**
-     * Run host evals (`smoke` and `documentation-audit`).
+     * Run the host smoke eval — upstream's `eval:host` (the `host` Vitest project, which leaves
+     * the documentation audit out).
      *
      * @param list<string> $args
      */
     public static function runHostEvals(array $args): int
     {
+        $selection = self::hostModelSelection($args);
+        echo "Running smoke eval ({$selection['provider']}/{$selection['id']})...\n";
+
+        try {
+            $res = SmokeEval::run(['model' => $selection]);
+            printf("  ok   %s > %s (%dms, %d tokens)\n", $res['evalSet'], $res['caseId'], $res['run']['timings']['totalMs'], $res['run']['usage']['totalTokens']);
+        } catch (Throwable $e) {
+            printf("  FAIL %s > %s: %s\n", SmokeEval::EVAL_SET, SmokeEval::CASE_ID, $e->getMessage());
+
+            return 1;
+        }
+
+        return 0;
+    }
+
+    /**
+     * Run the documentation audit — upstream's `eval:audit` (the `audit` Vitest project). Kept out
+     * of `runHostEvals()` because it scans every documentation page, so it runs only when asked.
+     *
+     * @param list<string> $args
+     */
+    public static function runAuditEvals(array $args): int
+    {
+        $options = ['model' => self::hostModelSelection($args)];
+        $cases = DocumentationAuditEval::cases();
+        echo 'Running documentation-audit eval (' . count($cases) . " pages)...\n";
+        $failed = 0;
+
+        foreach ($cases as $case) {
+            try {
+                $res = DocumentationAuditEval::runPage($case['path'], $options);
+                printf("  ok   %s (%dms, %d tokens)\n", $res['caseId'], $res['run']['timings']['totalMs'], $res['run']['usage']['totalTokens']);
+            } catch (Throwable $e) {
+                $failed++;
+                printf("  FAIL %s: %s\n", $case['name'], $e->getMessage());
+            }
+        }
+
+        return $failed === 0 ? 0 : 1;
+    }
+
+    /**
+     * `--provider` and `--model` for a host eval, or the `PIG_PROVIDER` / `PIG_MODEL` defaults.
+     *
+     * @param list<string> $args
+     * @return array{provider: string, id: string}
+     */
+    private static function hostModelSelection(array $args): array
+    {
         $provider = null;
         $model = null;
-        $selected = [];
         $count = count($args);
 
         for ($i = 0; $i < $count; $i++) {
             $arg = $args[$i];
 
-            if ($arg === '--provider') {
-                $provider = $args[++$i] ?? throw new InvalidArgumentException('Missing value for --provider.');
-
-                continue;
-            }
-
-            if ($arg === '--model') {
-                $model = $args[++$i] ?? throw new InvalidArgumentException('Missing value for --model.');
-
-                continue;
-            }
-
-            $selected[] = $arg;
+            match ($arg) {
+                '--provider' => $provider = $args[++$i] ?? throw new InvalidArgumentException('Missing value for --provider.'),
+                '--model' => $model = $args[++$i] ?? throw new InvalidArgumentException('Missing value for --model.'),
+                default => throw new InvalidArgumentException("Unsupported eval argument: {$arg}"),
+            };
         }
 
-        $selection = Harness::resolveModelSelection(
+        return Harness::resolveModelSelection(
             $provider !== null || $model !== null ? ['provider' => (string) $provider, 'id' => (string) $model] : null,
         );
-        $options = ['model' => $selection];
-
-        $runSmoke = $selected === [] || in_array('smoke', $selected, true) || in_array('evals/smoke.eval.ts', $selected, true) || in_array('evals/smoke.eval.php', $selected, true);
-        $runAudit = $selected === [] || in_array('documentation-audit', $selected, true) || in_array('evals/documentation-audit.eval.ts', $selected, true) || in_array('evals/documentation-audit.eval.php', $selected, true);
-
-        $failed = 0;
-
-        if ($runSmoke) {
-            echo "Running smoke eval ({$selection['provider']}/{$selection['id']})...\n";
-
-            try {
-                $res = SmokeEval::run($options);
-                printf("  ok   %s > %s (%dms, %d tokens)\n", $res['evalSet'], $res['caseId'], $res['run']['timings']['totalMs'], $res['run']['usage']['totalTokens']);
-            } catch (Throwable $e) {
-                $failed++;
-                printf("  FAIL %s > %s: %s\n", SmokeEval::EVAL_SET, SmokeEval::CASE_ID, $e->getMessage());
-            }
-        }
-
-        if ($runAudit) {
-            $cases = DocumentationAuditEval::cases();
-            echo 'Running documentation-audit eval (' . count($cases) . " pages)...\n";
-
-            foreach ($cases as $case) {
-                try {
-                    $res = DocumentationAuditEval::runPage($case['path'], $options);
-                    printf("  ok   %s (%dms, %d tokens)\n", $res['caseId'], $res['run']['timings']['totalMs'], $res['run']['usage']['totalTokens']);
-                } catch (Throwable $e) {
-                    $failed++;
-                    printf("  FAIL %s: %s\n", $case['name'], $e->getMessage());
-                }
-            }
-        }
-
-        return $failed === 0 ? 0 : 1;
     }
 
     /**
@@ -346,10 +353,14 @@ final class Cli
         \Pig\Async\Loop::reset();
 
         try {
+            // The case goes with the options, as a suite with several scenarios in one file
+            // (`PromptTemplatesDocsEval`) runs the one the task names — upstream's `-t` filter.
             $outcome = $runner([
                 'allowHost' => true,
                 'variant' => $task->variant,
                 'model' => $modelSelection,
+                'evalSet' => $task->evalSet,
+                'caseId' => $task->caseId,
             ]);
             printf(
                 "  -> score=%s (%dms, %d tools, %d tokens)\n",
@@ -435,6 +446,10 @@ final class Cli
             'evals/extensions.docs.eval.php' => [
                 'cases' => ExtensionsDocsEval::cases(...),
                 'run' => ExtensionsDocsEval::run(...),
+            ],
+            'evals/prompt-templates.docs.eval.php' => [
+                'cases' => PromptTemplatesDocsEval::cases(...),
+                'run' => PromptTemplatesDocsEval::run(...),
             ],
             'evals/models.docs.eval.php' => [
                 'cases' => ModelsDocsEval::cases(...),

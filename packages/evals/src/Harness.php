@@ -447,6 +447,9 @@ final class Harness
 
             $inlineExtensions = $buildInlineExtensions();
             $settings = Settings::load($workspace);
+            // Upstream's default resource loader: the skills and prompt templates of the isolated
+            // agent directory and the (trusted) workspace, at startup and again on reload.
+            $currentResources = CodingAgent::resources($workspace, $settings, projectTrusted: true);
             $store = SessionManager::create($workspace, $sessionsDir . '/session.jsonl');
             $artifacts['runId'] = $store->id;
 
@@ -504,11 +507,11 @@ final class Harness
                     : $auth->apiKey($provider),
                 contextFiles: [],
                 thinking: ThinkingLevel::Off,
-                skills: [],
+                skills: $currentResources['skills'],
                 extensionRunner: $extensionRunner,
                 customTools: $customTools,
             );
-            $loadout = new ToolLoadout($agent, $workspace, $builtIn, $customTools, $extensionRunner, [], []);
+            $loadout = new ToolLoadout($agent, $workspace, $builtIn, $customTools, $extensionRunner, [], $currentResources['skills']);
 
             if ($toolSelection !== null) {
                 $loadout->useNamed($toolSelection->matches(...));
@@ -524,6 +527,7 @@ final class Harness
                 $store,
                 $settings,
                 $extensionRunner,
+                fileCommands: $currentResources['fileCommands'],
                 auth: $auth,
                 loadout: $loadout,
                 usesDefaultTools: false,
@@ -548,6 +552,7 @@ final class Harness
                 &$extensionRunner,
                 &$currentExtensions,
                 &$currentExtensionErrors,
+                &$currentResources,
             ): void {
                 $extensionRunner->emit(new SessionShutdownEvent('reload'));
                 ProviderRegistry::forget();
@@ -564,6 +569,8 @@ final class Harness
                 VirtualModelRegistry::reset();
 
                 $reloadedSettings = Settings::load($workspace);
+                $currentResources = CodingAgent::resources($workspace, $reloadedSettings, projectTrusted: true);
+                $session->setFileCommands($currentResources['fileCommands']);
                 [$diskExtensions, $problems] = ExtensionLoader::load(
                     $workspace,
                     $reloadedSettings->extensions(),
@@ -582,7 +589,7 @@ final class Harness
 
                 $newCustomTools = $buildCustomToolSet($currentExtensions);
                 $newCustomTools->withContext(static fn () => $extensionRunner->context());
-                $loadout->reloaded($newCustomTools, [], []);
+                $loadout->reloaded($newCustomTools, [], $currentResources['skills']);
                 $newCustomTools->onChange(static fn () => $loadout->refresh());
                 $extensionRunner->emit(new SessionStartEvent('reload'));
             };
@@ -658,6 +665,8 @@ final class Harness
                     'agentDir' => $agentDir,
                     'extensions' => $currentExtensions,
                     'extensionErrors' => $currentExtensionErrors,
+                    'skills' => $currentResources['skills'],
+                    'promptWarnings' => $currentResources['promptWarnings'],
                 ])
                 : $response;
 

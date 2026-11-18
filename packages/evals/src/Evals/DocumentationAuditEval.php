@@ -10,6 +10,7 @@ use Pig\Ai\TextContent;
 use Pig\Async\Async;
 use Pig\CodingAgent\Config;
 use Pig\CodingAgent\Extensions\ToolDefinition;
+use Pig\CodingAgent\Tools\Paths;
 use Pig\Evals\Harness;
 use Pig\Evals\Judge;
 use RecursiveDirectoryIterator;
@@ -54,6 +55,7 @@ final class DocumentationAuditEval
         $repositoryRoot = Config::packageDir();
         $docsRoot ??= Config::docsPath();
         $documentationPath = rtrim($docsRoot, '/') . '/' . ltrim($path, '/');
+        $sourceRoot = rtrim($repositoryRoot, '/') . '/packages/coding-agent/src';
         $submitAudit = self::submitAuditTool();
 
         $harness = Harness::createPigCodingAgentHarness([
@@ -81,8 +83,32 @@ Call {$toolName} exactly once as your final action. Do not return prose.
 PROMPT;
 
         $result = Async::run(static fn (): array => $harness($prompt));
+        $calls = Judge::extractToolCalls($result);
+
+        // Evidence that the audit was done: the page itself and at least one implementation file
+        // under the coding agent's source were read, not guessed at from names.
+        $readPaths = [];
+
+        foreach ($calls as $call) {
+            $readPath = $call['name'] === 'read' && $call['status'] === 'ok' ? ($call['arguments']['path'] ?? null) : null;
+
+            if (is_string($readPath)) {
+                $readPaths[] = Paths::resolve($readPath, getcwd() ?: '.');
+            }
+        }
+
+        if (!in_array(Paths::collapse($documentationPath), $readPaths, true)) {
+            throw new RuntimeException("The audit did not read {$documentationPath}.");
+        }
+
+        $readSource = array_filter($readPaths, static fn (string $readPath): bool => str_starts_with($readPath, Paths::collapse($sourceRoot) . '/'));
+
+        if ($readSource === []) {
+            throw new RuntimeException("The audit read no implementation file under {$sourceRoot}.");
+        }
+
         $auditCalls = array_values(array_filter(
-            Judge::extractToolCalls($result),
+            $calls,
             static fn (array $call): bool => $call['name'] === self::TOOL_NAME,
         ));
 

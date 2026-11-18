@@ -59,19 +59,9 @@ final class ReportTest extends TestCase
     }
 
     #[DataProvider('skippedStatuses')]
-    public function testMapsSkippedStatusToSkipped(string $status): void
+    public function testPreservesASkippedOutcomeForCasesWithoutHarnessRuns(string $status): void
     {
-        $this->assertSame('skipped', Report::classifyCaseStatus($status));
-    }
-
-    public function testMapsFailedInfrastructureToErrored(): void
-    {
-        $this->assertSame('errored', Report::classifyCaseStatus('failed'));
-    }
-
-    public function testPreservesASkippedOutcomeWhenNoHarnessRunExists(): void
-    {
-        ['observation' => $observation] = $this->readObservation(['status' => 'skipped']);
+        ['observation' => $observation] = $this->readObservation(['status' => $status]);
         $this->assertSame('skipped', $observation['outcome']);
     }
 
@@ -85,7 +75,7 @@ final class ReportTest extends TestCase
     {
         ['directory' => $directory, 'observation' => $observation] = $this->readObservation([
             'status' => 'failed',
-            'meta' => $this->scoredMeta(['errors' => [['message' => 'Prompt verification failed']]]),
+            'meta' => $this->scoredMeta(),
         ]);
 
         $this->assertSame([
@@ -145,6 +135,19 @@ final class ReportTest extends TestCase
         $hashes = array_values(array_diff(scandir($sessionsRoot) ?: [], ['.', '..']));
         $this->assertCount(1, $hashes);
         $this->assertSame(self::SESSION, file_get_contents("{$sessionsRoot}/{$hashes[0]}/session.jsonl"));
+    }
+
+    public function testSelectsTheRequestedCaseWhenASiblingCaseIsSkipped(): void
+    {
+        ['directory' => $directory, 'reportPath' => $reportPath] = $this->writeTaskReport([
+            ['caseId' => 'sibling case', 'status' => 'skipped'],
+            ['caseId' => $this->task->caseId, 'meta' => $this->scoredMeta()],
+        ]);
+        $observation = Report::readTaskObservation($this->task, $reportPath, $directory);
+
+        $this->assertSame('scored', $observation['outcome']);
+        $this->assertSame(0.5, $observation['score']);
+        $this->assertSame(15, $observation['totalTokens']);
     }
 
     public function testTreatsAZeroScoreAsScoredData(): void
@@ -231,43 +234,54 @@ final class ReportTest extends TestCase
     }
 
     /**
-     * @param array{status?: string, meta?: array<string, mixed>} $assertion
-     * @return array{directory: string, observation: array<string, mixed>}
+     * @param list<array{caseId?: string, status?: string, meta?: array<string, mixed>}> $assertions
+     * @return array{directory: string, reportPath: string}
      */
-    private function readObservation(array $assertion = []): array
+    private function writeTaskReport(array $assertions): array
     {
         $directory = sys_get_temp_dir() . '/pig-eval-report-test-' . bin2hex(random_bytes(4));
         mkdir($directory, 0o700, true);
         $this->temporaryDirectories[] = $directory;
 
+        $results = array_map(fn (array $assertion): array => [
+            'ancestorTitles' => [$this->task->evalSet],
+            'fullName' => "{$this->task->evalSet} " . ($assertion['caseId'] ?? $this->task->caseId),
+            'status' => $assertion['status'] ?? 'passed',
+            'title' => $assertion['caseId'] ?? $this->task->caseId,
+            'failureMessages' => [],
+            'meta' => $assertion['meta'] ?? new stdClass(),
+        ], $assertions);
+        $count = static fn (string $status): int => count(array_filter($results, static fn (array $r): bool => $r['status'] === $status));
+
         $reportPath = $directory . '/vitest.json';
-        $status = $assertion['status'] ?? 'passed';
         file_put_contents($reportPath, json_encode([
-            'numFailedTests' => 0,
-            'numPassedTests' => $status === 'passed' ? 1 : 0,
-            'numPendingTests' => $status === 'pending' || $status === 'skipped' ? 1 : 0,
-            'numTodoTests' => 0,
-            'numTotalTests' => 1,
+            'numFailedTests' => $count('failed'),
+            'numPassedTests' => $count('passed'),
+            'numPendingTests' => $count('pending') + $count('skipped') + $count('disabled'),
+            'numTodoTests' => $count('todo'),
+            'numTotalTests' => count($results),
             'startTime' => 0,
-            'success' => true,
+            'success' => $count('failed') === 0,
             'testResults' => [
                 [
                     'message' => '',
                     'name' => '/repo/packages/evals/evals/example.docs.eval.php',
-                    'status' => 'passed',
-                    'assertionResults' => [
-                        [
-                            'ancestorTitles' => [$this->task->evalSet],
-                            'fullName' => "{$this->task->evalSet} {$this->task->caseId}",
-                            'status' => $status,
-                            'title' => $this->task->caseId,
-                            'failureMessages' => [],
-                            'meta' => $assertion['meta'] ?? new stdClass(),
-                        ],
-                    ],
+                    'status' => $count('failed') === 0 ? 'passed' : 'failed',
+                    'assertionResults' => $results,
                 ],
             ],
         ], JSON_THROW_ON_ERROR));
+
+        return ['directory' => $directory, 'reportPath' => $reportPath];
+    }
+
+    /**
+     * @param array{status?: string, meta?: array<string, mixed>} $assertion
+     * @return array{directory: string, observation: array<string, mixed>}
+     */
+    private function readObservation(array $assertion = []): array
+    {
+        ['directory' => $directory, 'reportPath' => $reportPath] = $this->writeTaskReport([$assertion]);
 
         return [
             'directory' => $directory,

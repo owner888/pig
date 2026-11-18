@@ -34,6 +34,8 @@ final class ComparisonTest extends TestCase
         $this->assertSame(0.5, $comparison['lift']);
         $this->assertSame(['eligiblePairs' => 2, 'controlMean' => 150, 'treatmentMean' => 150, 'meanDelta' => 0], $comparison['totalTokens']);
         $this->assertSame(['eligiblePairs' => 2, 'controlMean' => 2.5, 'treatmentMean' => 2, 'meanDelta' => -0.5], $comparison['toolCalls']);
+        $this->assertSame(['eligiblePairs' => 2, 'controlMean' => 1000, 'treatmentMean' => 900, 'meanDelta' => -100], $comparison['totalMs']);
+        $this->assertSame(['eligiblePairs' => 2, 'controlMean' => 0.01, 'treatmentMean' => 0.01, 'meanDelta' => 0], $comparison['estimatedCostUsd']);
     }
 
     public function testFailsClosedForIncompleteAndErroredPairsWhileRetainingTotals(): void
