@@ -49,7 +49,14 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ### Changed
 
+- Changed the resume command printed on exit to its own line after `To resume this session:`, so it can be selected with a triple-click, as upstream's #12237.
+- Changed the order of a quit to upstream's: the screen is handed back first, then extensions get `session_shutdown`, tools are told, and the session is let go of. Letting go suspends, and a frame drawn meanwhile repainted the last screen on the way out.
+
 - Changed an HTTP/2 connection to open as Node's `fetch` does, read off the wire from Node 26: a window of 256 KiB per stream and 512 KiB for the connection (were 8 MiB), and pseudo-headers in the order `:authority`, `:method`, `:path`, `:scheme`. A stream that delivers more than its opening window, a download, is raised to 8 MiB afterwards, so large downloads keep their speed.
+
+### Fixed
+
+- Fixed `/quit` from fullscreen jumping to the screen pig was started from before the transcript appeared, which on a long conversation was visible for as long as the whole conversation took to render again. The transcript is now rendered first and printed in the same synchronized write that leaves the alternate screen, and flushed before pig exits.
 
 ## [2.0.17] - 2026-11-19
 

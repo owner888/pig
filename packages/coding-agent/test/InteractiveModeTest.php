@@ -5900,19 +5900,43 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('first answer', implode("\n", array_map(Ansi::strip(...), $tui->getScreenLines())));
     }
 
-    public function testLeavingFullscreenPrintsTheTranscriptThroughARegularRenderer(): void
+    public function testLeavingFullscreenPrintsTheTranscriptInTheSameWriteThatLeavesTheAlternateScreen(): void
     {
+        // Two writes left the normal screen as it was before pig started on display for as long
+        // as the conversation took to render again — a jump on `/quit` once it was long.
         $this->start(['an answer to keep'], tuiMode: 'fullscreen');
         $this->type('question');
         $this->type(self::ENTER);
         $this->settle();
+        // On the screen before the quit. `screenText()` is the layout root's render, which in
+        // fullscreen gives the transcript no rows; the screen's own lines have it.
+        $this->assertStringContainsString('an answer to keep', implode("\n", array_map(Ansi::strip(...), $this->mode->screen()->getScreenLines())));
         $this->terminal->clearWrites();
 
         $this->mode->stop();
 
-        $written = $this->terminal->output();
-        $this->assertStringContainsString("\x1b[?1049l", $written, 'the alternate screen is left first');
-        $this->assertGreaterThan(strpos($written, "\x1b[?1049l"), strpos($written, 'an answer to keep'), 'then the transcript is drawn on the normal screen');
+        $leaving = array_values(array_filter($this->terminal->writes, static fn (string $write): bool => str_contains($write, "\x1b[?1049l")));
+        $this->assertCount(1, $leaving);
+        $write = $leaving[0];
+        $this->assertStringStartsWith("\x1b[?2026h", $write, 'one synchronized write');
+        $this->assertStringEndsWith("\x1b[?2026l", $write);
+        $afterLeaving = substr($write, strpos($write, "\x1b[?1049l"));
+        $this->assertStringContainsString('an answer to keep', Ansi::strip($afterLeaving), 'the alternate screen is left, then the transcript is drawn');
+    }
+
+    public function testTheScreenIsHandedBackBeforeTheSessionIsLetGoOf(): void
+    {
+        // Upstream's `shutdown()`: `stop()`, then `runtimeHost.dispose()`.
+        $terminalStartedAtShutdown = null;
+        $this->start(customTools: $this->tools('wc', function ($event) use (&$terminalStartedAtShutdown): void {
+            if ($event->reason === 'shutdown') {
+                $terminalStartedAtShutdown = $this->terminal->started;
+            }
+        }));
+
+        $this->mode->stop();
+
+        $this->assertFalse($terminalStartedAtShutdown);
     }
 
     public function testResumeHintExitLeavesOnlyTheNormalScreen(): void

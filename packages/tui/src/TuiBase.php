@@ -1113,6 +1113,10 @@ abstract class TuiBase extends Container implements TUI
         $this->terminal->showCursor();
         $this->terminal->stop();
         $this->afterTerminalStop($options);
+        // What `afterTerminalStop()` wrote comes after the terminal's own flush — the alternate
+        // screen's whole transcript, on a quit. A write the tty did not take at once waits for
+        // the loop, which is about to stop; upstream's writes to a tty are synchronous.
+        $this->terminal->flush();
     }
 
     /** Draw now, not on the next turn of the loop — upstream's `renderNow()`. */

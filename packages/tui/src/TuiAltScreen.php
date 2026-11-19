@@ -826,6 +826,12 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
     /**
      * Leave the alternate screen and, unless another renderer is taking over, print the whole
      * document into the normal screen so the conversation is still there in the scrollback.
+     *
+     * The document is the children as a regular renderer draws them (`parent::render()`), not the
+     * layout root: a root's `VStack::render()` gives an entry its basis, and a fullscreen
+     * transcript's basis is 0 (upstream's `createChatViewport()`), so the root printed only the
+     * input dock. Upstream has the same root render and never reaches this with a root set: its
+     * quit moves to a regular renderer first. See docs/dev/decisions.md.
      */
     #[\Override]
     protected function afterTerminalStop(TuiStopOptions $options): void
@@ -842,7 +848,7 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
             $buffer = self::BEGIN_SYNCHRONIZED_OUTPUT . self::EXIT_ALT_SCREEN . self::DISABLE_AUTOWRAP;
             $document = array_map(
                 static fn (string $line): string => str_replace(TUI::CURSOR_MARKER, '', (string) preg_replace(self::OSC133_ZONE_PREFIX, '', $line)),
-                $this->resolveFakeCursors($this->render($width)),
+                $this->resolveFakeCursors(parent::render($width)),
             );
             foreach ($this->applyLineResets($document) as $row => $line) {
                 if (!TerminalImage::isImageLine($line) && Width::visible($line) > $width) {

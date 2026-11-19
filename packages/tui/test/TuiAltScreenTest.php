@@ -1129,6 +1129,49 @@ final class TuiAltScreenTest extends TestCase
         $this->assertTrue($tui->isFollowingOutput());
     }
 
+    public function testStopPrintsTheTranscriptALayoutRootGivesNoRows(): void
+    {
+        // A chat viewport's transcript has basis 0, so the root's `render()` drew only the dock.
+        $terminal = new FakeTerminal(20, 3);
+        $tui = new TuiAltScreen($terminal);
+        $transcript = new Text(self::lines(6), 0, 0);
+        $editor = new Text('editor', 0, 0);
+        $tui->addChild($transcript);
+        $tui->addChild($editor);
+        $tui->setLayoutRoot(new VStack([
+            new StackEntry(new ScrollView($transcript, follow: 'end', primary: true), basis: 0, grow: 1, minSize: 1),
+            new StackEntry($editor, basis: 'auto', minSize: 1),
+        ]));
+        $this->start($tui);
+        $terminal->clearWrites();
+
+        $tui->stop();
+        $this->started = [];
+
+        $leaving = array_values(array_filter($terminal->writes, static fn (string $write): bool => str_contains($write, "\x1b[?1049l")));
+        $this->assertCount(1, $leaving);
+        $printed = Ansi::strip(substr($leaving[0], strpos($leaving[0], "\x1b[?1049l")));
+        foreach (['line 1', 'line 6', 'editor'] as $row) {
+            $this->assertStringContainsString($row, $printed);
+        }
+    }
+
+    public function testTheTranscriptPrintedOnStopIsFlushedBeforeStopReturns(): void
+    {
+        // Written after the terminal's own flush, and the loop that would drain it is stopping.
+        $terminal = new FakeTerminal(20, 3);
+        $tui = new TuiAltScreen($terminal);
+        $tui->addChild(new Text('alpha', 0, 0));
+        $this->start($tui);
+        $terminal->busy = true;
+
+        $tui->stop();
+        $this->started = [];
+
+        $this->assertFalse($terminal->busy);
+        $this->assertTrue(self::wrote($terminal, 'alpha'));
+    }
+
     public function testDoesNotEmitKittyGraphicsCommandsOrOsc133ZonesInITerm2(): void
     {
         TerminalImage::setCapabilities(new TerminalCapabilities(ImageProtocol::ITerm2, true, true));

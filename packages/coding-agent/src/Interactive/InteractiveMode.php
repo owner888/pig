@@ -951,32 +951,29 @@ final class InteractiveMode
         // A frame timer outliving the screen it drew on keeps the loop from ever going idle.
         $this->armin?->dispose();
 
-        // Before the session is let go of, so a hook that wants to write something down
-        // still has a session to read. Nothing after this point is drawn — the terminal
-        // is about to be handed back — so a hook that complains here complains to stderr
-        // through whatever it uses itself.
+        // Before the terminal is handed back: turning colour-scheme reports off is a write to it.
+        $this->themeController->dispose();
+        Themes::stopThemeWatcher();
+
+        // Upstream's order on a quit (`shutdown()`): the screen stops first, then the session is
+        // let go of (`runtimeHost.dispose()`). Letting go suspends — hooks, MCP servers, the
+        // transcript written back — and a frame drawn while it did repainted the last screen on
+        // the way out. Stopped here and not only in run()'s finally: whoever calls this wants
+        // the terminal back — raw mode off, cursor shown — whether or not the loop is what they
+        // are waiting on. `bin/pig` prints the resume hint after this.
+        $this->stopInteractiveTui($this->settings->fullscreenExitOutput());
+
+        // After the screen, before the session is let go of, so a hook that wants to write
+        // something down still has a session to read. Nothing is drawn any more, so a hook that
+        // complains here complains to stderr through whatever it uses itself.
         $this->extensionRunner?->emit(new SessionShutdownEvent('quit'));
 
-        // Nothing is drawn after this, so a tool that fails while letting go is reported
-        // to stderr — the transcript is a moment away from being scrolled off.
+        // A tool that fails while letting go is reported to stderr: there is no screen.
         foreach ($this->customTools?->notify('shutdown') ?? [] as $problem) {
             fwrite(STDERR, "tool {$problem->toText()}\n");
         }
 
         $this->session->dispose();
-
-        // Before the terminal is handed back: turning colour-scheme reports off is a write to it.
-        $this->themeController->dispose();
-        Themes::stopThemeWatcher();
-
-        // Stopped here and not only in run()'s finally: whoever calls this wants the
-        // terminal back — raw mode off, cursor shown — whether or not the loop is what
-        // they are waiting on.
-        // Upstream's way out of fullscreen: with `fullscreenExitOutput` at `transcript` the tree
-        // moves to a regular renderer that draws the conversation into the normal screen; with
-        // `resume-hint` the alternate screen is just left, and `bin/pig` prints the hint after
-        // this either way.
-        $this->stopInteractiveTui($this->settings->fullscreenExitOutput());
         Loop::get()->stop();
     }
 
@@ -1171,7 +1168,7 @@ final class InteractiveMode
      *
      * @param 'regular'|'fullscreen' $mode
      */
-    private function switchTuiMode(string $mode, bool $startRenderer = true): bool
+    private function switchTuiMode(string $mode): bool
     {
         $previousUi = $this->renderer;
         if ($mode === $previousUi->mode) {
@@ -1209,9 +1206,6 @@ final class InteractiveMode
         $this->mountInteractiveTui($nextUi, $components);
         $nextUi->invalidate();
         $nextUi->setFocus($focus);
-        if (!$startRenderer) {
-            return true;
-        }
         $nextUi->start();
         $this->ui->rebindTerminalInputListeners();
         $this->themeController->rebindTui();
@@ -1223,17 +1217,26 @@ final class InteractiveMode
         return true;
     }
 
-    /** Upstream's `stopInteractiveTui()`. */
+    /**
+     * Upstream's `stopInteractiveTui()`, except for how the transcript reaches the normal screen.
+     *
+     * Upstream moves the tree to a regular renderer (`switchTuiMode()`), which leaves the
+     * alternate screen in a write of its own, invalidates every component and only then renders
+     * the conversation again: for as long as that takes, the terminal shows the normal screen as
+     * it was before pig started, and on a long conversation that is a visible jump on `/quit`.
+     * `TuiAltScreen::afterTerminalStop()` renders the document first, from the frames it already
+     * has, and leaves the alternate screen and prints it in one synchronized write. The
+     * developer's choice; see docs/dev/decisions.md.
+     */
     private function stopInteractiveTui(string $fullscreenExitOutput): void
     {
-        if ($this->renderer instanceof TuiAltScreen && $fullscreenExitOutput === 'transcript') {
+        $fullscreen = $this->renderer instanceof TuiAltScreen;
+        if ($fullscreen) {
             while ($this->renderer->hasOverlayEntries()) {
                 $this->renderer->hideOverlay();
             }
-            $this->switchTuiMode('regular', startRenderer: false);
-            $this->renderer->renderNow();
         }
-        $this->tui->stop(new TuiStopOptions(preserveScreen: $this->renderer instanceof TuiAltScreen));
+        $this->tui->stop(new TuiStopOptions(preserveScreen: $fullscreen && $fullscreenExitOutput === 'resume-hint'));
     }
 
     private function scrollToEndIndicator(): string

@@ -111,6 +111,21 @@ pig follows upstream `main` (AGENTS.md); these are the developer's choices that 
   width they asked for. Not covered: a change that invalidates every child at the *same* width
   (a theme change, expanding all tool output) still renders them all.
 
+- **Quitting fullscreen prints the transcript in the write that leaves the alternate screen**
+  (`fullscreenExitOutput: "transcript"`, the default). Upstream's `stopInteractiveTui()` moves the
+  tree to a regular renderer: `switchTuiMode()` leaves the alternate screen in a write of its own,
+  invalidates every component, and `renderNow()` renders the whole conversation again before the
+  second write. In between the terminal shows the normal screen as it was before pig started, for
+  as long as that render takes — in PHP, on a long conversation, a visible jump on every `/quit`.
+  pig stops the fullscreen renderer without `preserveScreen` instead, and
+  `TuiAltScreen::afterTerminalStop()` (upstream's own, unused by upstream's quit) renders the
+  document from the components' own caches, then leaves the alternate screen and prints it in one
+  synchronized write. It renders the children as a regular renderer would (`parent::render()`),
+  not the layout root: the root's `VStack::render()` gives the transcript its basis, 0, and
+  printed only the input dock — which is why upstream's quit could not use it as it was. `TuiBase::stop()` flushes after it, since that write comes after the
+  terminal's own flush. The developer's choice, made after comparing with upstream `main` on
+  2026-11-19, where the quit path is unchanged since #7555.
+
 ## Extensions
 
 `ext-mbstring`, `ext-json`, `ext-openssl` and `ext-pcre` are required and are in every build worth
