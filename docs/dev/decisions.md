@@ -305,6 +305,28 @@ That was not hypothetical: deleting the read of SOCKS5's bound address makes fou
 `Malformed status line: "  8HTTP/1.1 200 OK"`, which is the bound address arriving where the
 response was meant to be. Asserting only on the bytes pig *sends* would have passed.
 
+## HTTP/3 is not implemented
+
+Weighed after HTTP/2 and left, on purpose. Read this before starting it again.
+
+- **PHP's OpenSSL streams cannot carry QUIC.** QUIC embeds the TLS 1.3 handshake in its own packets, and PHP
+  exposes no way to do that, so it would mean TLS 1.3 written in PHP (handshake, key schedule, certificate
+  chain, AEAD) plus QUIC's transport (packet number spaces, packet and header protection, loss recovery,
+  congestion control, two levels of flow control, connection ids, retry) plus QPACK and HTTP/3 framing —
+  five to eight thousand lines, an order of magnitude beyond `Http2\`, with a hand-written TLS in it.
+- **Node does not do it either.** undici's `fetch` has no HTTP/3; the port's rule is upstream's behaviour, and
+  this would go past it.
+- **It buys little here.** A model request is one long connection, and HTTP/2 with the connection kept already
+  removes the handshake; what HTTP/3 adds (one round trip fewer, no head-of-line blocking, connection
+  migration) shows on lossy mobile links, not on an API call.
+- **It does not reach where pig goes.** HTTP CONNECT and SOCKS5's TCP tunnel carry no QUIC (SOCKS5 UDP
+  ASSOCIATE is rarely offered), and finding out a server speaks it needs `Alt-Svc` or an HTTPS DNS record and a
+  fallback for networks that drop UDP. Bedrock does not offer it.
+- **`ext-curl` is no way round.** It would need a libcurl built with ngtcp2 or quiche, and PHP exposes no socket
+  callbacks to put it on the loop (see the HTTP transport row).
+
+Reconsider if Node's `fetch` gains HTTP/3, or PHP's OpenSSL streams can do QUIC.
+
 ## Packages: upstream's package manager, with Composer where upstream has npm
 
 `pig install | remove | update | list | config`, `-e <source>` and the `packages` setting are

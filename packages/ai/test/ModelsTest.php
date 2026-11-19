@@ -338,14 +338,14 @@ final class ModelsTest extends TestCase
         $this->assertSame('https://{location}-aiplatform.googleapis.com', $model->baseUrl);
         $this->assertSame([0.3, 2.5, 0.03, 0.0], [$model->pricing->input, $model->pricing->output, $model->pricing->cacheRead, $model->pricing->cacheWrite]);
         $this->assertSame(['images' => ['resize' => ['maxWidth' => 2000, 'maxHeight' => 2000, 'maxBytes' => 4_718_592, 'jpegQuality' => 80]]], $model->inputLimits);
-        $this->assertCount(16, self::of(Models::GOOGLE_VERTEX));
+        $this->assertCount(17, self::of(Models::GOOGLE_VERTEX));
     }
 
     public function testBedrockRowsAreUpstreamsCatalogueRows(): void
     {
         // Pinned from upstream's published catalogue (`amazon-bedrock.json`, pi-ai 1.1.0), as models.dev
         // lists Bedrock at the last `generate-models.php`.
-        $this->assertCount(202, self::of(Models::AMAZON_BEDROCK));
+        $this->assertCount(208, self::of(Models::AMAZON_BEDROCK));
 
         $opus = Models::find(Models::AMAZON_BEDROCK, 'global.anthropic.claude-opus-4-6-v1');
         $this->assertNotNull($opus);
@@ -385,7 +385,7 @@ final class ModelsTest extends TestCase
         // OpenAI's long-context tier (#11949), at Azure's larger window for the ids it names, and no
         // base URL.
         // Less the models models.dev has since retired, plus GPT-6.1 Terra (upstream 363ad78).
-        $this->assertCount(44, self::of(Models::AZURE));
+        $this->assertCount(46, self::of(Models::AZURE));
 
         $gpt = Models::find(Models::AZURE, 'gpt-5.5');
         $this->assertNotNull($gpt);
