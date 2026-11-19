@@ -28,6 +28,8 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ### Added
 
+- Added `NODE_EXTRA_CA_CERTS`, read as Node reads it: a PEM file of certificate authorities trusted in addition to the system's, for a company's proxy or a private CA (`Pig\Async\Socket::useExtraCaFile()`, `TlsRoots`). PHP takes one file of authorities and trusts only what it holds, so pig writes the system's and the extra ones together to a temporary file, once, and removes it on exit. A file that cannot be used is named in a warning and ignored.
+
 - Added specific new options, tools, commands, extension APIs, or platform integrations.
 
 ### Changed
@@ -43,7 +45,11 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
-## Unreleased
+## [2.0.17] - 2026-11-19
+
+### New Features
+
+- HTTP/2 for every `https` request, and connections kept for the next request, as Node's `fetch` does. A TLS connection offers `h2` and `http/1.1`; where the server takes `h2` the connection joins `Pig\Ai\Http\Http2\Http2Pool` and every later request to that host — from any provider, and several at once — goes over it, with no new handshake. Through an HTTP or SOCKS5 proxy the tunnel carries it the same way. Otherwise it is HTTP/1.1, and a connection whose response was read to its end waits in `Http1Pool` (four seconds, or what the server's `Keep-Alive: timeout` says) for the next request to the same origin, plain `http` and proxies included; a request that can be repeated is repeated on a new connection if the kept one turns out to be closed. Negotiated, as in Node: a server that does not offer `h2` gets HTTP/1.1. Nothing to configure and no new dependency: the framing, HPACK (Huffman included, checked against RFC 7541's examples) and flow control are in `packages/ai/src/Http/Http2/`.
 
 ### Added
 
@@ -52,6 +58,8 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ### Changed
 
+- Changed a `204`, a `304`, a response to `HEAD` and a `1xx` to end without a body, whatever their headers say, where the HTTP/1.1 reader waited for the server to close the connection.
+- Changed `Pig\Ai\Http\ResponseBody` to an abstract class, with `Http1Body` and `Http2\Http2Body` behind it. `Pig\Async\Socket::connect()` and `enableTls()` take the protocols to offer (`alpnProtocol()` says which the server chose), and `Socket` keeps every await in flight apart, so one coroutine can read a socket while another writes it. `Proxy::open()` takes the same list.
 - Changed `php scripts/eval.php --host` to run the smoke eval only, as upstream's `eval:host` does; the documentation audit moved to `--audit`.
 - Changed the documentation audit to require evidence: a run that did not read the page and at least one file under `packages/coding-agent/src` fails, whatever its verdict.
 - Changed `Pig\Evals\Report::readTaskObservation()` to read only the assertion whose `fullName` is the task's, so a sibling case in the same suite file no longer turns an observation into `errored`; `classifyCaseStatus()` is private, as upstream's is.

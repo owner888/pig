@@ -257,6 +257,8 @@ final class Proxy
      * The order is the whole point: the tunnel is built over a plain connection and TLS starts
      * only once the proxy has said the far end is open, so the certificate checked is the
      * provider's and the proxy never sees the key or the conversation.
+     *
+     * @param list<string> $alpn the application protocols to offer inside the tunnel, as `Socket::connect()`
      */
     public function open(
         string $host,
@@ -264,10 +266,11 @@ final class Proxy
         bool $tls,
         float $timeout = 30.0,
         ?AbortSignal $signal = null,
+        array $alpn = [],
     ): Socket {
         // A plain-HTTP target the environment routes differently (`fromEnvironment()`).
         if (!$tls && $this->plainHttp instanceof self) {
-            return $this->plainHttp->open($host, $port, $tls, $timeout, $signal);
+            return $this->plainHttp->open($host, $port, $tls, $timeout, $signal, $alpn);
         }
 
         if (!$tls && $this->plainHttp === false) {
@@ -295,7 +298,7 @@ final class Proxy
             }
 
             if ($tls) {
-                $socket->enableTls($host, $timeout, $signal);
+                $socket->enableTls($host, $timeout, $signal, $alpn);
             }
         } catch (Throwable $error) {
             $socket->close();

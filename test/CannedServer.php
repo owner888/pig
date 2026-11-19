@@ -186,8 +186,10 @@ final class CannedServer
                 });
             }
 
+            // Hung up in the tick of the last piece, so a client that kept the connection finds the end of
+            // the stream when it looks, and not an answer-less socket for the next 10ms.
             if ($closeAfter) {
-                Loop::get()->delay(0.01 * (count($pieces) + 1), static function () use ($peer): void {
+                Loop::get()->delay(0.01 * count($pieces), static function () use ($peer): void {
                     if (is_resource($peer)) {
                         fclose($peer);
                     }

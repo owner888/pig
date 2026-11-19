@@ -1170,3 +1170,16 @@ and reporting trailing seen bytes if the launch fails or times out.
 
 **Rule**: Tests that construct a `CompactionSummary` and a subsequent `AssistantMessage` in memory without a real turn in between must pass explicit ordered timestamps (`$at - 20`, `$at - 10`, `$at`).
 
+
+## Two test servers share PHP's default stream context
+
+**Phenomenon**: a TLS server that offers no application protocol was spoken HTTP/2 to — the client negotiated
+`h2` with it, and the server logged `PRI * HTTP/2.0` where it expected a request line — but only when a server
+that does offer `h2` had run earlier in the same process.
+
+**Cause**: `stream_socket_server()` without a context uses the default one, and a connection accepted from it
+shares that context, so `stream_context_set_option($connection, 'ssl', 'alpn_protocols', …)` on one test's
+connection was on every later server's.
+
+**Rule**: a test server that sets options on its connections is made with a context of its own
+(`stream_context_create()`), as `Http2Server` and `KeepAliveServer` are.

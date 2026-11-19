@@ -125,6 +125,19 @@ if (in_array('--offline', array_slice($argv, 1), true)
     putenv('PIG_SKIP_VERSION_CHECK=1');
 }
 
+// `NODE_EXTRA_CA_CERTS`, as Node reads it: a PEM file of certificate authorities trusted in addition to
+// the system's, for a company's proxy or a private CA. A file that cannot be used is named and
+// ignored, as Node does — and the certificate error that follows says what is not trusted.
+$extraCaFile = getenv('NODE_EXTRA_CA_CERTS');
+
+if (is_string($extraCaFile) && $extraCaFile !== '') {
+    try {
+        Pig\Async\Socket::useExtraCaFile($extraCaFile);
+    } catch (Pig\Async\SocketError $error) {
+        fwrite(STDERR, Style::yellow('NODE_EXTRA_CA_CERTS: ' . $error->getMessage() . ", ignored\n"));
+    }
+}
+
 // `pig auth <check|print-api-key|print-bearer-token>` — upstream's `runAuthCommand()`, first of the
 // subcommands as there. The credentials and `models.json`, and nothing else: no settings, no
 // extensions, no session.

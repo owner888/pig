@@ -6,6 +6,7 @@ namespace Pig\Ai\Test\Http;
 
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Pig\Ai\Http\Http1Pool;
 use Pig\Ai\Http\HttpClient;
 use Pig\Ai\Http\HttpError;
 use Pig\Ai\Http\Request;
@@ -17,6 +18,7 @@ use Pig\Async\Loop;
 use Pig\Async\SocketError;
 use Pig\Test\AssertsThrows;
 use Pig\Test\CannedServer;
+use Pig\Test\KeepAliveServer;
 
 final class HttpClientTest extends TestCase
 {
@@ -35,6 +37,7 @@ final class HttpClientTest extends TestCase
     protected function tearDown(): void
     {
         HttpClient::useIdleTimeout(HttpClient::DEFAULT_IDLE_TIMEOUT);
+        Http1Pool::clear();
     }
 
     public function testReadsStatusHeadersAndBody(): void
@@ -71,7 +74,8 @@ final class HttpClientTest extends TestCase
         $this->assertStringContainsString('POST /v1/messages?beta=true HTTP/1.1', $head);
         $this->assertStringContainsString('x-api-key: secret', $head);
         $this->assertStringContainsString('content-length: 13', $head);
-        $this->assertStringContainsString('connection: close', $head);
+        // The connection is kept for the next request, so nothing asks for it to be closed.
+        $this->assertStringNotContainsString('connection:', $head);
         // Nothing here decompresses, so the server must not be left to decide.
         $this->assertStringContainsString('accept-encoding: identity', $head);
         $this->assertStringContainsString('{"model":"x"}', $this->server->received());
@@ -391,5 +395,120 @@ final class HttpClientTest extends TestCase
             }),
             'Socket timed out after 0.1s',
         );
+    }
+    /** @param array{method: string, path: string, headers: array<string, string>, body: string} $request */
+    private static function okFor(array $request): string
+    {
+        return KeepAliveServer::response('answer to ' . $request['path']);
+    }
+
+    public function testASecondRequestUsesTheConnectionTheFirstLeftOpen(): void
+    {
+        $server = new KeepAliveServer(self::okFor(...));
+        $url = $server->start();
+
+        $bodies = Async::run(static function () use ($url): array {
+            $client = new HttpClient();
+
+            return [
+                $client->send(new Request('GET', $url . 'one'))->body->all(),
+                $client->send(new Request('POST', $url . 'two', [], '{}'))->body->all(),
+            ];
+        });
+
+        $this->assertSame(['answer to /one', 'answer to /two'], $bodies);
+        $this->assertSame(1, $server->connections);
+        // Nothing asks for the connection to be closed.
+        $this->assertArrayNotHasKey('connection', $server->requests[0]['headers']);
+    }
+
+    public function testChunkedAndBodilessResponsesLeaveTheConnectionReusable(): void
+    {
+        $server = new KeepAliveServer(static fn (array $request): string => match ($request['path']) {
+            '/chunked' => "HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n4\r\nWiki\r\n0\r\n\r\n",
+            '/empty' => "HTTP/1.1 204 No Content\r\n\r\n",
+            '/head' => "HTTP/1.1 200 OK\r\ncontent-length: 5000\r\n\r\n",
+            default => KeepAliveServer::response('last'),
+        });
+        $url = $server->start();
+
+        $bodies = Async::run(static function () use ($url): array {
+            $client = new HttpClient();
+
+            return [
+                $client->send(new Request('GET', $url . 'chunked'))->body->all(),
+                $client->send(new Request('GET', $url . 'empty'))->body->all(),
+                $client->send(new Request('HEAD', $url . 'head'))->body->all(),
+                $client->send(new Request('GET', $url . 'last'))->body->all(),
+            ];
+        });
+
+        $this->assertSame(['Wiki', '', '', 'last'], $bodies);
+        $this->assertSame(1, $server->connections);
+    }
+
+    public function testAConnectionIsNotKeptWhenItsBodyWasNotReadToTheEnd(): void
+    {
+        $server = new KeepAliveServer(self::okFor(...));
+        $url = $server->start();
+
+        Async::run(static function () use ($url): void {
+            $client = new HttpClient();
+            $client->send(new Request('GET', $url . 'one'))->body->close();
+            $client->send(new Request('GET', $url . 'two'))->body->all();
+        });
+
+        $this->assertSame(2, $server->connections);
+    }
+
+    public function testAConnectionTheServerAskedToCloseIsNotKept(): void
+    {
+        $server = new KeepAliveServer(static fn (array $request): string => KeepAliveServer::response('bye', 200, "connection: close\r\n"));
+        $url = $server->start();
+
+        Async::run(static function () use ($url): void {
+            $client = new HttpClient();
+            $client->send(new Request('GET', $url . 'one'))->body->all();
+            $client->send(new Request('GET', $url . 'two'))->body->all();
+        });
+
+        $this->assertSame(2, $server->connections);
+    }
+
+    public function testAConnectionTheServerClosedWhileItWasIdleIsLeftBehind(): void
+    {
+        $server = new KeepAliveServer(static fn (array $request): string => KeepAliveServer::response('ok'));
+        $url = $server->start();
+
+        $statuses = Async::run(static function () use ($url, $server): array {
+            $client = new HttpClient();
+            $statuses = [$client->send(new Request('GET', $url . 'one'))->status];
+            // The server hangs up on everything it holds; the client finds out when it looks.
+            $server->hangUpOnAll();
+            Async::delay(0.05);
+            $statuses[] = $client->send(new Request('POST', $url . 'two', [], 'x'))->status;
+
+            return $statuses;
+        });
+
+        $this->assertSame([200, 200], $statuses);
+        $this->assertSame(2, $server->connections);
+    }
+
+    public function testAConnectionIsKeptForAsLongAsTheServerSaidItWould(): void
+    {
+        $server = new KeepAliveServer(static fn (array $request): string => KeepAliveServer::response('ok', 200, "keep-alive: timeout=1\r\n"));
+        $url = $server->start();
+
+        Async::run(static function () use ($url): void {
+            $client = new HttpClient();
+            $client->send(new Request('GET', $url . 'one'))->body->all();
+            $client->send(new Request('GET', $url . 'two'))->body->all();
+            // One second, less the one that is kept back for the server's own clock.
+            Async::delay(0.7);
+            $client->send(new Request('GET', $url . 'three'))->body->all();
+        });
+
+        $this->assertSame(2, $server->connections);
     }
 }

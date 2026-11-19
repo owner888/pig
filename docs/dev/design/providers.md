@@ -369,10 +369,14 @@ pig and hold it to the record — request bodies byte for byte, headers, retry a
 final message. A fixture is upstream's behaviour; a mismatch is pig's bug unless the test says why
 not (the two exclusions are written in the tests: an abort's exact cut point, and undici's `accept`).
 
-What is knowingly not there: HTTP/2 (pig speaks HTTP/1.1; upstream forces it too under
-`AWS_BEDROCK_FORCE_HTTP1`), the adaptive retry mode and the retry quota, `login_session` profiles and
-MFA, IMDS static stability, Vertex's project-id discovery and the external-account /
-impersonated / GDCH credential types, a parallel race of the two metadata hosts.
+HTTP/2 is there for every `https` request, Bedrock's included (`Http\HttpClient::send()` offers `h2`
+and `http/1.1` in the handshake and keeps an `h2` connection in `Http2Pool`); the design is in
+[runtime.md](runtime.md#http2-one-connection-many-requests). The SDK itself speaks HTTP/1.1 to
+Bedrock, but its load balancer takes `h2`: a Converse stream and a tool turn (two requests on one
+connection) were run against `ap-southeast-1`. What is knowingly not there: the
+adaptive retry mode and the retry quota, `login_session` profiles and MFA, IMDS static stability,
+Vertex's project-id discovery and the external-account / impersonated / GDCH credential types, a
+parallel race of the two metadata hosts.
 
 ## Azure OpenAI and ChatGPT's Codex backend
 

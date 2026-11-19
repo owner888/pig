@@ -391,19 +391,24 @@ final class TunnelServer
      */
     private function pump(mixed $left, mixed $right): void
     {
-        foreach ([[$left, $right], [$right, $left]] as [$from, $to]) {
-            $watcher = null;
+        // Both directions' watchers, so that closing a stream can take off the one that watches it too.
+        $watchers = [];
 
-            $watcher = Loop::get()->onReadable($from, static function ($source) use ($to, &$watcher): void {
+        foreach ([[$left, $right], [$right, $left]] as [$from, $to]) {
+            $watchers[] = Loop::get()->onReadable($from, static function ($source) use ($to, &$watchers): void {
                 $data = fread($source, 65536);
 
                 if ($data === false || ($data === '' && feof($source))) {
-                    Loop::get()->cancel((string) $watcher);
+                    foreach ($watchers as $watcher) {
+                        Loop::get()->cancel($watcher);
+                    }
 
-                    if (is_resource($to)) {
-                        // The far end has to see the close, or a `Connection: close` response
-                        // never ends and the client waits for a body that is already complete.
-                        fclose($to);
+                    // The far end has to see the close, or a `Connection: close` response
+                    // never ends and the client waits for a body that is already complete.
+                    foreach ([$source, $to] as $stream) {
+                        if (is_resource($stream)) {
+                            fclose($stream);
+                        }
                     }
 
                     return;

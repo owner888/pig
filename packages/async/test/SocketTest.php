@@ -270,6 +270,70 @@ final class SocketTest extends TestCase
         );
     }
 
+    public function testClosingFreesEveryCoroutineWaitingOnTheSocket(): void
+    {
+        [$host, $port] = $this->server(null);
+
+        // A connection several requests share has one coroutine reading while another writes: the
+        // close has to settle both, not only the one that waited last.
+        $failures = Async::run(static function () use ($host, $port): array {
+            $socket = Socket::connect($host, $port);
+            $waiters = array_map(
+                static fn (): \Pig\Async\Future => Async::spawn(static function () use ($socket): string {
+                    try {
+                        $socket->read(8192, 5.0);
+
+                        return 'read';
+                    } catch (SocketError $error) {
+                        return $error->getMessage();
+                    }
+                }),
+                [1, 2],
+            );
+            Loop::get()->delay(0.02, static fn () => $socket->close());
+
+            return array_map(static fn ($waiter) => $waiter->await(), $waiters);
+        });
+
+        $this->assertSame(['Socket closed', 'Socket closed'], $failures);
+    }
+
+    public function testAPlainSocketHasNoApplicationProtocol(): void
+    {
+        [$host, $port] = $this->echoServer();
+
+        $protocol = Async::run(static function () use ($host, $port): ?string {
+            $socket = Socket::connect($host, $port, false, 5.0, null, ['h2', 'http/1.1']);
+            $protocol = $socket->alpnProtocol();
+            $socket->close();
+
+            return $protocol ?? $socket->alpnProtocol();
+        });
+
+        $this->assertNull($protocol);
+    }
+
+    public function testTlsNamesTheProtocolTheServerChoseFromThoseOffered(): void
+    {
+        if (getenv('PIG_NETWORK_TESTS') !== '1') {
+            self::markTestSkipped('set PIG_NETWORK_TESTS=1 to run tests that reach the internet');
+        }
+
+        [$offered, $none] = Async::run(static function (): array {
+            $socket = Socket::connect('example.com', 443, true, 10.0, null, ['h2', 'http/1.1']);
+            $offered = $socket->alpnProtocol();
+            $socket->close();
+            $socket = Socket::connect('example.com', 443, true, 10.0);
+            $none = $socket->alpnProtocol();
+            $socket->close();
+
+            return [$offered, $none];
+        });
+
+        $this->assertContains($offered, ['h2', 'http/1.1']);
+        $this->assertNull($none);
+    }
+
     public function testUsingAClosedSocketSaysSo(): void
     {
         [$host, $port] = $this->echoServer();

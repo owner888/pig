@@ -4,20 +4,31 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Http;
 
+use Pig\Ai\Http\Http2\Http2Connection;
+use Pig\Ai\Http\Http2\Http2Pool;
 use Pig\Async\AbortSignal;
 use Pig\Async\Socket;
+use Pig\Async\SocketError;
 use Throwable;
 
 /**
- * HTTP/1.1 over a non-blocking socket — what `fetch()` is to upstream.
+ * HTTP over a non-blocking socket — what `fetch()` is to upstream.
  *
  * Returns as soon as the head has arrived, leaving the body to be read from the
- * socket as it comes. One request per connection: `Connection: close` costs a TLS
- * handshake each time (~25ms) and buys the absence of a connection pool, which is
- * the right trade until something is measured to need otherwise.
+ * socket as it comes.
+ *
+ * Connections are kept for the next request, as undici's pool does for Node's `fetch`. An `https`
+ * one offers `h2` and `http/1.1` in the TLS handshake: where the server takes `h2` the connection
+ * joins `Http2Pool` and every later request to that host goes over it, alongside the others —
+ * through a proxy's tunnel as well, where the handshake is the same. Otherwise it is HTTP/1.1, and
+ * once a response has been read to its end the connection waits in `Http1Pool` (a few seconds, or
+ * as long as the server said) for the next request to that origin.
  */
 final class HttpClient
 {
+    /** What a TLS connection offers, in order of preference. */
+    private const array ALPN = ['h2', 'http/1.1'];
+
     private const int MAX_HEAD_BYTES = 65536;
 
     private const int READ_SIZE = 8192;
@@ -165,10 +176,52 @@ final class HttpClient
     public function send(Request $request, ?AbortSignal $signal = null): Response
     {
         [$host, $port, $tls, $target] = $this->resolve($request->url);
-        $socket = $this->proxy !== null && !$this->proxy->bypasses($host)
-            ? $this->proxy->open($host, $port, $tls, $this->timeout, $signal)
-            : Socket::connect($host, $port, $tls, $this->timeout, $signal);
+        $direct = $this->proxy === null || $this->proxy->bypasses($host);
+        // A connection is the host's through this proxy, or the host's directly: not interchangeable.
+        $origin = ($tls ? 'https' : 'http') . "://{$host}:{$port}" . ($direct ? '' : ' via ' . $this->proxy->describe());
+        $authority = $this->authority($request, $host, $port, $tls);
 
+        if ($tls) {
+            $connection = Http2Pool::acquire($origin);
+
+            if ($connection !== null) {
+                return $connection->request($request, $authority, $target, $this->idleTimeout, $signal);
+            }
+        }
+
+        $kept = Http1Pool::acquire($origin);
+
+        if ($kept !== null) {
+            try {
+                return $this->sendHttp1($kept, $origin, $request, $host, $port, $tls, $target, $signal);
+            } catch (SocketError | HttpError $error) {
+                // A kept connection the server closed while it sat idle fails at the first write or read,
+                // and a request that can be repeated is repeated on a new one, as undici does. Any other
+                // is not: the server may have acted on it.
+                if (!in_array($request->method, ['GET', 'HEAD', 'OPTIONS'], true)) {
+                    throw $error;
+                }
+            }
+        }
+
+        $alpn = $tls ? self::ALPN : [];
+        $socket = match (true) {
+            $direct => Socket::connect($host, $port, $tls, $this->timeout, $signal, $alpn),
+            default => $this->proxy->open($host, $port, $tls, $this->timeout, $signal, $alpn),
+        };
+
+        if ($socket->alpnProtocol() === 'h2') {
+            $connection = Http2Connection::open($socket, $this->timeout);
+            Http2Pool::add($origin, $connection);
+
+            return $connection->request($request, $authority, $target, $this->idleTimeout, $signal);
+        }
+
+        return $this->sendHttp1($socket, $origin, $request, $host, $port, $tls, $target, $signal);
+    }
+
+    private function sendHttp1(Socket $socket, string $origin, Request $request, string $host, int $port, bool $tls, string $target, ?AbortSignal $signal): Response
+    {
         try {
             $socket->write($this->serialize($request, $host, $port, $tls, $target), $this->timeout, $signal);
             [$head, $rest] = $this->readHead($socket, $signal);
@@ -180,23 +233,47 @@ final class HttpClient
 
         [$status, $reason, $headers] = $this->parseHead($head);
 
+        // These have no body whatever the headers say (RFC 9112 §6.3).
+        $bodiless = $request->method === 'HEAD' || $status === 204 || $status === 304 || ($status >= 100 && $status < 200);
         // Chunked wins over Content-Length when a peer sends both (RFC 9112 §6.3).
-        $chunked = strtolower($headers['transfer-encoding'] ?? '') === 'chunked';
-        $length = isset($headers['content-length']) ? (int) $headers['content-length'] : null;
+        $chunked = !$bodiless && strtolower($headers['transfer-encoding'] ?? '') === 'chunked';
+        $length = $bodiless ? 0 : (isset($headers['content-length']) ? (int) $headers['content-length'] : null);
+
+        // Kept for the next request when the body is framed, so its end is known, and neither side
+        // asked to close; an HTTP/1.0 answer is closed unless it said otherwise, which is not worth asking.
+        $reusable = str_starts_with($head, 'HTTP/1.1')
+            && !str_contains(strtolower($headers['connection'] ?? ''), 'close')
+            && ($chunked || $length !== null);
+        $seconds = preg_match('/(?:^|[ ,])timeout=(\d+)/', $headers['keep-alive'] ?? '', $hint) === 1
+            ? max(0.5, (float) $hint[1] - 1.0)
+            : Http1Pool::DEFAULT_IDLE;
 
         return new Response(
             $status,
             $reason,
             $headers,
-            new ResponseBody(
+            new Http1Body(
                 $socket,
                 $rest,
                 $chunked ? new ChunkedDecoder() : null,
                 $chunked ? null : $length,
                 $this->idleTimeout,
                 $signal,
+                $reusable ? static fn () => Http1Pool::release($origin, $socket, $seconds) : null,
             ),
         );
+    }
+
+    /** The host header the request carries, or the one it would be given: HTTP/2's `:authority`. */
+    private function authority(Request $request, string $host, int $port, bool $tls): string
+    {
+        foreach ($request->headers as $name => $value) {
+            if (strtolower($name) === 'host') {
+                return $value;
+            }
+        }
+
+        return $port === ($tls ? 443 : 80) ? $host : "{$host}:{$port}";
     }
 
     /** @return array{0: string, 1: int, 2: bool, 3: string} host, port, tls, request target */
@@ -227,8 +304,8 @@ final class HttpClient
             $headers[strtolower($name)] = $value;
         }
 
-        $headers['host'] ??= $port === ($tls ? 443 : 80) ? $host : "{$host}:{$port}";
-        $headers['connection'] = 'close';
+        $headers['host'] ??= $this->authority($request, $host, $port, $tls);
+        // No `Connection: close`: HTTP/1.1 keeps the connection, and `Http1Pool` uses it.
         // Nothing here decompresses, so do not leave the choice to the server.
         $headers['accept-encoding'] ??= 'identity';
 

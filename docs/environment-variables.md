@@ -108,6 +108,7 @@ These variables are read by pig itself:
 | `PIG_LOG_KEEP_DAYS` (or `LOG_KEEP_DAYS`) | Days of log files to keep |
 | `PIG_TIMING` | `1` prints startup timings |
 | `VISUAL`, `EDITOR` | External editor fallback when `externalEditor` is unset |
+| `NODE_EXTRA_CA_CERTS` | A PEM file of certificate authorities to trust in addition to the system's, as Node reads it — for a company's proxy or a private CA. A file that cannot be read, or holds no certificate, is named in a warning and ignored |
 | `https_proxy`, `HTTPS_PROXY`, `http_proxy`, `HTTP_PROXY` | Proxy for outbound requests: HTTPS requests use `https_proxy`, then `HTTPS_PROXY`, then the HTTP proxy; HTTP requests use `http_proxy`, then `HTTP_PROXY`. `ALL_PROXY` is not read |
 | `no_proxy`, `NO_PROXY` | Hosts reached directly; `*.example.com` and `.example.com` forms match subdomains |
 | `COMPOSER_BINARY` | The `composer` executable `pig update` uses |

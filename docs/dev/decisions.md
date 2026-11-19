@@ -5,7 +5,7 @@
 |---|---|---|
 | Port fidelity | File-by-file literal | Class/file/method names track upstream so `git diff` against a newer upstream commit stays mechanical |
 | Concurrency | Hand-written `Fiber` + `stream_select` loop | One `select()` must wait on the LLM socket and STDIN together — that is what makes Esc-to-interrupt and typing mid-stream possible |
-| HTTP transport | Raw `tls://` streams, hand-written HTTP/1.1 | Sockets and STDIN are then the same kind of thing; one loop, no `ext-curl` |
+| HTTP transport | Raw `tls://` streams, hand-written HTTP/1.1 and HTTP/2 (`Http\Http2\`, HPACK included) | Sockets and STDIN are then the same kind of thing; one loop, no `ext-curl`. `ext-curl` was weighed for HTTP/2 and left: PHP exposes neither `CURLMOPT_SOCKETFUNCTION` nor `curl_multi_fdset()`, so its sockets cannot be put in the loop's `stream_select()` and it would have to be polled |
 | Unions | real union type where the arms are closed and few, marker interface otherwise | PHP has union types; what it lacks is naming one and typing an array's elements — see [Porting the unions](design/runtime.md#porting-the-unions) |
 | Layout | one published package, five namespaces under `packages/` | Mirrors upstream's package split one-to-one; packagist.org cannot serve a package from a subdirectory, so the split is a layout rather than five packages — see the Packagist entry in the traps |
 | Session file | pi's format exactly, in pi's directory layout | A conversation started in either tool opens in the other; `--resume` lists both — see [The session file is pi's file](design/session.md#the-session-file-is-pis-file) |

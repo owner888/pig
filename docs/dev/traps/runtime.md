@@ -758,3 +758,40 @@ In long conversations, on a flaky network, when a proxy closed the connection or
 
 **Countermeasure**: `Pig\Async\Dns::resolve()` looks the name up in a child process (`php -n -r gethostbynamel()`), read on the loop, and `Socket::connect()` dials the address it answers. It is still the system's resolver (`/etc/hosts`, a VPN's split DNS). Addresses are kept for five minutes per host, and callers asking at once share one lookup. TLS still names the host: `peer_name` and `SNI_server_name` are the host, not the address. Literals, `localhost` and calls outside a coroutine are left to `stream_socket_client()` as before; a name with no IPv4 address is handed back for the connect to resolve and report; a lookup that does not answer within the connect timeout is a `SocketError`, never a blocking retry. `DnsTest::testTheLoopKeepsRunningWhileANameIsLookedUp` shows the loop ticking through a lookup.
 
+
+## A test server that closes a connection while its watcher is still on the loop
+
+**Phenomenon**: `Reader r7 watches a closed stream; cancel the watcher before closing it`, thrown by the
+loop in the test that closed the connection, or in the next `Async::run()`.
+
+**Cause**: `Http2Server::hangUp()` did `fclose()` on the accepted connection and left the watcher it had
+put on it. The loop polls every watcher on every tick.
+
+**Rule**: a helper that closes a stream cancels that stream's watcher first (`CannedServer` says the same
+at the top of its watcher list). `Http2Server` keeps the connection's watcher id for it.
+
+## An idle pooled connection is read before it is used, and the loop over it stops when it closes
+
+**Phenomenon**: `Socket is closed` from `Http2Connection::drain()` after the server sent GOAWAY on an idle
+connection.
+
+**Cause**: `drain()` read until nothing was left; reading the GOAWAY closed the socket
+(`shutdown()`), and the loop went round once more and read from it.
+
+**Rule**: a loop that reads and parses and may close what it reads from tests the connection's state in its
+condition (`while ($this->closedReason === null)`), not once before it.
+
+## A header the caller already gave is sent twice over HTTP/2
+
+**Phenomenon**: Bedrock answered every request over HTTP/2 with an HTML `400 Bad Request` from `awselb/2.0`,
+and the same request over HTTP/1.1 with `200`. Dropping any one other header changed nothing; bodies of any
+size were accepted; the unsigned probe got a `403`, which is how a request the load balancer accepts looks.
+
+**Cause**: the provider's headers include `content-length`. HTTP/1.1's writer keys its headers by name, so
+`$headers['content-length'] = …` replaced it; `Http2Connection::headersOf()` appended its own after the
+caller's, and two `content-length` headers is a malformed request to a front end.
+
+**Rule**: whatever `headersOf()` sets from the request itself (`content-length`, `accept-encoding`) is skipped
+or checked among the caller's, never added beside them. `Http2ConnectionTest` gives it a `Content-Length` of its
+own and asserts the one the server sees. Nothing but a real service shows this — a scripted server accepts
+anything — so a provider on a new service is worth one real request.
