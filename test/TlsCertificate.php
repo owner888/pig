@@ -42,7 +42,14 @@ final class TlsCertificate
         }
 
         file_put_contents($pem, $certificatePem . $keyPem);
-        register_shutdown_function(static function () use ($config, $pem): void {
+        // Removed by the process that made it, not by every one it forks: `WebDaemonTest` forks, and a
+        // child inherits this function. It removed the files first, outside any test, where PHPUnit's
+        // error handler turned the parent's later warning into `NoTestCaseObjectOnCallStackException`.
+        $owner = getmypid();
+        register_shutdown_function(static function () use ($config, $pem, $owner): void {
+            if (getmypid() !== $owner) {
+                return;
+            }
             unlink($config);
             unlink($pem);
         });

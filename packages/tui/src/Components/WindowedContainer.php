@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Tui\Components;
 
+use Pig\Tui\ChildLines;
 use Pig\Tui\Component;
 use Pig\Tui\Container;
 use Pig\Tui\ViewportAware;
@@ -102,8 +103,7 @@ class WindowedContainer extends Container implements ViewportAware
             }
         }
 
-        $lines = [];
-        $mouseChildren = [];
+        $parts = [];
         $stale = 0;
 
         foreach ($children as $index => $child) {
@@ -125,18 +125,17 @@ class WindowedContainer extends Container implements ViewportAware
                 }
             }
 
-            $mouseChildren[] = ['component' => $child, 'height' => count($childLines)];
-
-            foreach ($childLines as $line) {
-                $lines[] = $line;
-            }
+            $parts[] = $childLines;
         }
 
         $this->width = $width;
         $this->stale = $stale;
-        $this->mouseLayout = ['width' => $width, 'children' => $mouseChildren];
+        // The same rows as last frame are handed back as the same array (upstream #11968's
+        // `renderChildLines()`): a transcript of thousands of children is not copied again for a
+        // frame where none of them changed.
+        $this->childLines = ChildLines::join($children, $parts, $width, $this->childLines);
 
-        return $lines;
+        return $this->childLines->lines;
     }
 
     #[\Override]

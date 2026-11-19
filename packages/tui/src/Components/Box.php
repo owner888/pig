@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace Pig\Tui\Components;
 
 use Closure;
+use Pig\Tui\ChildLines;
 use Pig\Tui\Component;
-use Pig\Tui\Mouse;
 use Pig\Tui\MouseHandler;
 use Pig\Tui\TuiMouseDispatchResult;
 use Pig\Tui\TuiMouseEvent;
@@ -28,14 +28,15 @@ final class Box implements Component, MouseHandler
     /** @var list<string>|null */
     private ?array $cachedLines = null;
 
-    private ?string $cachedChildren = null;
+    /** @var list<string>|null the children's lines `$cachedLines` was painted from */
+    private ?array $cachedChildren = null;
 
     private ?int $cachedWidth = null;
 
     private ?string $cachedBackground = null;
 
-    /** @var array{width: int, children: list<array{component: Component, height: int}>}|null where each child landed in the last render, for mouse routing */
-    private ?array $mouseLayout = null;
+    /** What the children drew last, and where each landed, for mouse routing. */
+    private ?ChildLines $childLines = null;
 
     /** @param Closure(string): string|null $background */
     public function __construct(
@@ -105,6 +106,7 @@ final class Box implements Component, MouseHandler
         $this->cachedChildren = null;
         $this->cachedWidth = null;
         $this->cachedBackground = null;
+        $this->childLines = null;
     }
 
     /** Forward to the child under the pointer, inside the padding — upstream's `Box.handleMouse()`. */
@@ -118,18 +120,11 @@ final class Box implements Component, MouseHandler
             return null;
         }
 
-        $mouseChildren = $this->mouseLayout !== null && $this->mouseLayout['width'] === $contentWidth
-            ? $this->mouseLayout['children']
-            : array_map(static fn (Component $child): array => ['component' => $child, 'height' => count($child->render($contentWidth))], $this->children);
-        $childY = 0;
-        foreach ($mouseChildren as ['component' => $child, 'height' => $childHeight]) {
-            if ($contentY >= $childY && $contentY < $childY + $childHeight) {
-                return Mouse::dispatchMouseEvent($child, $event->at($contentX, $contentY - $childY, $contentWidth, $childHeight));
-            }
-            $childY += $childHeight;
-        }
+        $layout = $this->childLines !== null && $this->childLines->width === $contentWidth
+            ? $this->childLines
+            : ChildLines::render($this->children, $contentWidth, null);
 
-        return null;
+        return $layout->dispatchMouse($event->at($contentX, $contentY, $contentWidth, $event->height));
     }
 
     #[\Override]
@@ -141,17 +136,12 @@ final class Box implements Component, MouseHandler
 
         $contentWidth = max(1, $width - $this->paddingX * 2);
         $margin = str_repeat(' ', $this->paddingX);
-        $content = [];
-        $mouseChildren = [];
 
-        foreach ($this->children as $child) {
-            $childLines = $child->render($contentWidth);
-            $mouseChildren[] = ['component' => $child, 'height' => count($childLines)];
-            foreach ($childLines as $line) {
-                $content[] = $margin . $line;
-            }
-        }
-        $this->mouseLayout = ['width' => $contentWidth, 'children' => $mouseChildren];
+        // The children's lines are kept unpadded: unchanged children hand back the same array, so
+        // the check below compares an array with itself (upstream #11968). Padding them first built
+        // new strings, and joining them into a key, on every frame for every box in the transcript.
+        $this->childLines = ChildLines::render($this->children, $contentWidth, $this->childLines);
+        $content = $this->childLines->lines;
 
         if ($content === []) {
             return [];
@@ -160,12 +150,11 @@ final class Box implements Component, MouseHandler
         // The background is a closure, so it cannot be compared — but what it does to a
         // known string can be, which is enough to notice a theme change.
         $sample = $this->background === null ? null : ($this->background)('sample');
-        $key = implode("\n", $content);
 
         if (
             $this->cachedLines !== null
             && $this->cachedWidth === $width
-            && $this->cachedChildren === $key
+            && $this->cachedChildren === $content
             && $this->cachedBackground === $sample
         ) {
             return $this->cachedLines;
@@ -175,7 +164,7 @@ final class Box implements Component, MouseHandler
         $lines = array_fill(0, $this->paddingY, $blank);
 
         foreach ($content as $line) {
-            $lines[] = $this->paint($line, $width);
+            $lines[] = $this->paint($margin . $line, $width);
         }
 
         for ($index = 0; $index < $this->paddingY; $index++) {
@@ -183,7 +172,7 @@ final class Box implements Component, MouseHandler
         }
 
         $this->cachedLines = $lines;
-        $this->cachedChildren = $key;
+        $this->cachedChildren = $content;
         $this->cachedWidth = $width;
         $this->cachedBackground = $sample;
 

@@ -45,18 +45,23 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
-## Unreleased
+## [2.0.18] - 2026-11-20
+
+### Added
+
+- Added eight coding cases under `evals/` for `php scripts/eval.php` — `l1-off-by-one`, `l1-read-and-answer`, `l2-add-option`, `l2-find-bug`, `l2-rename-method`, `l3-dedupe`, `l3-no-dependency` and `l3-root-cause` — each checked by its own tests, with the tests' checksum pinned so a run cannot pass by changing them.
 
 ### Changed
 
+- Changed `Container`, `Box` and the fullscreen transcript to hand back the rows they drew last when no child's rows changed, as upstream's #11968 `renderChildLines()`: a frame where the conversation did not change no longer copies every row of it once per level of nesting, and a `Box` no longer pads and joins its children's rows to check its cache. On a 2,800-message session a keystroke frame went from 28.8ms to 24.5ms. A `Container` subclass that read the protected `$mouseLayout` reads `$childLines` (`Pig\Tui\ChildLines`) instead.
 - Changed the resume command printed on exit to its own line after `To resume this session:`, so it can be selected with a triple-click, as upstream's #12237.
 - Changed the order of a quit to upstream's: the screen is handed back first, then extensions get `session_shutdown`, tools are told, and the session is let go of. Letting go suspends, and a frame drawn meanwhile repainted the last screen on the way out.
-
 - Changed an HTTP/2 connection to open as Node's `fetch` does, read off the wire from Node 26: a window of 256 KiB per stream and 512 KiB for the connection (were 8 MiB), and pseudo-headers in the order `:authority`, `:method`, `:path`, `:scheme`. A stream that delivers more than its opening window, a download, is raised to 8 MiB afterwards, so large downloads keep their speed.
 
 ### Fixed
 
 - Fixed fullscreen scrolling slowing down as the conversation grows, as upstream's #11968: the wheel, page and line keys, top and bottom, prompt jumps and selection auto-scroll now reuse the previous frame's component output instead of rendering the whole transcript again, and slicing a row by columns no longer segments runs of ASCII, CJK, kana, box drawing and other characters that are always a grapheme of their own. The scrollbar, which cuts every row in view, remembers the rows it cut in the frame before. On a 2,800-message session at 198×43 a wheel frame went from 34.5ms to 4.1ms.
+- Fixed the test certificate's temporary files being removed by every process the suite forks: a `WebDaemonTest` child removed them on its way out, outside any test, and the run printed `NoTestCaseObjectOnCallStackException` and two `unlink()` warnings after passing. Only the process that made them removes them now.
 - Fixed `TuiBase::stop()` calling `flush()` on a terminal that is not a `BufferedTerminal`, such as a test's virtual terminal.
 - Fixed `scripts/bench-tui.php`: it asked for the fullscreen renderer through `PIG_TUI_MODE`, which nothing reads any more, so it measured regular mode and ran out of memory on a long session; it now passes `tuiMode`, raises the memory limit as `bin/pig` does, measures a wheel notch, and waits out the frame throttle between frames instead of counting it, which made every cheap frame read 16ms.
 - Fixed `/quit` from fullscreen jumping to the screen pig was started from before the transcript appeared, which on a long conversation was visible for as long as the whole conversation took to render again. The transcript is now rendered first and printed in the same synchronized write that leaves the alternate screen, and flushed before pig exits.

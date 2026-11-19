@@ -10,8 +10,8 @@ class Container implements Component, MouseHandler
     /** @var list<Component> */
     protected array $children = [];
 
-    /** @var array{width: int, children: list<array{component: Component, height: int}>}|null where each child landed in the last render, for mouse routing */
-    protected ?array $mouseLayout = null;
+    /** What the children drew last, kept so an unchanged render hands back the same rows; also where each child landed, for mouse routing. */
+    protected ?ChildLines $childLines = null;
 
     public function addChild(Component $child): void
     {
@@ -54,40 +54,26 @@ class Container implements Component, MouseHandler
             return null;
         }
 
-        $mouseChildren = $this->mouseLayout !== null && $this->mouseLayout['width'] === $event->width
-            ? $this->mouseLayout['children']
-            : array_map(static fn (Component $child): array => ['component' => $child, 'height' => count($child->render($event->width))], $this->children);
-        $childY = 0;
-        foreach ($mouseChildren as ['component' => $child, 'height' => $childHeight]) {
-            if ($event->y >= $childY && $event->y < $childY + $childHeight) {
-                $result = Mouse::dispatchMouseEvent($child, $event->at($event->x, $event->y - $childY, $event->width, $childHeight));
-                if ($result !== null && $result->focus && $this instanceof InputHandler) {
-                    return $result->withFocusTarget($this);
-                }
-
-                return $result;
-            }
-            $childY += $childHeight;
+        $layout = $this->childLines !== null && $this->childLines->width === $event->width
+            ? $this->childLines
+            : ChildLines::render($this->children, $event->width, null);
+        $result = $layout->dispatchMouse($event);
+        if ($result !== null && $result->focus && $this instanceof InputHandler) {
+            return $result->withFocusTarget($this);
         }
 
-        return null;
+        return $result;
     }
 
+    /**
+     * Every child, one after another. Hands back the same array as last time when no child's lines
+     * changed (upstream #11968), so whatever holds this container compares it in one step.
+     */
     #[\Override]
     public function render(int $width): array
     {
-        $lines = [];
-        $mouseChildren = [];
+        $this->childLines = ChildLines::render($this->children, $width, $this->childLines);
 
-        foreach ($this->children as $child) {
-            $childLines = $child->render($width);
-            $mouseChildren[] = ['component' => $child, 'height' => count($childLines)];
-            foreach ($childLines as $line) {
-                $lines[] = $line;
-            }
-        }
-        $this->mouseLayout = ['width' => $width, 'children' => $mouseChildren];
-
-        return $lines;
+        return $this->childLines->lines;
     }
 }
