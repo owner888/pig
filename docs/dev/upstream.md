@@ -27,6 +27,13 @@ place at `message_start`, and a `UserMessage` here is immutable. `ImageProcess` 
 reason upstream waits (keeping the queue call synchronous) does not arise; the limits are the model in
 use when it was queued.
 
+Of #11968 (fullscreen scroll frames O(viewport)), pig has the view-only frames and the column
+slicing. Its `Component.render()` returning `readonly string[]` needs nothing here: a PHP array is a
+value, so a component that changes what another one returned changes its own copy. Its
+`renderChildLines()` — `Container` and `Box` handing back the previous array when no child's lines
+changed — is not ported yet: the transcript is pig's `WindowedContainer`, which builds its rows its
+own way, so a frame whose content changed still copies every row.
+
 Upstream changes that need nothing here, because pig never had the problem: #11813 (a bash timeout
 after the shell exited — `Tools\Run` resolves once the shell exits rather than waiting for the pipes
 its background children hold), #9274 (a diff dropping the removed line's indent — `DiffView` builds

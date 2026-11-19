@@ -18,6 +18,7 @@ declare(strict_types=1);
  *   resize    — the width changing by one column, and back, 10 times
  *   expand    — ctrl+o on, then off
  *   scroll    — page up / page down, fullscreen only
+ *   wheel     — one mouse-wheel notch, fullscreen only
  *
  * The numbers are what to read before touching anything: a 1.5s keystroke on a resumed session
  * was found this way, and was cache, not drawing.
@@ -37,6 +38,7 @@ use Pig\CodingAgent\Session\SessionManager;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Tools\ToolSet;
 use Pig\Tui\Test\FakeTerminal;
+use Pig\Tui\TuiBase;
 
 require __DIR__ . '/../vendor/autoload.php';
 
@@ -62,9 +64,8 @@ $scratch = sys_get_temp_dir() . '/pig-bench-' . getmypid();
 mkdir($scratch, 0o700, true);
 putenv("PIG_CODING_AGENT_DIR={$scratch}");
 
-// `InteractiveMode` draws a terminal that is not a `ProcessTerminal` in regular mode whatever
-// the settings say, so the fullscreen renderer is asked for the way the tests ask for it.
-putenv("PIG_TUI_MODE={$tuiMode}");
+// As `bin/pig` has it: a resumed session of tens of thousands of rows outgrows PHP's default.
+ini_set('memory_limit', '512M');
 // The scrollbar is kept on screen: with `auto`, every scroll arms a one-second hide timer, and
 // `settle()` below — a loop with nothing to read — sleeps that second out, so a page-up measured
 // as 1,009ms when the frame itself took nine. `always` draws the bar on every frame instead, which
@@ -101,6 +102,9 @@ $mode = new InteractiveMode(
     null,
     null,
     keybindings: new Keybindings(),
+    // `InteractiveMode` draws a terminal that is not a `ProcessTerminal` in regular mode unless told
+    // otherwise, so the renderer is asked for the way the tests ask for it.
+    tuiMode: $tuiMode,
 );
 
 $settle = static function (): void {
@@ -123,12 +127,17 @@ $bytes = static function () use ($terminal): int {
 $results = [];
 $measure = static function (string $name, int $frames, Closure $frame) use (&$results, $bytes, $settle): void {
     $bytes();
-    $start = hrtime(true);
+    $elapsed = 0.0;
     for ($i = 0; $i < $frames; $i++) {
+        // Frames are throttled to `MIN_RENDER_INTERVAL` apart; a frame asked for sooner waits out
+        // the rest, and that wait is not the frame's cost. Without this pause every cheap frame
+        // measured as 16ms.
+        usleep((int) (TuiBase::MIN_RENDER_INTERVAL * 1e6) + 1000);
+        $start = hrtime(true);
         $frame($i);
         $settle();
+        $elapsed += (hrtime(true) - $start) / 1e6;
     }
-    $elapsed = (hrtime(true) - $start) / 1e6;
     $results[] = [$name, $elapsed / $frames, intdiv($bytes(), $frames), $frames];
 };
 
@@ -148,6 +157,10 @@ $measure('expand', 2, static function () use ($terminal): void {
 if ($tuiMode === 'fullscreen') {
     $measure('scroll', 10, static function (int $i) use ($terminal): void {
         $terminal->type($i % 2 === 0 ? "\e[5~" : "\e[6~");
+    });
+    // A wheel notch (SGR mouse), 20 up and then 20 back down: how a trackpad scrolls the transcript.
+    $measure('wheel', 40, static function (int $i) use ($terminal, $rows): void {
+        $terminal->type(sprintf("\e[<%d;10;%dM", $i < 20 ? 64 : 65, intdiv($rows, 2)));
     });
 }
 

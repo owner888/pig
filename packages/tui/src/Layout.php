@@ -21,16 +21,26 @@ final class Layout
     private const string OSC133_ZONE_PREFIX = '/^(?:\x1b\]133;[ABC](?:\x07|\x1b\\\\))+/';
 
     /** @param Closure(): void $requestRender */
-    public static function renderLayoutFrame(Component $root, int $width, int $height, Closure $requestRender): LayoutFrame
+    /**
+     * Lay out and paint one frame.
+     *
+     * `$reusableOutput` is an earlier frame's `renderCache`; its output is used instead of calling
+     * `render()`. Pass it only when no component changed since that frame, e.g. when only a scroll
+     * position moved: the frame then costs O(viewport) instead of re-rendering the whole scrollable
+     * document. Each frame keeps only the output it used, so reuse never accumulates across frames.
+     *
+     * @param \SplObjectStorage<Component, array<int, list<string>>>|null $reusableOutput
+     */
+    public static function renderLayoutFrame(Component $root, int $width, int $height, Closure $requestRender, ?\SplObjectStorage $reusableOutput = null): LayoutFrame
     {
         $safeWidth = max(1, $width);
         $safeHeight = max(1, $height);
-        $context = new LayoutContext(new LayoutViewport($safeWidth, $safeHeight), $requestRender);
+        $context = new LayoutContext(new LayoutViewport($safeWidth, $safeHeight), $requestRender, $reusableOutput);
         $rootBox = self::layoutComponent($context, $root, 0, 0, $safeWidth, $safeHeight, new LayoutRect(0, 0, $safeWidth, $safeHeight));
         $lines = array_fill(0, $safeHeight, '');
         self::paintBox($rootBox, $lines, $safeWidth);
 
-        return new LayoutFrame($rootBox, $safeWidth, $safeHeight, $lines, $context->primaryScrollView);
+        return new LayoutFrame($rootBox, $safeWidth, $safeHeight, $lines, $context->primaryScrollView, $context->renderCache);
     }
 
     /**
@@ -132,7 +142,10 @@ final class Layout
         }
         $widths = $context->renderCache[$component];
         if (!isset($widths[$safeWidth])) {
-            $widths[$safeWidth] = $component->render($safeWidth);
+            $reusable = $context->reusableOutput !== null && isset($context->reusableOutput[$component])
+                ? $context->reusableOutput[$component][$safeWidth] ?? null
+                : null;
+            $widths[$safeWidth] = $reusable ?? $component->render($safeWidth);
             $context->renderCache[$component] = $widths;
         }
 
@@ -146,6 +159,18 @@ final class Layout
      */
     private static function renderViewport(LayoutContext $context, ViewportAware $content, ScrollLayoutState $state, int $width, int $viewportHeight): void
     {
+        // A view-only frame: what the content drew last is still what it holds, unless part of it
+        // was drawn at an earlier width and waits for `refine()` — then the rows now in view are
+        // drawn, as on any other frame.
+        $reusable = $context->reusableOutput !== null && isset($context->reusableOutput[$content])
+            ? $context->reusableOutput[$content][$width] ?? null
+            : null;
+        if ($reusable !== null && $content->staleCount() === 0) {
+            $context->renderCache[$content] = [$width => $reusable];
+
+            return;
+        }
+
         $following = $state instanceof ScrollView && $state->isFollowingEnd();
         $lines = $content->renderWindow($width, $following ? null : $state->scrollTop(), $viewportHeight);
 
@@ -312,7 +337,33 @@ final class Layout
         return $box;
     }
 
+    /** How many rows `replaceScrollbarCell()` remembers before starting over: a few screens. */
+    private const int SCROLLBAR_CELL_CACHE_SIZE = 1024;
+
+    /** @var array<string, string> */
+    private static array $scrollbarCells = [];
+
+    /**
+     * Remembered, because a scroll frame paints the bar over rows the frame before painted too: a
+     * wheel notch moves the view three rows, so forty of forty-three come back. Cutting a row at a
+     * column is four passes over it, and a fullscreen scroll frame spent most of its time here once
+     * the transcript was no longer rendered for it. Not in upstream, whose slicing is cheap enough
+     * in V8; the answer depends on nothing but the arguments.
+     */
     private static function replaceScrollbarCell(string $line, int $column, int $totalWidth, string $replacement, bool $preserveTargetBackground): string
+    {
+        $key = $column . ':' . $totalWidth . ':' . ($preserveTargetBackground ? '1' : '0') . ':' . $replacement . "\0" . $line;
+        if (isset(self::$scrollbarCells[$key])) {
+            return self::$scrollbarCells[$key];
+        }
+        if (count(self::$scrollbarCells) >= self::SCROLLBAR_CELL_CACHE_SIZE) {
+            self::$scrollbarCells = [];
+        }
+
+        return self::$scrollbarCells[$key] = self::cutScrollbarCell($line, $column, $totalWidth, $replacement, $preserveTargetBackground);
+    }
+
+    private static function cutScrollbarCell(string $line, int $column, int $totalWidth, string $replacement, bool $preserveTargetBackground): string
     {
         if (TerminalImage::isImageLine($line)) {
             return $line;

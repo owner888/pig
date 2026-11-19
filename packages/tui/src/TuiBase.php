@@ -101,6 +101,13 @@ abstract class TuiBase extends Container implements TUI
 
     private bool $renderRequested = false;
 
+    /**
+     * Whether a render request since the last frame may have changed component output. Only
+     * `requestViewRender()` leaves it false, so a renderer may reuse the previous frame's output
+     * (upstream #11968).
+     */
+    protected bool $contentChanged = true;
+
     private bool $immediateRenderScheduled = false;
 
     /** A frame is waiting for the terminal to take the last one (`waitForTerminal()`). */
@@ -181,6 +188,8 @@ abstract class TuiBase extends Container implements TUI
     /** @param 'clear'|'preserve' $overlayFocusRestore */
     private function setFocusInternal(?Component $component, string $overlayFocusRestore): void
     {
+        // Focused components draw a cursor, so a focus change must not reuse earlier output.
+        $this->contentChanged = true;
         $previousFocus = $this->focusedComponent;
         $nextFocus = $component;
         $previousFocusedOverlay = null;
@@ -1115,8 +1124,11 @@ abstract class TuiBase extends Container implements TUI
         $this->afterTerminalStop($options);
         // What `afterTerminalStop()` wrote comes after the terminal's own flush — the alternate
         // screen's whole transcript, on a quit. A write the tty did not take at once waits for
-        // the loop, which is about to stop; upstream's writes to a tty are synchronous.
-        $this->terminal->flush();
+        // the loop, which is about to stop; upstream's writes to a tty are synchronous. A terminal
+        // that is not a `BufferedTerminal` writes straight through and has nothing left to flush.
+        if ($this->terminal instanceof BufferedTerminal) {
+            $this->terminal->flush();
+        }
     }
 
     /** Draw now, not on the next turn of the loop — upstream's `renderNow()`. */
@@ -1127,6 +1139,7 @@ abstract class TuiBase extends Container implements TUI
             $this->resetRenderState();
         }
 
+        $this->contentChanged = true;
         $this->renderRequested = false;
         $this->cancelRenderTimer();
         $this->lastRenderAt = microtime(true);
@@ -1151,6 +1164,13 @@ abstract class TuiBase extends Container implements TUI
             return;
         }
 
+        $this->contentChanged = true;
+        $this->requestViewRender();
+    }
+
+    /** Request a frame for a change that leaves component output unchanged, such as a scroll position. */
+    protected function requestViewRender(): void
+    {
         if ($this->renderRequested) {
             return;
         }
@@ -1162,6 +1182,7 @@ abstract class TuiBase extends Container implements TUI
     /** Draw on the next turn, ahead of any throttled frame — keyboard input does not wait for one. */
     private function requestImmediateRender(): void
     {
+        $this->contentChanged = true;
         $this->cancelRenderTimer();
         $this->renderRequested = true;
         if ($this->immediateRenderScheduled) {

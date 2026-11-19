@@ -262,6 +262,35 @@ final class Width
         self::$graphemeCache = [];
     }
 
+    /** Printable ASCII: one byte, one cluster, one column. */
+    private const string ASCII = ' !"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~';
+
+    /**
+     * A run of characters each of which is a grapheme cluster on its own — upstream's
+     * `isStandaloneGraphemeUnit()` ranges: printable ASCII, Latin, punctuation, arrows, box drawing,
+     * symbols, kana, CJK ideographs and fullwidth forms. They hold no combining marks, joiners,
+     * variation selectors, Hangul jamo or astral characters, so no grapheme rule joins two of them.
+     */
+    private const string STANDALONE_RUN = '/^[\x{20}-\x{7e}\x{a0}-\x{ac}\x{ae}-\x{2ff}\x{2010}-\x{2027}\x{202f}-\x{205f}\x{2070}-\x{20cf}\x{2100}-\x{2bff}\x{3040}-\x{3096}\x{30a0}-\x{30ff}\x{4e00}-\x{9fff}\x{ff01}-\x{ff60}]*\z/u';
+
+    /**
+     * The grapheme clusters of a run of text without escape codes — upstream's `graphemesOf()`
+     * (#11968). A run of standalone characters is split per codepoint; only a run with a mark, a
+     * joiner, a variation selector or an astral character goes through `\X`. The slicing below runs
+     * over every visible row of a fullscreen frame — the scrollbar cuts each one — and segmenting
+     * there was most of a scroll frame.
+     *
+     * @return list<string>
+     */
+    private static function clusters(string $text): array
+    {
+        if (preg_match(self::STANDALONE_RUN, $text) === 1) {
+            return mb_str_split($text, 1, 'UTF-8');
+        }
+
+        return Graphemes::split($text);
+    }
+
     /**
      * Extract a range of visible columns from an ANSI line — upstream's `sliceByColumn()`.
      *
@@ -292,7 +321,25 @@ final class Width
                 continue;
             }
 
-            foreach (Graphemes::split($value) as $segment) {
+            if (strspn($value, self::ASCII) === strlen($value)) {
+                // One column a byte: the part in range is a substring, and no cluster can straddle.
+                $from = max($startCol, $currentCol);
+                $to = min($endCol, $currentCol + strlen($value));
+                if ($from < $to) {
+                    if ($pendingAnsi !== '') {
+                        $result .= $pendingAnsi;
+                        $pendingAnsi = '';
+                    }
+                    $result .= substr($value, $from - $currentCol, $to - $from);
+                }
+                $currentCol += strlen($value);
+                if ($currentCol >= $endCol) {
+                    break;
+                }
+                continue;
+            }
+
+            foreach (self::clusters($value) as $segment) {
                 $w = self::grapheme($segment);
                 $inRange = $currentCol >= $startCol && $currentCol < $endCol;
                 $fits = !$strict || $currentCol + $w <= $endCol;
@@ -351,7 +398,7 @@ final class Width
                 continue;
             }
 
-            foreach (Graphemes::split($value) as $segment) {
+            foreach (self::clusters($value) as $segment) {
                 $w = self::grapheme($segment);
 
                 if ($currentCol < $beforeEnd && $currentCol + $w <= $beforeEnd) {
@@ -401,7 +448,15 @@ final class Width
                 continue;
             }
 
-            foreach (Graphemes::split($value) as $segment) {
+            if (strspn($value, self::ASCII) === strlen($value)) {
+                if ($column >= $currentCol && $column < $currentCol + strlen($value)) {
+                    return ['start' => $column, 'end' => $column + 1];
+                }
+                $currentCol += strlen($value);
+                continue;
+            }
+
+            foreach (self::clusters($value) as $segment) {
                 $w = self::grapheme($segment);
                 if ($w > 0 && $column >= $currentCol && $column < $currentCol + $w) {
                     return ['start' => $currentCol, 'end' => $currentCol + $w];

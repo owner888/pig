@@ -20,10 +20,15 @@ final class LayoutContext
 
     public ?ScrollView $primaryScrollView = null;
 
-    /** @param Closure(): void $requestRender */
+    /**
+     * @param Closure(): void $requestRender
+     * @param SplObjectStorage<Component, array<int, list<string>>>|null $reusableOutput an earlier
+     *        frame's `renderCache` with the same content; its entries are copied into `renderCache` when used
+     */
     public function __construct(
         public readonly LayoutViewport $viewport,
         public readonly Closure $requestRender,
+        public readonly ?SplObjectStorage $reusableOutput = null,
     ) {
         $this->renderCache = new SplObjectStorage();
     }

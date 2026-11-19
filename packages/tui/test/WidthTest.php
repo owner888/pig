@@ -332,4 +332,30 @@ final class WidthTest extends TestCase
         $this->assertSame(4, Width::visible($overlay));
         $this->assertStringContainsString('│XX│', $overlay);
     }
+
+    public function testSlicesBoxDrawingArrowsAndCjkByCell(): void
+    {
+        // Upstream #11968: standalone characters are split without grapheme segmentation.
+        $line = '│ a → 中文 ✓ │';
+        $this->assertSame('│ a → ', Width::sliceByColumn($line, 0, 6, true));
+        $this->assertSame('中文', Width::sliceByColumn($line, 6, 4, true));
+        $this->assertSame('文', Width::sliceByColumn($line, 7, 3, true));
+        $this->assertSame(['start' => 6, 'end' => 8], Width::graphemeCellRange($line, 7));
+    }
+
+    public function testSlicingKeepsClustersThatJoinStandaloneCharacters(): void
+    {
+        // A ZWJ joins the heart to the emoji before it; the combining accent joins its base letter.
+        $this->assertSame("👨\u{200D}❤", Width::sliceByColumn("x👨\u{200D}❤y", 1, 2, true));
+        $accented = "→e\u{0301}→";
+        $this->assertSame("e\u{0301}", Width::sliceByColumn($accented, 1, 1, true));
+        $this->assertSame(['start' => 2, 'end' => 3], Width::graphemeCellRange($accented, 2));
+    }
+
+    public function testSlicesAStyledAsciiRunAsASubstring(): void
+    {
+        $line = "\x1b[31mhello\x1b[0m world";
+        $this->assertSame("\x1b[31mllo\x1b[0m w", Width::sliceByColumn($line, 2, 5));
+        $this->assertSame(['start' => 7, 'end' => 8], Width::graphemeCellRange($line, 7));
+    }
 }

@@ -332,19 +332,19 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
     public function scrollBy(int $lines): void
     {
         $this->getPrimaryScrollView()->scrollBy($lines);
-        $this->requestRender();
+        $this->requestViewRender();
     }
 
     public function scrollToTop(): void
     {
         $this->getPrimaryScrollView()->scrollToStart();
-        $this->requestRender();
+        $this->requestViewRender();
     }
 
     public function scrollToBottom(): void
     {
         $this->getPrimaryScrollView()->scrollToEnd();
-        $this->requestRender();
+        $this->requestViewRender();
     }
 
     /** -1 for the previous OSC 133 prompt above the top row, 1 for the next one below it. */
@@ -364,7 +364,7 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
                 continue;
             }
             $scrollView->scrollTo($row);
-            $this->requestRender();
+            $this->requestViewRender();
 
             return;
         }
@@ -1239,7 +1239,9 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
             $primary->scrollBy($remaining);
         }
         $this->updateScrollbarHover($x, $y);
-        $this->requestRender();
+        // Scrolling moves the viewport only. Reusing the previous component output keeps a wheel
+        // frame O(viewport); re-rendering a long transcript on every wheel event saturated a core.
+        $this->requestViewRender();
     }
 
     /** @return 'left'|'middle'|'right'|'none' */
@@ -1822,7 +1824,8 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
         if ($point !== null) {
             $this->updateSelectionFocus($point);
         }
-        $this->requestRender();
+        // Selection is painted onto the screen after layout, so it needs no new component output.
+        $this->requestViewRender();
         $this->selectionAutoScrollTimer = Loop::get()->delay(self::SELECTION_AUTO_SCROLL_INTERVAL, $this->autoScrollSelection(...));
     }
 
@@ -2195,10 +2198,13 @@ class TuiAltScreen extends TuiBase implements ViewportTUI
         $width = max(1, $this->terminal->columns());
         $height = max(1, $this->terminal->rows());
         $root = $this->layoutRoot ?? $this->implicitScrollView;
-        $nextLayout = Layout::renderLayoutFrame($root, $width, $height, fn () => $this->requestRender());
+        $requestViewRender = fn () => $this->requestViewRender();
+        $reusableOutput = $this->contentChanged ? null : $this->currentLayout?->renderCache;
+        $this->contentChanged = false;
+        $nextLayout = Layout::renderLayoutFrame($root, $width, $height, $requestViewRender, $reusableOutput);
         if ($this->refreshSearch($nextLayout)) {
             self::releaseLayout($nextLayout);
-            $nextLayout = Layout::renderLayoutFrame($root, $width, $height, fn () => $this->requestRender());
+            $nextLayout = Layout::renderLayoutFrame($root, $width, $height, $requestViewRender, $nextLayout->renderCache);
         }
         $screen = $this->resolveFakeCursors(array_map(static fn (string $line): string => (string) preg_replace(self::OSC133_ZONE_PREFIX, '', $line), $nextLayout->lines));
         $screen = $this->applySearchHighlights($screen, $nextLayout);

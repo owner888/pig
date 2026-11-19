@@ -56,6 +56,9 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ### Fixed
 
+- Fixed fullscreen scrolling slowing down as the conversation grows, as upstream's #11968: the wheel, page and line keys, top and bottom, prompt jumps and selection auto-scroll now reuse the previous frame's component output instead of rendering the whole transcript again, and slicing a row by columns no longer segments runs of ASCII, CJK, kana, box drawing and other characters that are always a grapheme of their own. The scrollbar, which cuts every row in view, remembers the rows it cut in the frame before. On a 2,800-message session at 198×43 a wheel frame went from 34.5ms to 4.1ms.
+- Fixed `TuiBase::stop()` calling `flush()` on a terminal that is not a `BufferedTerminal`, such as a test's virtual terminal.
+- Fixed `scripts/bench-tui.php`: it asked for the fullscreen renderer through `PIG_TUI_MODE`, which nothing reads any more, so it measured regular mode and ran out of memory on a long session; it now passes `tuiMode`, raises the memory limit as `bin/pig` does, measures a wheel notch, and waits out the frame throttle between frames instead of counting it, which made every cheap frame read 16ms.
 - Fixed `/quit` from fullscreen jumping to the screen pig was started from before the transcript appeared, which on a long conversation was visible for as long as the whole conversation took to render again. The transcript is now rendered first and printed in the same synchronized write that leaves the alternate screen, and flushed before pig exits.
 
 ## [2.0.17] - 2026-11-19

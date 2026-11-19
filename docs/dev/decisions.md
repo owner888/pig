@@ -111,6 +111,14 @@ pig follows upstream `main` (AGENTS.md); these are the developer's choices that 
   width they asked for. Not covered: a change that invalidates every child at the *same* width
   (a theme change, expanding all tool output) still renders them all.
 
+- **The scrollbar remembers the rows it cut** (fullscreen mode). `Layout::replaceScrollbarCell()`
+  cuts a row at the bar's column — four passes over the row — and a scroll frame paints the bar over
+  every row in view. With upstream's view-only frames (#11968) that was what was left of a wheel
+  frame: 5.9ms of 9.6ms on a 2,800-message session at 198×43, where V8 slices fast enough not to
+  notice. A notch moves the view three rows, so most rows come back the next frame; the cut is
+  remembered by its arguments (1,024 rows, then it starts over), and the frame took 4.1ms. Nothing
+  but the arguments goes into the answer. The developer's choice, made after measuring.
+
 - **Quitting fullscreen prints the transcript in the write that leaves the alternate screen**
   (`fullscreenExitOutput: "transcript"`, the default). Upstream's `stopInteractiveTui()` moves the
   tree to a regular renderer: `switchTuiMode()` leaves the alternate screen in a write of its own,

@@ -173,6 +173,49 @@ final class TuiAltScreenTest extends TestCase
         $this->assertSame(['line 6', 'line 7', 'line 8', 'line 9'], self::viewport($tui));
     }
 
+    public function testScrollsWithoutRenderingComponentsAgainUntilContentChanges(): void
+    {
+        // Upstream #11968: rendering a long transcript again on every wheel event saturated a core.
+        $terminal = new FakeTerminal(20, 4);
+        $tui = new TuiAltScreen($terminal);
+        $text = new Text(self::lines(10), 0, 0);
+        $counted = new class ($text) implements Component {
+            public int $renders = 0;
+
+            public function __construct(private readonly Text $text)
+            {
+            }
+
+            public function render(int $width): array
+            {
+                $this->renders++;
+
+                return $this->text->render($width);
+            }
+
+            public function invalidate(): void
+            {
+                $this->text->invalidate();
+            }
+        };
+        $tui->setLayoutRoot(new ScrollView($counted, follow: 'end', primary: true));
+        $this->start($tui);
+        $initial = $counted->renders;
+
+        $terminal->type("\x1b[<64;1;1M");
+        self::settle();
+        $tui->scrollBy(-1);
+        self::settle();
+        $this->assertSame($initial, $counted->renders);
+        $this->assertSame(['line 5', 'line 6', 'line 7', 'line 8'], self::viewport($tui));
+
+        $text->setText('changed');
+        $tui->requestRender();
+        self::settle();
+        $this->assertGreaterThan($initial, $counted->renders);
+        $this->assertSame('changed', self::viewport($tui)[0]);
+    }
+
     public function testShowsAClickableJumpToEndIndicatorOnTheTranscriptsLastRowWhileScrolledUp(): void
     {
         $terminal = new FakeTerminal(30, 6);
