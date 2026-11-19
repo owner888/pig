@@ -30,6 +30,12 @@ final class Http2Stream
     /** Bytes handed on and not yet given back to the server's send window. */
     public int $unacknowledged = 0;
 
+    /** Bytes handed on in all. */
+    public int $delivered = 0;
+
+    /** The stream's window has been raised for a download (`Http2Connection::consumed()`). */
+    public bool $grown = false;
+
     /** @param int $sendWindow how many bytes of body the server will take before a WINDOW_UPDATE */
     public function __construct(public readonly int $id, public int $sendWindow)
     {

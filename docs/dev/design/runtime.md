@@ -64,11 +64,18 @@ choice, as in Node. Plain `http` is never offered `h2`. `Http\ResponseBody` is t
   makes the peer's `SETTINGS_HEADER_TABLE_SIZE` irrelevant. `HpackDecoder` is the opposite: every
   header block is decoded, even one for a stream nobody wants any more, or the table of every later
   block is wrong.
-- **Windows.** What the server may send before a `WINDOW_UPDATE` is 8 MiB per stream and for the
-  connection, given back as the body is read (`Http2Body`), not as it arrives. A window is a
-  bandwidth–delay product: at 1 MiB a 10 MB download took 5.5 s against curl's 2.4 s on the same link,
-  at 8 MiB 2.1 s. What is sent is held to the server's windows, spent before the write suspends so that
-  two requests cannot spend them twice.
+- **Windows, and the hello.** A connection opens as Node's `fetch` opens one, read off the wire from Node 26
+  (capture a client's frames with `Http2Server` and `NODE_EXTRA_CA_CERTS`): SETTINGS `ENABLE_PUSH=0`,
+  `INITIAL_WINDOW_SIZE=262144`, then the connection's window made 512 KiB, and pseudo-headers in the order
+  `:authority :method :path :scheme` — so a server that tells clients apart by their hello sees the same one.
+  A window is a bandwidth–delay product, though: at 256 KiB a 10 MB download took 15 s where curl took 2.4 s.
+  So a stream that has delivered a whole opening window (a download; a model's answer is far less) is raised
+  to 8 MiB, and the connection with it, in later WINDOW_UPDATEs that nothing compares. Windows are given back
+  as the body is read (`Http2Body`), not as it arrives. What is sent is held to the server's windows, spent
+  before the write suspends so that two requests cannot spend them twice. What still differs from Node is
+  the request's own headers: `fetch` adds `accept`, `accept-language`, `sec-fetch-mode`, `user-agent` and an
+  `accept-encoding` of `br, gzip, deflate, zstd`; pig sends what the caller gave it and `identity`, since nothing
+  here decompresses.
 - **A timeout or an abort is one stream's.** The idle timeout runs from the start of the wait, not from
   the last traffic on the connection, so a stream is not kept alive by its neighbours; a stream that
   times out or is abandoned is cancelled (`RST_STREAM`, `CANCEL`) and the connection goes on. Only a
@@ -93,5 +100,5 @@ replaces the system's certificates rather than adding to them, which is why `Tls
 - Windows: `Socket::readAvailable()` on an idle pooled connection, and the loop's polling, have not been tried there.
 - Many coroutines at once on one connection (sub-agents): tested with 3 to 6, not under load.
 - A kept HTTP/1.1 connection that fails on the first write is retried for `GET`/`HEAD`/`OPTIONS` only; a `POST` is left to the session's retry. Revisit if "Connection closed" shows up often on a first request after a pause.
-- An HTTP/2 flow-control window of 8 MiB per stream and for the connection was picked from one link (10 MB in 2.1 s against curl's 2.4 s); other links may want another.
+- The 8 MiB window a download is raised to was picked from one link; other links may want another. A real run against Google (Antigravity) to see whether the Node-like hello changes anything.
 

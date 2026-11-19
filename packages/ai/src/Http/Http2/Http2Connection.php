@@ -54,8 +54,22 @@ final class Http2Connection
 
     private const int CANCEL = 8;
 
-    /** What the server may send before a WINDOW_UPDATE, per stream and on the connection. */
-    private const int RECEIVE_WINDOW = 8388608;
+    /**
+     * What the server may send before a WINDOW_UPDATE, as Node's `fetch` opens a connection (undici's
+     * `initialWindowSize` and `connectionWindowSize`, read off the wire from Node 26): a server that tells
+     * clients apart by how they say hello sees the same one.
+     */
+    private const int RECEIVE_WINDOW = 262144;
+
+    private const int CONNECTION_WINDOW = 524288;
+
+    /**
+     * What a stream is given once it has delivered a whole `RECEIVE_WINDOW` — a download, not a model's
+     * answer, which is a few kilobytes — and the connection with it. A window is a bandwidth–delay product: at
+     * 256 KiB a 10 MB download took 15 s on a link where curl took 2.4 s. The hello is Node's and the
+     * growth comes after it, in frames nothing compares.
+     */
+    private const int BULK_WINDOW = 8388608;
 
     /** The largest frame this side accepts: the protocol's default, which is never raised. */
     private const int MAX_FRAME = 16384;
@@ -100,6 +114,9 @@ final class Http2Connection
 
     /** Bytes handed on and not yet given back to the server's send window. */
     private int $unacknowledged = 0;
+
+    /** The connection's window has been raised to `BULK_WINDOW`. */
+    private bool $grown = false;
 
     /** Someone is reading the socket. */
     private bool $reading = false;
@@ -146,7 +163,7 @@ final class Http2Connection
             // No server push; a window per stream of our own choosing.
             . self::frame(self::SETTINGS, 0, 0, pack('nNnN', 2, 0, 4, self::RECEIVE_WINDOW))
             // The connection's own window starts at the protocol's 65535, whatever SETTINGS says.
-            . self::frame(self::WINDOW_UPDATE, 0, 0, pack('N', self::RECEIVE_WINDOW - 65535)),
+            . self::frame(self::WINDOW_UPDATE, 0, 0, pack('N', self::CONNECTION_WINDOW - 65535)),
         );
 
         return $connection;
@@ -225,9 +242,22 @@ final class Http2Connection
     {
         $this->unacknowledged += $bytes;
         $stream->unacknowledged += $bytes;
+        $stream->delivered += $bytes;
         $frames = '';
+        $open = !$stream->ended && $stream->error === null;
 
-        if (!$stream->ended && $stream->error === null && $stream->unacknowledged >= intdiv(self::RECEIVE_WINDOW, 2)) {
+        // A body that has used a whole window is a download: let it have more, and the connection with it.
+        if ($open && !$stream->grown && $stream->delivered >= self::RECEIVE_WINDOW) {
+            $stream->grown = true;
+            $frames .= self::frame(self::WINDOW_UPDATE, 0, $stream->id, pack('N', self::BULK_WINDOW - self::RECEIVE_WINDOW));
+
+            if (!$this->grown) {
+                $this->grown = true;
+                $frames .= self::frame(self::WINDOW_UPDATE, 0, 0, pack('N', self::BULK_WINDOW - self::CONNECTION_WINDOW));
+            }
+        }
+
+        if ($open && $stream->unacknowledged >= intdiv($stream->grown ? self::BULK_WINDOW : self::RECEIVE_WINDOW, 2)) {
             $frames .= self::frame(self::WINDOW_UPDATE, 0, $stream->id, pack('N', $stream->unacknowledged));
             $stream->unacknowledged = 0;
         }
@@ -370,11 +400,12 @@ final class Http2Connection
      */
     private function headersOf(Request $request, string $authority, string $target): array
     {
+        // In the order Node's `fetch` sends them (read off the wire from Node 26), which is not curl's or a browser's.
         $headers = [
-            [':method', $request->method],
-            [':scheme', 'https'],
             [':authority', $authority],
+            [':method', $request->method],
             [':path', $target],
+            [':scheme', 'https'],
         ];
 
         // Keyed by lowercase name, the last one winning, as HTTP/1.1's writer does (`HttpClient::serialize()`):
@@ -611,7 +642,7 @@ final class Http2Connection
 
     private function connectionWindowUpdate(): string
     {
-        if ($this->unacknowledged < intdiv(self::RECEIVE_WINDOW, 2)) {
+        if ($this->unacknowledged < intdiv($this->grown ? self::BULK_WINDOW : self::CONNECTION_WINDOW, 2)) {
             return '';
         }
 

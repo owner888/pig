@@ -79,8 +79,8 @@ final class HttpClientTlsTest extends TestCase
 
         $this->assertSame([array_fill(0, 5, 'hello over h2'), [Http2Body::class]], $bodies);
         $this->assertSame(1, $server->connections);
-        $this->assertSame([':method', 'POST'], $server->requests[1][0]);
-        $this->assertSame([':authority', "127.0.0.1:{$port}"], $server->requests[1][2]);
+        $this->assertSame([':authority', "127.0.0.1:{$port}"], $server->requests[1][0]);
+        $this->assertSame([':method', 'POST'], $server->requests[1][1]);
     }
 
     public function testAServerWithoutH2GetsHttp11AndKeepsTheConnectionForTheNextRequest(): void

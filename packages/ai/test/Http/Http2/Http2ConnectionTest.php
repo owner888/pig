@@ -84,19 +84,22 @@ final class Http2ConnectionTest extends TestCase
 
         $this->assertSame([200, '', 'text/plain', '/p?q=1'], $result);
         $this->assertSame([
-            [':method', 'POST'],
-            [':scheme', 'https'],
+            // Node's order, read off the wire from Node 26.
             [':authority', 'example.test'],
+            [':method', 'POST'],
             [':path', '/p?q=1'],
+            [':scheme', 'https'],
             ['accept', 'application/json'],
             ['content-length', '7'],
             ['accept-encoding', 'identity'],
         ], $server->requests[1]);
         $this->assertSame('{"a":1}', $server->bodies[1]);
-        // The preface: SETTINGS (no push, our window) and a bigger connection window.
+        // The preface, as Node's `fetch` sends it (Node 26): SETTINGS with no push and a 256 KiB window per
+        // stream, then the connection's window made 512 KiB.
         $this->assertSame(Http2Server::SETTINGS, $server->frames[0]['type']);
-        $this->assertSame(pack('nNnN', 2, 0, 4, 8388608), $server->frames[0]['payload']);
+        $this->assertSame(pack('nNnN', 2, 0, 4, 262144), $server->frames[0]['payload']);
         $this->assertSame(Http2Server::WINDOW_UPDATE, $server->frames[1]['type']);
+        $this->assertSame(pack('N', 458753), $server->frames[1]['payload']);
     }
 
     public function testRequestsShareOneConnectionAndEachGetsItsOwnResponse(): void
@@ -201,6 +204,64 @@ final class Http2ConnectionTest extends TestCase
         $this->assertSame('200000', $answer);
         $this->assertSame($body, $server->bodies[1]);
         $this->assertFalse($overspent, 'the client sent past the window it had');
+    }
+
+    /** @return list<int> the increments of the WINDOW_UPDATEs the client sent, for a stream (0 is the connection) */
+    private static function windowUpdates(Http2Server $server, int $stream): array
+    {
+        return array_values(array_map(
+            static fn (array $frame): int => (int) unpack('N', $frame['payload'])[1],
+            array_filter($server->framesOfType(Http2Server::WINDOW_UPDATE), static fn (array $frame): bool => $frame['stream'] === $stream),
+        ));
+    }
+
+    public function testAnAnswerThatFitsTheOpeningWindowAsksForNothingMore(): void
+    {
+        $server = new Http2Server(static function (Http2Server $server, array $frame): void {
+            if ($frame['type'] === Http2Server::HEADERS) {
+                $server->respond($frame['stream'], 200, [], str_repeat('x', 16000));
+            }
+        });
+        $port = $server->start();
+
+        Async::run(static function () use ($port): void {
+            self::get(self::connect($port), '/')->body->all();
+        });
+
+        // Only the connection's own window, once, when it opened: what Node's `fetch` sends.
+        $this->assertSame([458753], self::windowUpdates($server, 0));
+        $this->assertSame([], self::windowUpdates($server, 1));
+    }
+
+    public function testADownloadIsGivenAWiderWindowOnceItHasUsedTheFirst(): void
+    {
+        $server = new Http2Server(static function (Http2Server $server, array $frame): void {
+            if ($frame['type'] !== Http2Server::HEADERS) {
+                return;
+            }
+
+            $server->respond($frame['stream'], 200, [], null, false);
+
+            for ($sent = 0; $sent < 600000; $sent += 16384) {
+                $server->data($frame['stream'], str_repeat('x', 16384), $sent + 16384 >= 600000);
+            }
+        });
+        $port = $server->start();
+
+        $length = Async::run(static function () use ($port): int {
+            $length = 0;
+
+            foreach (self::get(self::connect($port), '/big')->body as $piece) {
+                $length += strlen($piece);
+            }
+
+            return $length;
+        });
+
+        $this->assertGreaterThanOrEqual(600000, $length);
+        // Once for the stream and once for the connection, raising each from the opening size to 8 MiB.
+        $this->assertContains(8388608 - 262144, self::windowUpdates($server, 1));
+        $this->assertContains(8388608 - 524288, self::windowUpdates($server, 0));
     }
 
     public function testAResetStreamFailsAfterWhatCameBeforeIt(): void

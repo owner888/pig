@@ -45,6 +45,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Changed
+
+- Changed an HTTP/2 connection to open as Node's `fetch` does, read off the wire from Node 26: a window of 256 KiB per stream and 512 KiB for the connection (were 8 MiB), and pseudo-headers in the order `:authority`, `:method`, `:path`, `:scheme`. A stream that delivers more than its opening window, a download, is raised to 8 MiB afterwards, so large downloads keep their speed.
+
 ## [2.0.17] - 2026-11-19
 
 ### New Features
