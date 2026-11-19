@@ -611,5 +611,45 @@
                 }
             }
         }
+    },
+    {
+        "type": "chat",
+        "id": "gemini-4-neon",
+        "name": "Gemini 4 Neon",
+        "api": "google-vertex",
+        "provider": "google-vertex",
+        "baseUrl": "https://{location}-aiplatform.googleapis.com",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": null,
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": "xhigh",
+            "max": null
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 3.0,
+            "output": 15.0,
+            "cacheRead": 0.15,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 1048576,
+        "maxTokens": 65536,
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
     }
 ]

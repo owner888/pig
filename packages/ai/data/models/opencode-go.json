@@ -207,41 +207,6 @@
     },
     {
         "type": "chat",
-        "id": "glm-5.2",
-        "name": "GLM-5.2",
-        "api": "openai-completions",
-        "provider": "opencode-go",
-        "baseUrl": "https://opencode.ai/inference/go/openai/v1",
-        "reasoning": true,
-        "thinkingLevelMap": {
-            "off": null,
-            "minimal": null,
-            "low": null,
-            "medium": null,
-            "high": "high",
-            "xhigh": null,
-            "max": "max"
-        },
-        "input": [
-            "text"
-        ],
-        "cost": {
-            "input": 1.4,
-            "output": 4.4,
-            "cacheRead": 0.26,
-            "cacheWrite": 0.0
-        },
-        "contextWindow": 1000000,
-        "maxTokens": 131072,
-        "compat": {
-            "supportsStore": false,
-            "supportsDeveloperRole": false,
-            "maxTokensField": "max_tokens",
-            "supportsStrictMode": true
-        }
-    },
-    {
-        "type": "chat",
         "id": "glm-5.3",
         "name": "GLM-5.3",
         "api": "openai-completions",

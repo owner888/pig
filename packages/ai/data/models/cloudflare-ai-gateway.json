@@ -1621,6 +1621,112 @@
     },
     {
         "type": "chat",
+        "id": "gpt-6.2-astra",
+        "name": "GPT-6.2 Astra",
+        "api": "openai-responses",
+        "provider": "cloudflare-ai-gateway",
+        "baseUrl": "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": "none",
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": "xhigh",
+            "max": "max"
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 8.0,
+            "output": 40.0,
+            "cacheRead": 0.4,
+            "cacheWrite": 10.0,
+            "tiers": [
+                {
+                    "inputTokensAbove": 272000,
+                    "input": 12.0,
+                    "output": 60.0,
+                    "cacheRead": 0.6,
+                    "cacheWrite": 15.0
+                }
+            ]
+        },
+        "contextWindow": 1050000,
+        "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true,
+            "supportsOpenAIGrammarTools": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
+        "id": "gpt-6.2-sol",
+        "name": "GPT-6.2 Sol",
+        "api": "openai-responses",
+        "provider": "cloudflare-ai-gateway",
+        "baseUrl": "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": "none",
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": "xhigh",
+            "max": "max"
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 2.0,
+            "output": 10.0,
+            "cacheRead": 0.1,
+            "cacheWrite": 2.5,
+            "tiers": [
+                {
+                    "inputTokensAbove": 272000,
+                    "input": 3.0,
+                    "output": 15.0,
+                    "cacheRead": 0.15,
+                    "cacheWrite": 3.75
+                }
+            ]
+        },
+        "contextWindow": 1050000,
+        "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true,
+            "supportsOpenAIGrammarTools": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
         "id": "o3",
         "name": "o3",
         "api": "openai-responses",

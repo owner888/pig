@@ -24,29 +24,6 @@
     },
     {
         "type": "chat",
-        "id": "alibaba/qwen-3-235b",
-        "name": "Qwen3 235B A22B",
-        "api": "anthropic-messages",
-        "provider": "vercel-ai-gateway",
-        "baseUrl": "https://ai-gateway.vercel.sh",
-        "reasoning": false,
-        "input": [
-            "text"
-        ],
-        "cost": {
-            "input": 0.22,
-            "output": 0.88,
-            "cacheRead": 0.0,
-            "cacheWrite": 0.0
-        },
-        "contextWindow": 262144,
-        "maxTokens": 16384,
-        "compat": {
-            "allowEmptySignature": true
-        }
-    },
-    {
-        "type": "chat",
         "id": "alibaba/qwen-3-30b",
         "name": "Qwen3-30B-A3B",
         "api": "anthropic-messages",
@@ -87,29 +64,6 @@
         },
         "contextWindow": 128000,
         "maxTokens": 8192,
-        "compat": {
-            "allowEmptySignature": true
-        }
-    },
-    {
-        "type": "chat",
-        "id": "alibaba/qwen3-coder",
-        "name": "Qwen3 Coder 480B A35B Instruct",
-        "api": "anthropic-messages",
-        "provider": "vercel-ai-gateway",
-        "baseUrl": "https://ai-gateway.vercel.sh",
-        "reasoning": false,
-        "input": [
-            "text"
-        ],
-        "cost": {
-            "input": 0.22,
-            "output": 1.8,
-            "cacheRead": 0.022,
-            "cacheWrite": 0.0
-        },
-        "contextWindow": 262144,
-        "maxTokens": 32768,
         "compat": {
             "allowEmptySignature": true
         }
@@ -211,36 +165,13 @@
             "text"
         ],
         "cost": {
-            "input": 0.15,
-            "output": 1.2,
-            "cacheRead": 0.0,
-            "cacheWrite": 0.0
-        },
-        "contextWindow": 262114,
-        "maxTokens": 262114,
-        "compat": {
-            "allowEmptySignature": true
-        }
-    },
-    {
-        "type": "chat",
-        "id": "alibaba/qwen3-next-80b-a3b-thinking",
-        "name": "Qwen3 Next 80B A3B Thinking",
-        "api": "anthropic-messages",
-        "provider": "vercel-ai-gateway",
-        "baseUrl": "https://ai-gateway.vercel.sh",
-        "reasoning": true,
-        "input": [
-            "text"
-        ],
-        "cost": {
-            "input": 0.15,
-            "output": 1.2,
+            "input": 0.09,
+            "output": 1.1,
             "cacheRead": 0.0,
             "cacheWrite": 0.0
         },
         "contextWindow": 262144,
-        "maxTokens": 262144,
+        "maxTokens": 32768,
         "compat": {
             "allowEmptySignature": true
         }
@@ -3647,6 +3578,40 @@
     },
     {
         "type": "chat",
+        "id": "google/gemini-4-neon",
+        "name": "Gemini 4 Neon",
+        "api": "anthropic-messages",
+        "provider": "vercel-ai-gateway",
+        "baseUrl": "https://ai-gateway.vercel.sh",
+        "reasoning": true,
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 3.0,
+            "output": 15.0,
+            "cacheRead": 0.15,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 1000000,
+        "maxTokens": 1000000,
+        "compat": {
+            "allowEmptySignature": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
         "id": "google/gemma-4-26b-a4b-it",
         "name": "Google Gemma 4 26B A4B",
         "api": "anthropic-messages",
@@ -4444,29 +4409,6 @@
     },
     {
         "type": "chat",
-        "id": "minimax/minimax-m2",
-        "name": "MiniMax M2",
-        "api": "anthropic-messages",
-        "provider": "vercel-ai-gateway",
-        "baseUrl": "https://ai-gateway.vercel.sh",
-        "reasoning": true,
-        "input": [
-            "text"
-        ],
-        "cost": {
-            "input": 0.3,
-            "output": 1.2,
-            "cacheRead": 0.03,
-            "cacheWrite": 0.375
-        },
-        "contextWindow": 205000,
-        "maxTokens": 205000,
-        "compat": {
-            "allowEmptySignature": true
-        }
-    },
-    {
-        "type": "chat",
         "id": "minimax/minimax-m2.1",
         "name": "MiniMax M2.1",
         "api": "anthropic-messages",
@@ -4479,31 +4421,8 @@
         "cost": {
             "input": 0.3,
             "output": 1.2,
-            "cacheRead": 0.03,
-            "cacheWrite": 0.375
-        },
-        "contextWindow": 204800,
-        "maxTokens": 131072,
-        "compat": {
-            "allowEmptySignature": true
-        }
-    },
-    {
-        "type": "chat",
-        "id": "minimax/minimax-m2.1-lightning",
-        "name": "MiniMax M2.1 Lightning",
-        "api": "anthropic-messages",
-        "provider": "vercel-ai-gateway",
-        "baseUrl": "https://ai-gateway.vercel.sh",
-        "reasoning": true,
-        "input": [
-            "text"
-        ],
-        "cost": {
-            "input": 0.3,
-            "output": 2.4,
-            "cacheRead": 0.03,
-            "cacheWrite": 0.375
+            "cacheRead": 0.15,
+            "cacheWrite": 0.0
         },
         "contextWindow": 204800,
         "maxTokens": 131072,
@@ -4525,34 +4444,11 @@
         "cost": {
             "input": 0.3,
             "output": 1.2,
-            "cacheRead": 0.03,
-            "cacheWrite": 0.375
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
         },
-        "contextWindow": 204800,
-        "maxTokens": 131000,
-        "compat": {
-            "allowEmptySignature": true
-        }
-    },
-    {
-        "type": "chat",
-        "id": "minimax/minimax-m2.5-highspeed",
-        "name": "MiniMax M2.5 High Speed",
-        "api": "anthropic-messages",
-        "provider": "vercel-ai-gateway",
-        "baseUrl": "https://ai-gateway.vercel.sh",
-        "reasoning": true,
-        "input": [
-            "text"
-        ],
-        "cost": {
-            "input": 0.6,
-            "output": 2.4,
-            "cacheRead": 0.03,
-            "cacheWrite": 0.375
-        },
-        "contextWindow": 204800,
-        "maxTokens": 131000,
+        "contextWindow": 1000000,
+        "maxTokens": 8192,
         "compat": {
             "allowEmptySignature": true
         }
@@ -4569,36 +4465,13 @@
             "text"
         ],
         "cost": {
-            "input": 0.3,
-            "output": 1.2,
-            "cacheRead": 0.06,
-            "cacheWrite": 0.375
+            "input": 0.21,
+            "output": 0.84,
+            "cacheRead": 0.042,
+            "cacheWrite": 0.0
         },
-        "contextWindow": 204800,
-        "maxTokens": 131000,
-        "compat": {
-            "allowEmptySignature": true
-        }
-    },
-    {
-        "type": "chat",
-        "id": "minimax/minimax-m2.7-highspeed",
-        "name": "MiniMax M2.7 High Speed",
-        "api": "anthropic-messages",
-        "provider": "vercel-ai-gateway",
-        "baseUrl": "https://ai-gateway.vercel.sh",
-        "reasoning": true,
-        "input": [
-            "text"
-        ],
-        "cost": {
-            "input": 0.6,
-            "output": 2.4,
-            "cacheRead": 0.06,
-            "cacheWrite": 0.375
-        },
-        "contextWindow": 204800,
-        "maxTokens": 131100,
+        "contextWindow": 196608,
+        "maxTokens": 196608,
         "compat": {
             "allowEmptySignature": true
         }
@@ -8354,6 +8227,190 @@
     },
     {
         "type": "chat",
+        "id": "openai/gpt-6.2-astra",
+        "name": "GPT-6.2 Astra",
+        "api": "anthropic-messages",
+        "provider": "vercel-ai-gateway",
+        "baseUrl": "https://ai-gateway.vercel.sh",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "xhigh": "xhigh"
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 8.0,
+            "output": 40.0,
+            "cacheRead": 0.4,
+            "cacheWrite": 10.0,
+            "tiers": [
+                {
+                    "inputTokensAbove": 272000,
+                    "input": 16.0,
+                    "output": 60.0,
+                    "cacheRead": 0.8,
+                    "cacheWrite": 20.0
+                }
+            ]
+        },
+        "contextWindow": 1050000,
+        "maxTokens": 128000,
+        "compat": {
+            "allowEmptySignature": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
+        "id": "openai/gpt-6.2-astra-fast",
+        "name": "GPT-6.2 Astra (Fast)",
+        "api": "anthropic-messages",
+        "provider": "vercel-ai-gateway",
+        "baseUrl": "https://ai-gateway.vercel.sh",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "xhigh": "xhigh"
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 16.0,
+            "output": 80.0,
+            "cacheRead": 0.8,
+            "cacheWrite": 20.0,
+            "tiers": [
+                {
+                    "inputTokensAbove": 272000,
+                    "input": 32.0,
+                    "output": 120.0,
+                    "cacheRead": 1.6,
+                    "cacheWrite": 40.0
+                }
+            ]
+        },
+        "contextWindow": 1050000,
+        "maxTokens": 128000,
+        "compat": {
+            "allowEmptySignature": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
+        "id": "openai/gpt-6.2-sol",
+        "name": "GPT-6.2 Sol",
+        "api": "anthropic-messages",
+        "provider": "vercel-ai-gateway",
+        "baseUrl": "https://ai-gateway.vercel.sh",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "xhigh": "xhigh"
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 2.0,
+            "output": 10.0,
+            "cacheRead": 0.1,
+            "cacheWrite": 2.5,
+            "tiers": [
+                {
+                    "inputTokensAbove": 272000,
+                    "input": 4.0,
+                    "output": 15.0,
+                    "cacheRead": 0.2,
+                    "cacheWrite": 5.0
+                }
+            ]
+        },
+        "contextWindow": 1050000,
+        "maxTokens": 128000,
+        "compat": {
+            "allowEmptySignature": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
+        "id": "openai/gpt-6.2-sol-fast",
+        "name": "GPT-6.2 Sol (Fast)",
+        "api": "anthropic-messages",
+        "provider": "vercel-ai-gateway",
+        "baseUrl": "https://ai-gateway.vercel.sh",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "xhigh": "xhigh"
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 4.0,
+            "output": 20.0,
+            "cacheRead": 0.2,
+            "cacheWrite": 5.0,
+            "tiers": [
+                {
+                    "inputTokensAbove": 272000,
+                    "input": 8.0,
+                    "output": 30.0,
+                    "cacheRead": 0.4,
+                    "cacheWrite": 10.0
+                }
+            ]
+        },
+        "contextWindow": 1050000,
+        "maxTokens": 128000,
+        "compat": {
+            "allowEmptySignature": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
         "id": "openai/gpt-oss-120b",
         "name": "GPT OSS 120B",
         "api": "anthropic-messages",
@@ -8771,6 +8828,29 @@
                     "jpegQuality": 80
                 }
             }
+        }
+    },
+    {
+        "type": "chat",
+        "id": "recursive/flint-v1.0",
+        "name": "Flint",
+        "api": "anthropic-messages",
+        "provider": "vercel-ai-gateway",
+        "baseUrl": "https://ai-gateway.vercel.sh",
+        "reasoning": true,
+        "input": [
+            "text"
+        ],
+        "cost": {
+            "input": 0.0,
+            "output": 0.0,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 262144,
+        "maxTokens": 262144,
+        "compat": {
+            "allowEmptySignature": true
         }
     },
     {
@@ -10611,6 +10691,42 @@
     },
     {
         "type": "classifier",
+        "id": "heygen/heygen-decision-1",
+        "name": "HeyGen Decision 1",
+        "api": "typesafe-system-one",
+        "provider": "vercel-ai-gateway",
+        "baseUrl": "https://ai-gateway.vercel.sh/typesafe/v1",
+        "input": [
+            "text"
+        ],
+        "cost": {
+            "input": 0.14,
+            "output": 0.0,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 131072
+    },
+    {
+        "type": "classifier",
+        "id": "heygen/heygen-decision-1-turbo",
+        "name": "HeyGen Decision 1 Turbo",
+        "api": "typesafe-system-one",
+        "provider": "vercel-ai-gateway",
+        "baseUrl": "https://ai-gateway.vercel.sh/typesafe/v1",
+        "input": [
+            "text"
+        ],
+        "cost": {
+            "input": 0.09,
+            "output": 0.0,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 262144
+    },
+    {
+        "type": "classifier",
         "id": "liquid/d1",
         "name": "Liquid d1",
         "api": "typesafe-system-one",
@@ -10644,6 +10760,60 @@
             "cacheWrite": 0.0
         },
         "contextWindow": 32768
+    },
+    {
+        "type": "classifier",
+        "id": "liquid/d1.2",
+        "name": "Liquid d1.2",
+        "api": "typesafe-system-one",
+        "provider": "vercel-ai-gateway",
+        "baseUrl": "https://ai-gateway.vercel.sh/typesafe/v1",
+        "input": [
+            "text"
+        ],
+        "cost": {
+            "input": 0.02,
+            "output": 0.0,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 65536
+    },
+    {
+        "type": "classifier",
+        "id": "liquid/d1.2-ultra",
+        "name": "Liquid d1.2 Ultra",
+        "api": "typesafe-system-one",
+        "provider": "vercel-ai-gateway",
+        "baseUrl": "https://ai-gateway.vercel.sh/typesafe/v1",
+        "input": [
+            "text"
+        ],
+        "cost": {
+            "input": 0.042,
+            "output": 0.0,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 65536
+    },
+    {
+        "type": "classifier",
+        "id": "microsoft/decision-1.1",
+        "name": "Decision-1.1",
+        "api": "typesafe-system-one",
+        "provider": "vercel-ai-gateway",
+        "baseUrl": "https://ai-gateway.vercel.sh/typesafe/v1",
+        "input": [
+            "text"
+        ],
+        "cost": {
+            "input": 0.042,
+            "output": 0.0,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 4096
     },
     {
         "type": "classifier",
