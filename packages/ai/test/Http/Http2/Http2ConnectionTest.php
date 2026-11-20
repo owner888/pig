@@ -432,6 +432,81 @@ final class Http2ConnectionTest extends TestCase
         $this->assertSame(1, $server->framesOfType(Http2Server::RST_STREAM)[0]['stream']);
     }
 
+    public function testAConnectionOnWhichNothingArrivedForAWholeTimeoutIsNotHandedOutAgain(): void
+    {
+        // A connection that went dark (a laptop that slept, a NAT that forgot it) takes writes and
+        // answers nothing. The stream's timeout is retried by the turn, and the retry must not go
+        // back onto the same connection for another whole timeout.
+        $server = new Http2Server(static function (Http2Server $server, array $frame): void {
+            if ($frame['type'] === Http2Server::HEADERS && $frame['stream'] === 1) {
+                $server->respond(1, 200, [], 'first');
+            }
+        });
+        $port = $server->start();
+
+        Async::run(function () use ($port): void {
+            $connection = self::connect($port);
+            self::get($connection, '/a')->body->all();
+            Async::delay(0.05);
+            Http2Pool::add('example.test:443', $connection);
+
+            $error = $this->assertThrows(\Throwable::class, static fn () => self::get($connection, '/hang', 0.2));
+
+            $this->assertStringContainsString('timed out', $error->getMessage());
+            $this->assertFalse($connection->isUsable());
+            $this->assertNull(Http2Pool::acquire('example.test:443'));
+        });
+    }
+
+    public function testARefusedStreamIsOneTheServerNeverProcessed(): void
+    {
+        $server = new Http2Server(static function (Http2Server $server, array $frame): void {
+            if ($frame['type'] === Http2Server::HEADERS) {
+                $server->send(Http2Server::frame(Http2Server::RST_STREAM, 0, $frame['stream'], pack('N', 7)));
+            }
+        });
+        $port = $server->start();
+
+        $error = $this->assertThrows(HttpError::class, static function () use ($port): void {
+            Async::run(static function () use ($port): void {
+                self::get(self::connect($port), '/');
+            });
+        });
+
+        $this->assertStringContainsString('REFUSED_STREAM', $error->getMessage());
+        $this->assertTrue($error->unprocessed);
+    }
+
+    public function testAResponseThatHasNoBodyIsNotHeldToItsContentLength(): void
+    {
+        // HEAD, 204 and 304 carry the length the body would have had, and no body (RFC 9110 §8.6).
+        $server = new Http2Server(static function (Http2Server $server, array $frame): void {
+            if ($frame['type'] !== Http2Server::HEADERS) {
+                return;
+            }
+
+            $path = '';
+
+            foreach ($server->requests[$frame['stream']] as [$name, $value]) {
+                $path = $name === ':path' ? $value : $path;
+            }
+
+            $server->respond($frame['stream'], $path === '/gone' ? 304 : 200, [['content-length', '10']]);
+        });
+        $port = $server->start();
+
+        $bodies = Async::run(static function () use ($port): array {
+            $connection = self::connect($port);
+
+            return [
+                $connection->request(new Request('HEAD', 'https://example.test/head'), 'example.test', '/head', 5.0, null)->body->all(),
+                self::get($connection, '/gone')->body->all(),
+            ];
+        });
+
+        $this->assertSame(['', ''], $bodies);
+    }
+
     public function testAnInterimResponseIsSkipped(): void
     {
         $server = new Http2Server(static function (Http2Server $server, array $frame): void {

@@ -813,3 +813,18 @@ the server never acted on carries `HttpError::$unprocessed` (closed or draining 
 or above a GOAWAY's last stream id), and `HttpClient::send()` sends it once more on a new connection.
 `Http2ConnectionTest::testAGracefulGoAwayFollowedByAPingLeavesAnIdleConnectionUnusableWithoutFailing` and
 `HttpClientTlsTest::testARequestTheServerSaidItDidNotProcessIsSentAgainOnANewConnection` hold it.
+
+## A timeout on a connection that went dark was retried onto the same connection
+
+**Phenomenon**: after the computer slept, a turn waited the whole idle timeout (`HTTP/2 stream timed out
+after 300.0s`), was retried, and waited the whole timeout again.
+
+**Cause**: a connection whose path is gone takes writes and answers nothing, so `isUsable()` — which only
+sees what arrived — kept handing it out. A stream's timeout was the stream's own and changed nothing about
+the connection; HTTP/1.1 closes the socket on a timeout, HTTP/2 did not.
+
+**Rule**: a wait that gives up (not an abort) with nothing at all read on the connection since it began
+marks the connection `silent`: no new request is started on it, what is in flight finishes, and it closes
+when its last stream is let go — GOAWAY's semantics. `lastRead` is set by every read, `readSome()` and
+`drain()` alike. `Http2ConnectionTest::testAConnectionOnWhichNothingArrivedForAWholeTimeoutIsNotHandedOutAgain`
+holds it.

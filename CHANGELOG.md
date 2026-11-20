@@ -50,6 +50,9 @@ Every release entry strictly follows upstream pi's format with version date and 
 ### Fixed
 
 - Fixed a request failing with `Connection closed after the server said GOAWAY` after the session had been idle for a while. A server that shuts an idle HTTP/2 connection down gracefully sends GOAWAY and then a PING (RFC 9113 §6.8); the GOAWAY closed the pooled connection, the PING after it was still answered, and writing that answer to the closed connection threw out of the pool's check of whether the connection could be used — failing the next request instead of opening a new connection. Frames after the one that closes the connection are no longer handled, a connection that died while idle is reported as unusable rather than throwing, and a request the server never acted on (the connection closed before it went out, or a GOAWAY said its stream was not processed) is sent once more on a new connection, whatever its method.
+- Fixed a request that timed out on a pooled HTTP/2 connection which had gone dark (the computer slept, a NAT forgot it) being retried onto the same connection, to wait another whole idle timeout (five minutes by default). A connection on which nothing at all arrived for a whole timeout is no longer handed out: what is in flight on it finishes, and the next request opens a new one.
+- Fixed a stream the server refused with `REFUSED_STREAM` not being sent again: RFC 9113 says such a stream was never processed, so it is sent once more on a new connection, as a request a GOAWAY left unprocessed is.
+- Fixed a `HEAD` request, and a `204` or `304` response, over HTTP/2 failing with `Connection closed after 0 of N promised bytes`: their `content-length` is the length a body would have had, and there is none, as HTTP/1.1 already treated them.
 
 ## [2.0.18] - 2026-11-20
 
