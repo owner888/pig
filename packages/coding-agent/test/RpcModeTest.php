@@ -1084,9 +1084,29 @@ final class RpcModeTest extends TestCase
 
         // A session with no loadout has no context files and no skills; `SystemMessageTranscriptTest`
         // has the ones a loadout carries.
+        $builtinTools = PHP_OS_FAMILY === 'Windows' ? \Pig\CodingAgent\Tools\ToolSet::ALL : ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'];
         $this->assertSame(
-            ['context' => [], 'skills' => [], 'prompts' => ['/audit', '/review'], 'extensions' => ['deploy.php'], 'tools' => $this->session->activeTools()],
+            ['context' => [], 'skills' => [], 'prompts' => ['/audit', '/review'], 'extensions' => ['deploy.php'], 'tools' => $this->session->activeTools(), 'builtinTools' => $builtinTools, 'loadedExtensions' => []],
             $this->data(['type' => 'get_loaded_resources']),
+        );
+    }
+
+    /** What the page's "New custom session" dialog offers: every extension loaded, the built-ins by their `builtin:` name too. */
+    public function testEveryLoadedExtensionIsListedByTheNameThatLeavesItOut(): void
+    {
+        $mcp = \Pig\CodingAgent\Extensions\BuiltinExtensions::pathOf('mcp');
+        $this->assertNotNull($mcp);
+        $deploy = $this->cwd . '/deploy.php';
+        $runner = new ExtensionRunner([
+            new LoadedExtension($deploy, $deploy, 'deploy', new ExtensionApi($this->cwd, 'deploy')),
+            new LoadedExtension($mcp, $mcp, 'pig-mcp', new ExtensionApi($this->cwd, 'pig-mcp')),
+        ], $this->cwd);
+
+        $this->start(extensionRunner: $runner);
+
+        $this->assertSame(
+            [['name' => 'deploy', 'builtin' => null], ['name' => 'pig-mcp', 'builtin' => 'mcp']],
+            $this->data(['type' => 'get_loaded_resources'])['loadedExtensions'],
         );
     }
 

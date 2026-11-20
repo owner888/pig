@@ -47,6 +47,10 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ## Unreleased
 
+### Added
+
+- Added "New custom session" to the web UI's sidebar, in place of "New private session": a dialog chooses a normal or a private session, the built-in tools it starts with (`read`, `bash`, `edit` and `write` ticked; `grep`, `find` and `ls` not), and which extensions load — every one the conversation on screen loaded, built-ins included, all ticked. An extension left unticked is not loaded; a ticked one has all its tools on. The page sends names only, which the server checks, so it can take tools and extensions away from a session and never add code to it.
+
 ### Changed
 
 - Changed the system prompt's opening sentence to upstream's word for word, with pi's name changed to pig's: "You are a coding assistant running inside pig, a coding agent harness. Help users inspect files, run commands, and modify code." It used to leave "running inside …, a coding agent harness" out. Prompt filters written against pi's opener, such as the Antigravity extension's, now recognise pig's as well.

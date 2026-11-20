@@ -43,7 +43,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     const thinkingSelect = document.getElementById("thinking-select");
     const scrollBottomBtn = document.getElementById("scroll-bottom-btn");
     const newSessionBtn = document.getElementById("new-session-btn");
-    const newPrivateSessionBtn = document.getElementById("new-private-session-btn");
+    const newCustomSessionBtn = document.getElementById("new-custom-session-btn");
     const searchSessionsBtn = document.getElementById("search-sessions-btn");
     const sidebarBackdrop = document.getElementById("sidebar-backdrop");
     const langBtn = document.getElementById("lang-btn");
@@ -62,11 +62,15 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     const pageId = randomHex();
 
     class Tab {
-      constructor(cwd, sessionFile, incognito = false) {
+      constructor(cwd, sessionFile, incognito = false, custom = null) {
         this.id = "tab-" + (++tabSeq);
         this.cwd = cwd;
         // A private session (`pig --incognito`): no file, not kept among the tabs a reload reopens.
         this.incognito = !!incognito;
+        // A custom session ("New custom session"): `{tools, disabledExtensions}`, what its child is
+        // started with (`HttpServer::customSession()`). Sent with every `start_session`, so a child
+        // started again for this tab is started the same way.
+        this.custom = custom;
         this.sessionFile = this.incognito ? null : (sessionFile || null);   // null until the child names its file
         this.sessionPath = null;
         this.name = null;
@@ -164,6 +168,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           cwd: this.cwd,
           sessionFile: this.sessionFile || undefined,
           incognito: this.incognito || undefined,
+          custom: this.custom || undefined,
           // So a reconnect finds this tab's child again even before its conversation is saved.
           pageId,
           // The page's theme, so a child started for this tab draws its extensions' colours in it
@@ -909,7 +914,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     stopBtn.addEventListener("click", abortTurn);
     attachBtn.addEventListener("click", () => fileInput.click());
     newSessionBtn.addEventListener("click", () => startNewSession());
-    newPrivateSessionBtn?.addEventListener("click", () => startNewSession(null, true));
+    newCustomSessionBtn.addEventListener("click", () => openCustomSessionDialog());
     searchSessionsBtn.addEventListener("click", () => openSessionSearch());
 
     // File input attachment
@@ -1815,8 +1820,68 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       }
     }
 
+    /** The built-in tools a custom session starts with ticked: pig's default, `ToolSet::CODING`. */
+    const CUSTOM_SESSION_TOOLS = ["read", "bash", "edit", "write"];
+
+    /**
+     * "New custom session": private or not, which built-in tools are on, and which extensions load.
+     * The extensions offered are the ones the active conversation loaded (`get_loaded_resources`),
+     * all ticked, since those are what a new one in its folder loads; a ticked one has every tool it
+     * brings on (`HttpServer::customSession()`).
+     */
+    async function openCustomSessionDialog() {
+      let resources = null;
+      let failure = "";
+      try {
+        if (!active?.bound) throw new Error(t("no_active_session"));
+        resources = await active.rpc({ type: "get_loaded_resources" });
+      } catch (err) {
+        failure = err.message;
+      }
+
+      const check = (group, value, label, checked, hint = "") =>
+        `<label style="display:flex; align-items:center; gap:6px; font-size:var(--text-base);"><input type="checkbox" data-group="${group}" value="${escapeHtml(value)}"${checked ? " checked" : ""}> ${escapeHtml(label)}${hint ? ` <span style="color:var(--color-dim); font-size:var(--text-sm);">${escapeHtml(hint)}</span>` : ""}</label>`;
+      const tools = resources?.builtinTools || [];
+      const extensions = resources?.loadedExtensions || [];
+      const choices = resources ? `
+            <div class="modal-section">${escapeHtml(t("custom_session_tools"))}</div>
+            <div style="display:flex; flex-wrap:wrap; gap:8px 16px;">${tools.map((tool) => check("tool", tool, tool, CUSTOM_SESSION_TOOLS.includes(tool))).join("")}</div>
+            <div class="modal-section">${escapeHtml(t("custom_session_extensions"))}</div>
+            ${extensions.length
+              ? `<div style="display:flex; flex-direction:column; gap:6px;">${extensions.map((ext) => check("extension", ext.name, ext.builtin || ext.name, true, ext.builtin ? t("custom_session_builtin") : "")).join("")}</div>`
+              : `<div style="color:var(--color-dim); font-size:var(--text-sm);">${escapeHtml(t("custom_session_no_extensions"))}</div>`}`
+        : `<div style="color:var(--color-error); font-size:var(--text-sm);">${escapeHtml(t("custom_session_unavailable", { reason: failure }))}</div>`;
+
+      openModal({
+        title: t("new_custom_session"),
+        bodyHtml: `
+          <div style="display:flex; flex-direction:column; gap:10px;">
+            <select class="select-pill" id="custom-session-mode">
+              <option value="normal">${escapeHtml(t("custom_session_normal"))}</option>
+              <option value="private">${escapeHtml(t("custom_session_private"))}</option>
+            </select>
+            ${choices}
+          </div>
+        `,
+        confirmText: t("custom_session_start"),
+        cancelText: t("cancel"),
+        onOpen: (modalEl) => enhanceSelect(modalEl.querySelector("#custom-session-mode"), { floating: true }),
+        onConfirm: async (modalEl) => {
+          const incognito = modalEl.querySelector("#custom-session-mode").value === "private";
+          const boxes = (group) => [...modalEl.querySelectorAll(`input[data-group="${group}"]`)];
+          // Without the list nothing was chosen, and the session is the mode's default one.
+          const custom = resources ? {
+            tools: boxes("tool").filter((box) => box.checked).map((box) => box.value),
+            disabledExtensions: boxes("extension").filter((box) => !box.checked).map((box) => box.value),
+          } : null;
+          startNewSession(null, incognito, custom);
+          return true;
+        },
+      });
+    }
+
     /** A new conversation is a new tab — and a new child. */
-    async function startNewSession(cwd = null, incognito = false) {
+    async function startNewSession(cwd = null, incognito = false, custom = null) {
       pendingImages = [];
       pendingFiles = [];
       renderPendingImages();
@@ -1826,7 +1891,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         ? cwd.trim()
         : (active?.cwd || serverCwd);
 
-      openTab(new Tab(targetCwd, null, incognito));
+      openTab(new Tab(targetCwd, null, incognito, custom));
 
       if (window.innerWidth <= 768 && !sidebar.classList.contains("collapsed")) {
         sidebar.classList.add("collapsed");

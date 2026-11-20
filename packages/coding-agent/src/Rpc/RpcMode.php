@@ -715,7 +715,13 @@ final class RpcMode
      * a built-in extension, loaded always and left out of that list, and its tool is active only
      * where `defaultTools` or the conversation's own record says so.
      *
-     * @return array{context: list<array{name: string, path: string}>, skills: list<string>, prompts: list<string>, extensions: list<string>, tools: list<string>}
+     * And, for the page's "New custom session" dialog, what it offers to tick: `builtinTools`, the
+     * built-in tools this machine can run (`powershell` only on Windows), and `loadedExtensions`,
+     * every extension this conversation loaded by the name the loader knows it by — the built-ins
+     * among them, each with its `builtin:` name — which is the name the dialog sends back for one
+     * to leave out.
+     *
+     * @return array{context: list<array{name: string, path: string}>, skills: list<string>, prompts: list<string>, extensions: list<string>, tools: list<string>, builtinTools: list<string>, loadedExtensions: list<array{name: string, builtin: ?string}>}
      */
     private function loadedResources(): array
     {
@@ -740,6 +746,17 @@ final class RpcMode
             // Not the built-ins, which the terminal leaves out of [Extensions] too.
             'extensions' => ExtensionDiscovery::discover($this->cwd, $this->extensionRunner?->paths() ?? []),
             'tools' => $this->session->activeTools(),
+            'builtinTools' => array_values(array_filter(
+                \Pig\CodingAgent\Tools\ToolSet::ALL,
+                static fn (string $tool): bool => $tool !== 'powershell' || PHP_OS_FAMILY === 'Windows',
+            )),
+            'loadedExtensions' => array_map(
+                static fn (string $path): array => [
+                    'name' => \Pig\CodingAgent\Extensions\ExtensionLoader::nameOf($path),
+                    'builtin' => \Pig\CodingAgent\Extensions\BuiltinExtensions::nameOf($path),
+                ],
+                $this->extensionRunner?->paths() ?? [],
+            ),
         ];
     }
 

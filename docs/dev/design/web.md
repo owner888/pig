@@ -197,6 +197,19 @@ message the chip is gone, as a conversation's folder does not change under it. T
 `cwd.js`, run under Node by `DirectoryListingTest`. A project's own extensions in the folder load
 by `defaultProjectTrust`, as for any web child: nothing in the page asks yet.
 
+## A custom session: the tools and extensions a new conversation starts with
+
+The sidebar's "New custom session" asks, in one dialog, normal or private, which built-in tools are on
+(`read`, `bash`, `edit`, `write` ticked) and which extensions load — every one the active conversation
+loaded (`get_loaded_resources`' `loadedExtensions`, the built-ins among them), all ticked. `start_session`
+carries `custom: {tools, disabledExtensions}`; `HttpServer::customSession()` keeps only names (a tool
+not in `ToolSet::ALL`, or a name with more than `[A-Za-z0-9._-]`, is dropped) and turns them into the
+child's environment: `PIG_WEB_EXCLUDE_TOOLS`, which the spawn makes `--tools '*' --exclude-tools …`, so
+a ticked extension has every tool on, and `PIG_WEB_DISABLED_EXTENSIONS`, which `bin/pig` adds to the
+loader's `disabled` (and a built-in's name to the built-ins left out, as `--no-mcp` does). **Only names
+cross, so the page can narrow what a child runs and never widen it**: no path, no `-e`, which would
+let any account load any PHP on the server.
+
 ## Logging in to the web UI
 
 The developer wanted the page behind a login always, 127.0.0.1 included, because another site's

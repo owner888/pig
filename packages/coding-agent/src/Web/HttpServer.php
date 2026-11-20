@@ -54,7 +54,7 @@ use Throwable;
  *
  * | in | out |
  * |---|---|
- * | `start_session {cwd, sessionFile?, incognito?}` — bind this socket to a conversation, starting its child if there is none (`--incognito` for a private one) | `rpc_event {event}` — a line from the bound child, verbatim |
+ * | `start_session {cwd, sessionFile?, incognito?, custom?}` — bind this socket to a conversation, starting its child if there is none (`--incognito` for a private one; `custom: {tools, disabledExtensions}` for a custom one, `customSession()`) | `rpc_event {event}` — a line from the bound child, verbatim |
  * | `detach_session` | `session_ended {reason}` — the bound child is gone |
  * | `rpc_command {command}` — forwarded whole, id and all, to the bound child | `error {message}` |
  *
@@ -198,6 +198,10 @@ final class HttpServer
                 // (`Runtime::here()`), told the folder it works in there.
                 $here = $environment['PIG_SANDBOX_HERE'] ?? null;
                 unset($environment['PIG_SANDBOX_HERE']);
+                // A custom session's tools (`customSession()`): every tool its extensions bring, less
+                // the built-ins the page left unticked.
+                $excludeTools = $environment['PIG_WEB_EXCLUDE_TOOLS'] ?? null;
+                unset($environment['PIG_WEB_EXCLUDE_TOOLS']);
 
                 return new RpcClient(
                     cwd: $here ?? $cwd,
@@ -210,6 +214,7 @@ final class HttpServer
                         // Such a child loads nothing of the project's own `.pig/`: it would run
                         // here, on the host, outside the container or the other machine.
                         ...($here !== null ? ['--no-approve', '--cwd', $cwd] : []),
+                        ...self::customToolArguments($excludeTools),
                     ],
                     // The page's theme, which `RpcMode` makes the child's before `session_start`.
                     environment: array_filter([...$environment, 'PIG_WEB_THEME' => $theme, 'PIG_SESSION_OWNER' => $owner ?? ''], static fn (?string $v): bool => $v !== null),
@@ -1432,6 +1437,8 @@ final class HttpServer
             $theme = is_string($data['theme'] ?? null) && $data['theme'] !== '' ? $data['theme'] : null;
             // A private tab (the page's "New private session"): a child started with `--incognito`.
             $incognito = ($data['incognito'] ?? false) === true;
+            // The page's "New custom session": what the child is started with, as its environment.
+            $custom = self::customSession($data['custom'] ?? null);
             // The page's own id, the same across its reconnects (pig's): a tab whose conversation is
             // not saved yet is bound to the same child again rather than a new one, so a prompt sent
             // again under its `requestId` after a dropped connection reaches the child that took it.
@@ -1468,13 +1475,14 @@ final class HttpServer
             // not running, its connection made — on the loop, since that can take a while (an
             // unreachable machine, `ConnectTimeout`) and nobody else's page should wait on it.
             if ($runtime !== null) {
-                Async::spawn(function () use ($conn, $connectionId, $runtime, $user, $asked, $file, $clientTag, $tabId, $theme, $incognito, $failed): void {
+                Async::spawn(function () use ($conn, $connectionId, $runtime, $user, $asked, $file, $clientTag, $tabId, $theme, $incognito, $custom, $failed): void {
                     try {
                         $shell = $runtime->ensure($user);
                         $where = $asked !== '' && $runtime->contains($user, $asked) ? $asked : $runtime->workspace($user);
                         $managed = $this->pool->bind($connectionId, $where, $file, $clientTag, $tabId, $theme, $incognito, $user->id === '' ? null : $user->id, [
                             ...$shell->environment(),
                             'PIG_SANDBOX_HERE' => $runtime->here($user, $where),
+                            ...$custom,
                         ]);
                     } catch (Throwable $e) {
                         $failed($e);
@@ -1489,7 +1497,7 @@ final class HttpServer
             }
 
             try {
-                $managed = $this->pool->bind($connectionId, $cwd, $file, $clientTag, $tabId, $theme, $incognito, $user->id === '' ? null : $user->id);
+                $managed = $this->pool->bind($connectionId, $cwd, $file, $clientTag, $tabId, $theme, $incognito, $user->id === '' ? null : $user->id, $custom);
             } catch (Throwable $e) {
                 $failed($e);
 
@@ -2536,6 +2544,50 @@ final class HttpServer
                 $this->wsClients[$connectionId]->close();
             }
         }
+    }
+
+    /**
+     * The page's "New custom session" as the child's environment: `PIG_WEB_EXCLUDE_TOOLS`, the
+     * built-in tools not ticked, which the spawn turns into `--tools '*' --exclude-tools …` so
+     * every tool of every extension loaded is on; and `PIG_WEB_DISABLED_EXTENSIONS`, the extensions
+     * not ticked, by name, which `bin/pig` does not load. Only names cross: a tool not built in and
+     * a name that is not one are dropped, so the page can narrow what the child runs and never
+     * widen it. Empty for a session that is not a custom one.
+     *
+     * @return array<string, string>
+     */
+    public static function customSession(mixed $custom): array
+    {
+        if (!is_array($custom)) {
+            return [];
+        }
+
+        $names = static fn (mixed $list): array => array_values(array_filter(
+            is_array($list) ? $list : [],
+            static fn (mixed $name): bool => is_string($name) && preg_match('/^[A-Za-z0-9._-]+$/', $name) === 1,
+        ));
+        $ticked = $names($custom['tools'] ?? null);
+
+        return [
+            'PIG_WEB_EXCLUDE_TOOLS' => implode(',', array_values(array_diff(\Pig\CodingAgent\Tools\ToolSet::ALL, $ticked))),
+            'PIG_WEB_DISABLED_EXTENSIONS' => implode(',', $names($custom['disabledExtensions'] ?? null)),
+        ];
+    }
+
+    /**
+     * A custom session's `PIG_WEB_EXCLUDE_TOOLS` as the child's options: every tool on (`--tools
+     * '*'`, the tools of the extensions it loads among them), less the built-ins it names. Nothing
+     * for a session that is not a custom one (null).
+     *
+     * @return list<string>
+     */
+    public static function customToolArguments(?string $excludeTools): array
+    {
+        return match (true) {
+            $excludeTools === null => [],
+            $excludeTools === '' => ['--tools', '*'],
+            default => ['--tools', '*', '--exclude-tools', $excludeTools],
+        };
     }
 
     /**

@@ -511,8 +511,8 @@ is in; upstream refuses the whole file.
 
 pig's own, after Chrome's incognito window: `pig --incognito` starts a private session,
 `/incognito` makes the one on screen private part way through (its file goes to the trash, as
-`/discard` sends it), and the web page's "New private session" starts a `--incognito` child for a
-tab of its own. It is about **this machine**: what is sent to the provider is sent all the same, and
+`/discard` sends it), and the web page's "New custom session", with Private chosen, starts a
+`--incognito` child for a tab of its own. It is about **this machine**: what is sent to the provider is sent all the same, and
 the notice says so.
 
 What a private session leaves out: the session file (`AgentSession::goIncognito()` lets go of the

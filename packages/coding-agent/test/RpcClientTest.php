@@ -491,6 +491,41 @@ final class RpcClientTest extends TestCase
         $this->assertStringContainsString("No such directory: {$this->root}/nowhere", $error->getMessage());
     }
 
+    /**
+     * `pig web`'s custom session: the extensions its page left unticked, by name in
+     * `PIG_WEB_DISABLED_EXTENSIONS` (`HttpServer::customSession()`), are not loaded — a built-in among
+     * them too — and the rest are.
+     */
+    public function testTheExtensionsAWebPageLeftUntickedAreNotLoaded(): void
+    {
+        mkdir($this->home . '/.pig/extensions', 0o755, true);
+        foreach (['keep-me', 'leave-me'] as $name) {
+            file_put_contents($this->home . "/.pig/extensions/{$name}.php", "<?php return function (Pig\\CodingAgent\\Extensions\\ExtensionApi \$pig): void { \$pig->registerCommand('{$name}', static fn () => null); };");
+        }
+
+        $commands = function (array $environment): array {
+            $client = $this->client(['--no-approve'], withExtensions: true, environment: $environment);
+
+            return Async::run(static function () use ($client): array {
+                $client->start();
+                $names = array_column($client->getCommands(), 'name');
+                $client->stop();
+
+                return $names;
+            });
+        };
+
+        $every = $commands([]);
+        $this->assertContains('keep-me', $every);
+        $this->assertContains('leave-me', $every);
+        $this->assertContains('mcp', $every, 'the built-in MCP extension loads unless told not to');
+
+        $chosen = $commands(['PIG_WEB_DISABLED_EXTENSIONS' => 'leave-me,pig-mcp']);
+        $this->assertContains('keep-me', $chosen);
+        $this->assertNotContains('leave-me', $chosen);
+        $this->assertNotContains('mcp', $chosen);
+    }
+
     public function testItStartsAnswersAndStops(): void
     {
         $this->serveOneTurn('through the pipe');

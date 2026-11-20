@@ -306,6 +306,50 @@ final class WebModeTest extends TestCase
         });
     }
 
+    /** The page's "New custom session": the built-ins ticked and the extensions not, as names only. */
+    public function testACustomSessionStartsItsChildWithTheToolsAndExtensionsChosen(): void
+    {
+        $port = 28205;
+        $spawned = [];
+        $server = new HttpServer(
+            $this->cwd,
+            $port,
+            auth: Auth::inMemory(),
+            spawn: function (string $cwd, ?string $file, ?string $theme = null, bool $incognito = false, ?string $owner = null, array $environment = []) use (&$spawned): RpcClient {
+                $spawned[] = [$incognito, $environment];
+
+                return new RpcClient(cwd: $cwd, binary: self::FAKE, timeout: 5.0);
+            },
+            idleTtl: 0.2,
+            login: WebLogin::off(),
+        );
+
+        Async::run(function () use ($server, $port, &$spawned): void {
+            $server->start();
+            $ws = $this->wsConnect($port);
+
+            // What is not a built-in tool, or not a name, is dropped: the page narrows and never widens.
+            $this->wsSend($ws, ['type' => 'start_session', 'cwd' => $this->cwd, 'tabId' => 'tab-1', 'incognito' => true, 'custom' => [
+                'tools' => ['read', 'bash', 'edit', 'write', 'grep', 'not-a-tool', ['x']],
+                'disabledExtensions' => ['pig-mcp', 'pig-antigravity', '../elsewhere', 'a b', 7],
+            ]]);
+            $this->wsCollect($ws, static fn (array $m): bool => in_array($m['type'] ?? '', ['error', 'session_bound'], true));
+            $this->assertSame([true, ['PIG_WEB_EXCLUDE_TOOLS' => 'powershell,find,ls', 'PIG_WEB_DISABLED_EXTENSIONS' => 'pig-mcp,pig-antigravity']], $spawned[0] ?? null);
+
+            // A session that is not a custom one is started as before.
+            $this->wsSend($ws, ['type' => 'start_session', 'cwd' => $this->cwd, 'tabId' => 'tab-2']);
+            $this->wsCollect($ws, static fn (array $m): bool => in_array($m['type'] ?? '', ['error', 'session_bound'], true));
+            $this->assertSame([false, []], $spawned[1] ?? null);
+
+            fclose($ws);
+            $server->stop();
+        });
+
+        $this->assertSame([], HttpServer::customToolArguments(null));
+        $this->assertSame(['--tools', '*'], HttpServer::customToolArguments(''));
+        $this->assertSame(['--tools', '*', '--exclude-tools', 'grep,ls'], HttpServer::customToolArguments('grep,ls'));
+    }
+
     public function testStartSessionSpawnsAChildAndRpcCommandIsRelayedWithItsIdIntact(): void
     {
         $port = 28091;

@@ -970,6 +970,16 @@ $decideTrust = static function (array $loaded) use ($cwd, $askTrust, $settleTrus
     return $trusted;
 };
 
+// `pig web`'s custom session: the extensions its page left unticked, by name (`HttpServer`'s
+// `start_session`), not loaded — a built-in among them left out of the built-ins too, as `--no-mcp`
+// leaves out `mcp`. Read once and cleared, so a pig this one starts does not inherit it.
+$webDisabled = array_values(array_filter(explode(',', (string) getenv('PIG_WEB_DISABLED_EXTENSIONS')), static fn (string $name): bool => $name !== ''));
+$webDisabledBuiltins = array_values(array_filter(array_map(
+    static fn (string $name): string|false => array_search($name, \Pig\CodingAgent\Extensions\BuiltinExtensions::FOLDERS, true),
+    $webDisabled,
+)));
+putenv('PIG_WEB_DISABLED_EXTENSIONS');
+
 // On first run on a fresh machine, ensure bundled extensions are populated into
 // ~/.pig/agent/extensions so they are available out of the box.
 if (!isset($options['no-extensions']) && !is_dir(\Pig\CodingAgent\Config::home() . '/extensions')) {
@@ -985,12 +995,12 @@ if ((!isset($options['no-extensions']) || $cliExtensionPaths !== []) && $mode !=
         $cliExtensionPaths,
         auth: $auth,
         projectTrusted: $trustUndecided ? $decideTrust : true,
-        disabled: array_values(array_unique([...$settings->disabledExtensions(), ...(isset($options['no-mcp']) ? ['pig-mcp'] : [])])),
+        disabled: array_values(array_unique([...$settings->disabledExtensions(), ...(isset($options['no-mcp']) ? ['pig-mcp'] : []), ...$webDisabled])),
         projectConfigured: static fn (): array => $settings->extensions(),
         packageExtensions: static fn (bool $trusted): array => $resolvePackages($trusted)->enabled('extensions'),
         discover: !isset($options['no-extensions']),
         // Upstream's built-ins, last; none under `--no-extensions`, and `--no-mcp` leaves `mcp` out.
-        builtins: isset($options['no-extensions']) ? [] : $settings->builtinExtensions(isset($options['no-mcp']) ? ['mcp'] : []),
+        builtins: isset($options['no-extensions']) ? [] : $settings->builtinExtensions([...(isset($options['no-mcp']) ? ['mcp'] : []), ...$webDisabledBuiltins]),
         // A Docker or SSH account's child: only what the admin let such accounts have.
         only: $elsewhere !== null ? \Pig\CodingAgent\Settings::sandboxExtensions() : null,
     );
@@ -1168,7 +1178,7 @@ $assemble = static function (
     ?array $preloadedExtensions,
     \Pig\CodingAgent\Packages\ResolvedPaths $packageResources,
     ?string $newSessionId,
-) use ($auth, $options, $noSession, $toolNames, $modelPatterns, $cliExtensionPaths, $excludeTools, $cliPaths, $arguments, &$session): Pig\CodingAgent\StartedSession {
+) use ($auth, $options, $noSession, $toolNames, $modelPatterns, $cliExtensionPaths, $excludeTools, $cliPaths, $arguments, &$session, $webDisabled): Pig\CodingAgent\StartedSession {
     return CodingAgent::session(
         $cwd,
         $settings,
@@ -1189,7 +1199,7 @@ $assemble = static function (
         projectTrusted: $projectTrusted,
         excludeTools: $excludeTools,
         // `--no-mcp`: upstream's `disabledBuiltinExtensions: ["mcp"]`, by pig's directory name.
-        disabledExtensions: array_values(array_unique([...$settings->disabledExtensions(), ...(isset($options['no-mcp']) ? ['pig-mcp'] : [])])),
+        disabledExtensions: array_values(array_unique([...$settings->disabledExtensions(), ...(isset($options['no-mcp']) ? ['pig-mcp'] : []), ...$webDisabled])),
         // Every option, for the flags extensions declare (`registerFlag()`); the parser does not
         // refuse an option it has not heard of, which is what makes `--my-flag` reachable at all.
         flags: $options,
@@ -1220,7 +1230,7 @@ $assemble = static function (
 // `CodingAgent::session()` builds. What the previous runtime's extensions registered process-wide
 // goes first, as `/reload` clears it, and `models.json` is applied again over what loads.
 $trustByCwd = [$cwd => $projectTrusted];
-$createRuntime = static function (string $runtimeCwd, SessionManager $opened, ?Closure $askTrust) use (&$trustByCwd, $trustOverride, $assemble, $auth, $options, $cliExtensionPaths, $temporaryResources, $elsewhere): Pig\CodingAgent\StartedSession {
+$createRuntime = static function (string $runtimeCwd, SessionManager $opened, ?Closure $askTrust) use (&$trustByCwd, $trustOverride, $assemble, $auth, $options, $cliExtensionPaths, $temporaryResources, $elsewhere, $webDisabled, $webDisabledBuiltins): Pig\CodingAgent\StartedSession {
     $trusted = $trustByCwd[$runtimeCwd] ??= ProjectTrust::resolve(
         $runtimeCwd,
         $askTrust,
@@ -1258,11 +1268,11 @@ $createRuntime = static function (string $runtimeCwd, SessionManager $opened, ?C
             $cliExtensionPaths,
             auth: $auth,
             projectTrusted: $trusted,
-            disabled: array_values(array_unique([...$runtimeSettings->disabledExtensions(), ...(isset($options['no-mcp']) ? ['pig-mcp'] : [])])),
+            disabled: array_values(array_unique([...$runtimeSettings->disabledExtensions(), ...(isset($options['no-mcp']) ? ['pig-mcp'] : []), ...$webDisabled])),
             projectConfigured: static fn (): array => $runtimeSettings->extensions(),
             packageExtensions: static fn (bool $trusted): array => $packages->enabled('extensions'),
             discover: !isset($options['no-extensions']),
-            builtins: isset($options['no-extensions']) ? [] : $runtimeSettings->builtinExtensions(isset($options['no-mcp']) ? ['mcp'] : []),
+            builtins: isset($options['no-extensions']) ? [] : $runtimeSettings->builtinExtensions([...(isset($options['no-mcp']) ? ['mcp'] : []), ...$webDisabledBuiltins]),
             only: $elsewhere !== null ? \Pig\CodingAgent\Settings::sandboxExtensions() : null,
         );
 

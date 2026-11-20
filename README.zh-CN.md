@@ -145,7 +145,7 @@ pig
   - `pig --session <id|path>`：按会话 ID 前缀或文件路径打开会话；只在别的项目里找到的 ID 会询问是否分叉到当前项目。恢复的会话在它自己的工作目录里继续。
   - `pig --fork <id|path>` 把一个会话复制成当前项目的新会话；`pig --session-id <id>` 打开或新建该 ID 的会话；`pig --no-session` 运行但不保存对话。
   - `/discard` 是事后决定不保存：确认后退出，并把这次会话的文件移到废纸篓，适合问完不想留在 `/resume` 里的小问题。
-  - `pig --incognito` 是隐身会话，类似 Chrome 的隐身窗口：不写会话文件、日志和崩溃记录，较长的工具输出在会话结束时删除；`/incognito` 把当前会话中途转为隐身（已写的文件移到废纸篓），Web UI 有「新建隐身会话」。底栏和输入框边框会标出来。请求仍会发给模型服务商。扩展可以用 `isIncognito()` 判断，生成的文件存到 `artifactsDirectory()`。
+  - `pig --incognito` 是隐身会话，类似 Chrome 的隐身窗口：不写会话文件、日志和崩溃记录，较长的工具输出在会话结束时删除；`/incognito` 把当前会话中途转为隐身（已写的文件移到废纸篓），Web UI 的「新建自定义会话」选「隐身会话」即可开一个，同一个弹窗还能选新会话启用哪些内置工具和扩展。底栏和输入框边框会标出来。请求仍会发给模型服务商。扩展可以用 `isIncognito()` 判断，生成的文件存到 `artifactsDirectory()`。
 - **模型选择与动态切换**：
   - `pig --model sonnet`、`pig --model google/gemini-3.8-flash`，或 `pig --provider openai --model gpt-5.5`
   - `pig --model sonnet:high`（同时设置模型与思考强度）
