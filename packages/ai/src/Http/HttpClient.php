@@ -185,7 +185,16 @@ final class HttpClient
             $connection = Http2Pool::acquire($origin);
 
             if ($connection !== null) {
-                return $connection->request($request, $authority, $target, $this->idleTimeout, $signal);
+                try {
+                    return $connection->request($request, $authority, $target, $this->idleTimeout, $signal);
+                } catch (HttpError $error) {
+                    // The pooled connection closed, or the server said GOAWAY, before it acted on the
+                    // request: it goes out once more, on a new connection (RFC 9113 §8.7 calls that
+                    // safe for any method). Anything else the server may have acted on.
+                    if (!$error->unprocessed) {
+                        throw $error;
+                    }
+                }
             }
         }
 

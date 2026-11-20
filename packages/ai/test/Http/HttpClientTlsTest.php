@@ -83,6 +83,42 @@ final class HttpClientTlsTest extends TestCase
         $this->assertSame([':method', 'POST'], $server->requests[1][1]);
     }
 
+    public function testARequestTheServerSaidItDidNotProcessIsSentAgainOnANewConnection(): void
+    {
+        $server = new Http2Server(static function (Http2Server $server, array $frame): void {
+            if ($frame['type'] !== Http2Server::HEADERS) {
+                return;
+            }
+
+            if ($server->connections === 1) {
+                // The first request is held until the second is in; then GOAWAY says only the first is taken.
+                if ($frame['stream'] === 3) {
+                    $server->send(Http2Server::frame(Http2Server::GOAWAY, 0, 0, pack('NN', 1, 0)));
+                    $server->respond(1, 200, [], 'first');
+                }
+
+                return;
+            }
+
+            $server->respond($frame['stream'], 200, [], 'second');
+        });
+        $port = $server->start(tls: true);
+
+        $bodies = Async::run(static function () use ($port): array {
+            $client = new HttpClient();
+            // POST: a request the server never processed may be sent again whatever its method (RFC 9113 §8.7).
+            $send = static fn (string $path): string => $client->send(new Request('POST', "https://127.0.0.1:{$port}{$path}", [], '{}'))->body->all();
+            $one = Async::spawn(static fn (): string => $send('/one'));
+            Async::delay(0.05);
+            $two = Async::spawn(static fn (): string => $send('/two'));
+
+            return [$one->await(), $two->await()];
+        });
+
+        $this->assertSame(['first', 'second'], $bodies);
+        $this->assertSame(2, $server->connections);
+    }
+
     public function testAServerWithoutH2GetsHttp11AndKeepsTheConnectionForTheNextRequest(): void
     {
         $server = new KeepAliveServer(static fn (array $request): string => KeepAliveServer::response('hello over http/1.1'));

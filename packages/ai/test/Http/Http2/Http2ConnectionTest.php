@@ -502,6 +502,31 @@ final class Http2ConnectionTest extends TestCase
         $this->assertSame('pingpong', $ping['payload']);
     }
 
+    public function testAGracefulGoAwayFollowedByAPingLeavesAnIdleConnectionUnusableWithoutFailing(): void
+    {
+        $server = self::echoingPaths();
+        $port = $server->start();
+
+        Async::run(function () use ($port, $server): void {
+            $connection = self::connect($port);
+            self::get($connection, '/a')->body->all();
+            Http2Pool::add('example.test:443', $connection);
+
+            // RFC 9113 §6.8's graceful shutdown, in one write: GOAWAY with the highest stream id, then a PING.
+            // The GOAWAY closes the idle connection, and the PING after it has nobody to be answered to.
+            $server->send(
+                Http2Server::frame(Http2Server::GOAWAY, 0, 0, pack('NN', 0x7fffffff, 0))
+                . Http2Server::frame(Http2Server::PING, 0, 0, 'pingpong'),
+            );
+            Async::delay(0.05);
+
+            $this->assertNull(Http2Pool::acquire('example.test:443'));
+            $this->assertFalse($connection->isUsable());
+        });
+
+        $this->assertSame([], $server->framesOfType(Http2Server::PING));
+    }
+
     public function testThePoolHandsOutConnectionsThatCanStillBeUsed(): void
     {
         $server = self::echoingPaths();

@@ -795,3 +795,21 @@ caller's, and two `content-length` headers is a malformed request to a front end
 or checked among the caller's, never added beside them. `Http2ConnectionTest` gives it a `Content-Length` of its
 own and asserts the one the server sees. Nothing but a real service shows this — a scripted server accepts
 anything — so a provider on a new service is worth one real request.
+
+## A graceful GOAWAY on an idle pooled connection failed the next request
+
+**Phenomenon**: `Connection closed after the server said GOAWAY` as the error of a turn sent after the
+session sat idle, from `Http2Pool::acquire()` — no stream of that request had been opened.
+
+**Cause**: a graceful shutdown is GOAWAY followed by a PING (RFC 9113 §6.8), usually in one read.
+`isUsable()` drains, `parse()` handles the GOAWAY, and with nothing in flight `shutdown()` closes the
+connection; the loop went on to the PING and answered it, and `writeRaw()` on a closed connection throws
+its `closedReason`. The throw left `drain()` (which only guarded the read), `isUsable()` and the pool, so a
+connection that should have been skipped failed the request.
+
+**Rule**: `parse()` stops at the frame that closes the connection and sends nothing after it; `drain()`
+records a dead idle connection in `closedReason` and returns, so `isUsable()` only ever answers. A request
+the server never acted on carries `HttpError::$unprocessed` (closed or draining before its stream went out,
+or above a GOAWAY's last stream id), and `HttpClient::send()` sends it once more on a new connection.
+`Http2ConnectionTest::testAGracefulGoAwayFollowedByAPingLeavesAnIdleConnectionUnusableWithoutFailing` and
+`HttpClientTlsTest::testARequestTheServerSaidItDidNotProcessIsSentAgainOnANewConnection` hold it.

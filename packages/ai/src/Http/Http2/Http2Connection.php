@@ -313,12 +313,13 @@ final class Http2Connection
     private function startStream(array $headers, bool $hasBody, ?AbortSignal $signal): ?Http2Stream
     {
         return $this->locked(function () use ($headers, $hasBody, $signal): ?Http2Stream {
+            // Nothing has gone out for this request yet, so it may go out on another connection.
             if ($this->closedReason !== null) {
-                throw new HttpError($this->closedReason);
+                throw new HttpError($this->closedReason, unprocessed: true);
             }
 
             if ($this->draining) {
-                throw new HttpError('Connection closed: the server is going away and takes no new requests');
+                throw new HttpError('Connection closed: the server is going away and takes no new requests', unprocessed: true);
             }
 
             if (count($this->streams) >= $this->peerMaxStreams) {
@@ -516,9 +517,11 @@ final class Http2Connection
             try {
                 $chunk = $this->socket->readAvailable(65536);
             } catch (Throwable $error) {
+                // An idle connection the server dropped is not this caller's failure: the reason is kept
+                // as the connection's (`closedReason`), `isUsable()` says no, and the pool lets it go.
                 $this->shutdown('Connection closed: ' . $error->getMessage());
 
-                throw $error;
+                return;
             }
 
             if ($chunk === null) {
@@ -665,7 +668,9 @@ final class Http2Connection
         $total = strlen($this->input);
 
         try {
-            while ($total - $offset >= 9) {
+            // A frame can close the connection (a GOAWAY with nothing in flight, a protocol error), and
+            // what follows it in the same read — the PING of a graceful shutdown — has nobody to answer.
+            while ($this->closedReason === null && $total - $offset >= 9) {
                 $length = (ord($this->input[$offset]) << 16) | (ord($this->input[$offset + 1]) << 8) | ord($this->input[$offset + 2]);
 
                 if ($length > self::MAX_FRAME) {
@@ -690,7 +695,9 @@ final class Http2Connection
             $this->wake();
         }
 
-        $this->send($this->connectionWindowUpdate());
+        if ($this->closedReason === null) {
+            $this->send($this->connectionWindowUpdate());
+        }
     }
 
     private function dispatch(int $type, int $flags, int $id, string $payload): void
@@ -910,7 +917,7 @@ final class Http2Connection
         // What the server never started it says so, and the request may be sent again.
         foreach ($this->streams as $stream) {
             if ($stream->id > $last && !$stream->ended && $stream->error === null) {
-                $stream->error = new HttpError("Connection closed: the server is going away and did not process the request{$why}");
+                $stream->error = new HttpError("Connection closed: the server is going away and did not process the request{$why}", unprocessed: true);
             }
         }
 
