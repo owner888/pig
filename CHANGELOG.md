@@ -47,6 +47,10 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ## Unreleased
 
+### Changed
+
+- Changed the system prompt's opening sentence to upstream's word for word, with pi's name changed to pig's: "You are a coding assistant running inside pig, a coding agent harness. Help users inspect files, run commands, and modify code." It used to leave "running inside …, a coding agent harness" out. Prompt filters written against pi's opener, such as the Antigravity extension's, now recognise pig's as well.
+
 ### Fixed
 
 - Fixed a request failing with `Connection closed after the server said GOAWAY` after the session had been idle for a while. A server that shuts an idle HTTP/2 connection down gracefully sends GOAWAY and then a PING (RFC 9113 §6.8); the GOAWAY closed the pooled connection, the PING after it was still answered, and writing that answer to the closed connection threw out of the pool's check of whether the connection could be used — failing the next request instead of opening a new connection. Frames after the one that closes the connection are no longer handled, a connection that died while idle is reported as unusable rather than throwing, and a request the server never acted on (the connection closed before it went out, or a GOAWAY said its stream was not processed) is sent once more on a new connection, whatever its method.

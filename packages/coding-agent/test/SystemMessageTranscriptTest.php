@@ -101,7 +101,7 @@ final class SystemMessageTranscriptTest extends TestCase
 
         // What the provider was handed renders to exactly the prompt pig has always built.
         $this->assertSame($session->systemPrompt(), Transcript::getCurrentSystemPrompt($this->requests[0]->messages));
-        $this->assertStringStartsWith('You are a coding assistant.', $session->systemPrompt());
+        $this->assertStringStartsWith('You are a coding assistant running inside pig', $session->systemPrompt());
 
         // And the file has it first: a resumed session replays the same prompt and tools.
         $saved = SessionManager::open($store->path)->messages();

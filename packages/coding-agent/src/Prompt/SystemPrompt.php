@@ -21,8 +21,8 @@ use Pig\CodingAgent\Tools\ToolSet;
  */
 final class SystemPrompt
 {
-    /** Upstream's preamble (tightened in 705d047) without its "running inside pi, a coding agent harness". */
-    private const string ROLE = 'You are a coding assistant. Help users inspect files, run commands, and modify code.';
+    /** Upstream's preamble (tightened in 705d047), word for word with pi's name changed to pig's. */
+    private const string ROLE = 'You are a coding assistant running inside pig, a coding agent harness. Help users inspect files, run commands, and modify code.';
 
     /**
      * The prompt as one string — upstream's `buildSystemPrompt()`: "rendered exactly as the

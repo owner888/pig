@@ -111,7 +111,7 @@ final class SystemPromptTest extends ToolTestCase
                 . "and non-overlapping; merge nearby changes without including large unchanged regions.\n",
             $full,
         );
-        $this->assertStringStartsWith('You are a coding assistant. Help users inspect files, run commands, and modify code.', $full);
+        $this->assertStringStartsWith('You are a coding assistant running inside pig, a coding agent harness. Help users inspect files, run commands, and modify code.', $full);
 
         $readOnly = $this->prompt(ToolSet::READ_ONLY);
 
@@ -223,7 +223,7 @@ final class SystemPromptTest extends ToolTestCase
         $prompt = SystemPrompt::build($this->cwd, ToolSet::CODING, custom: 'Speak only in haiku.');
 
         $this->assertStringStartsWith('Speak only in haiku.', $prompt);
-        $this->assertStringNotContainsString('You are a coding assistant.', $prompt);
+        $this->assertStringNotContainsString('You are a coding assistant running inside pig', $prompt);
         $this->assertStringContainsString('Current working directory:', $prompt);
     }
 
@@ -231,7 +231,7 @@ final class SystemPromptTest extends ToolTestCase
     {
         $prompt = SystemPrompt::build($this->cwd, ToolSet::CODING, append: 'Always use tabs.');
 
-        $this->assertStringContainsString('You are a coding assistant.', $prompt);
+        $this->assertStringContainsString('You are a coding assistant running inside pig', $prompt);
         $this->assertStringContainsString('Always use tabs.', $prompt);
     }
 
