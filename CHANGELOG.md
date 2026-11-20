@@ -53,6 +53,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 - Fixed a request that timed out on a pooled HTTP/2 connection which had gone dark (the computer slept, a NAT forgot it) being retried onto the same connection, to wait another whole idle timeout (five minutes by default). A connection on which nothing at all arrived for a whole timeout is no longer handed out: what is in flight on it finishes, and the next request opens a new one.
 - Fixed a stream the server refused with `REFUSED_STREAM` not being sent again: RFC 9113 says such a stream was never processed, so it is sent once more on a new connection, as a request a GOAWAY left unprocessed is.
 - Fixed a `HEAD` request, and a `204` or `304` response, over HTTP/2 failing with `Connection closed after 0 of N promised bytes`: their `content-length` is the length a body would have had, and there is none, as HTTP/1.1 already treated them.
+- Fixed a request over HTTP/2 waiting until its timeout for room under the server's limit on concurrent streams (`SETTINGS_MAX_CONCURRENT_STREAMS`) that had already been made: a stream the server had ended still counted against the limit until its body was read, and a stream given up part way (Esc) freed its place without waking the request waiting for it, when that request was the one reading the connection.
 
 ## [2.0.18] - 2026-11-20
 

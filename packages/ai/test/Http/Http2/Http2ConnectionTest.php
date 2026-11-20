@@ -507,6 +507,62 @@ final class Http2ConnectionTest extends TestCase
         $this->assertSame(['', ''], $bodies);
     }
 
+    public function testAStreamTheServerHasEndedNoLongerCountsAgainstItsLimitOnStreams(): void
+    {
+        // SETTINGS_MAX_CONCURRENT_STREAMS of 1. A stream the server has sent END_STREAM on is closed
+        // (RFC 9113 §5.1) whether or not its body has been read yet, so it leaves room for the next.
+        $server = new Http2Server(static function (Http2Server $server, array $frame): void {
+            if ($frame['type'] === Http2Server::HEADERS) {
+                $server->respond($frame['stream'], 200, [], $frame['stream'] === 1 ? 'a' : 'b');
+            }
+        }, pack('nN', 3, 1));
+        $port = $server->start();
+
+        $bodies = Async::run(static function () use ($port): array {
+            $connection = self::connect($port);
+            $first = self::get($connection, '/a');
+            $second = Async::spawn(static fn (): string => self::get($connection, '/b', 1.0)->body->all());
+            Async::delay(0.1);
+
+            return [$first->body->all(), $second->await()];
+        });
+
+        $this->assertSame(['a', 'b'], $bodies);
+    }
+
+    public function testAStreamLetGoOfLeavesRoomForTheRequestWaitingForIt(): void
+    {
+        // SETTINGS_MAX_CONCURRENT_STREAMS of 1, and the first stream still open when its body is
+        // abandoned: the request waiting for room goes out once it is let go, not at its timeout.
+        $server = new Http2Server(static function (Http2Server $server, array $frame): void {
+            // As every server must (RFC 9113 §6.7).
+            if ($frame['type'] === Http2Server::PING && ($frame['flags'] & 0x1) === 0) {
+                $server->send(Http2Server::frame(Http2Server::PING, 0x1, 0, $frame['payload']));
+            }
+
+            if ($frame['type'] !== Http2Server::HEADERS) {
+                return;
+            }
+
+            $frame['stream'] === 1
+                ? $server->respond(1, 200, [], 'part', false)
+                : $server->respond($frame['stream'], 200, [], 'b');
+        }, pack('nN', 3, 1));
+        $port = $server->start();
+
+        $second = Async::run(static function () use ($port): string {
+            $connection = self::connect($port);
+            $first = self::get($connection, '/a');
+            $waiting = Async::spawn(static fn (): string => self::get($connection, '/b', 1.0)->body->all());
+            Async::delay(0.1);
+            $first->body->close();
+
+            return $waiting->await();
+        });
+
+        $this->assertSame('b', $second);
+    }
+
     public function testAnInterimResponseIsSkipped(): void
     {
         $server = new Http2Server(static function (Http2Server $server, array $frame): void {

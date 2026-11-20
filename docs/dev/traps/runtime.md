@@ -828,3 +828,18 @@ marks the connection `silent`: no new request is started on it, what is in fligh
 when its last stream is let go — GOAWAY's semantics. `lastRead` is set by every read, `readSome()` and
 `drain()` alike. `Http2ConnectionTest::testAConnectionOnWhichNothingArrivedForAWholeTimeoutIsNotHandedOutAgain`
 holds it.
+
+## A request waited for room under the server's stream limit that was already there
+
+**Phenomenon**: with the server's `SETTINGS_MAX_CONCURRENT_STREAMS` reached, a request waited its whole
+timeout although the stream ahead of it had finished, or had been given up.
+
+**Cause**: two. The limit was checked against `count($this->streams)`, which holds a stream until its body
+has been read and let go — but a stream the server ended or reset is closed (RFC 9113 §5.1) and does not
+count. And letting a stream go woke nobody: the waiter is often the one reading the socket, blocked in a
+read that nothing local interrupts.
+
+**Rule**: the limit counts `openStreams()` — neither ended nor failed. `release()` wakes the other waiters,
+and when a request is waiting for room while someone reads, sends a PING with its RST_STREAM: the server's
+answer is what wakes the reader to look again. `Http2ConnectionTest::testAStreamTheServerHasEndedNoLongerCountsAgainstItsLimitOnStreams`
+and `testAStreamLetGoOfLeavesRoomForTheRequestWaitingForIt` hold it.

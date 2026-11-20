@@ -142,11 +142,26 @@ final class Http2Connection
     /** The server sent GOAWAY: what is in flight finishes, nothing new is started. */
     private bool $draining = false;
 
+    /** When something last arrived from the server, `microtime(true)`. */
+    private float $lastRead;
+
+    /**
+     * A wait gave up with nothing at all arriving meanwhile: the connection may have gone dark (a
+     * laptop that slept, a NAT that forgot it), which takes writes and answers nothing. What is in
+     * flight finishes, nothing new is started — a request sent again, which a timeout is, goes out
+     * on a new connection rather than into the same silence for another whole timeout.
+     */
+    private bool $silent = false;
+
+    /** Requests waiting for the server's limit on streams to leave them room. */
+    private int $waitingForRoom = 0;
+
     /** @param float $timeout seconds a write may stall */
     private function __construct(private readonly Socket $socket, private readonly float $timeout)
     {
         $this->decoder = new HpackDecoder();
         $this->encoder = new HpackEncoder();
+        $this->lastRead = microtime(true);
     }
 
     /**
@@ -177,7 +192,7 @@ final class Http2Connection
     {
         $this->drain();
 
-        return $this->closedReason === null && !$this->draining && $this->nextId < self::MAX_WINDOW - 2;
+        return $this->closedReason === null && !$this->draining && !$this->silent && $this->nextId < self::MAX_WINDOW - 2;
     }
 
     /**
@@ -191,14 +206,20 @@ final class Http2Connection
     {
         $headers = $this->headersOf($request, $authority, $target);
 
-        do {
-            $this->wait(
-                fn (): bool => $this->closedReason !== null || count($this->streams) < $this->peerMaxStreams,
-                $idleTimeout,
-                $signal,
-            );
-            $stream = $this->startStream($headers, $request->body !== null && $request->body !== '', $signal);
-        } while ($stream === null);
+        $this->waitingForRoom++;
+
+        try {
+            do {
+                $this->wait(
+                    fn (): bool => $this->closedReason !== null || $this->openStreams() < $this->peerMaxStreams,
+                    $idleTimeout,
+                    $signal,
+                );
+                $stream = $this->startStream($headers, $request->body !== null && $request->body !== '', $signal);
+            } while ($stream === null);
+        } finally {
+            $this->waitingForRoom--;
+        }
 
         try {
             $this->sendBody($stream, (string) $request->body, $idleTimeout, $signal);
@@ -217,7 +238,9 @@ final class Http2Connection
             throw $error;
         }
 
-        $length = isset($stream->headers['content-length']) ? (int) $stream->headers['content-length'] : null;
+        // HEAD, 204 and 304 carry the length the body would have had, and no body (RFC 9110 §8.6).
+        $bodiless = $request->method === 'HEAD' || $stream->status === 204 || $stream->status === 304;
+        $length = !$bodiless && isset($stream->headers['content-length']) ? (int) $stream->headers['content-length'] : null;
 
         return new Response(
             $stream->status,
@@ -287,14 +310,23 @@ final class Http2Connection
 
         if (!$stream->ended && $stream->error === null && $this->closedReason === null) {
             $frames = self::frame(self::RST_STREAM, 0, $stream->id, pack('N', self::CANCEL));
+
+            // That made room, and a request waiting for it may be the one reading the socket, which
+            // nothing local interrupts: the server's answer to a PING is what wakes it to look again.
+            if ($this->waitingForRoom > 0 && $this->reading) {
+                $frames .= self::frame(self::PING, 0, 0, str_repeat("\0", 8));
+            }
         }
 
         if ($this->closedReason === null) {
             $this->send($frames . $this->connectionWindowUpdate());
         }
 
-        if ($this->draining && $this->streams === []) {
-            $this->shutdown('Connection closed after the server said GOAWAY');
+        // Those waiting without reading look again too.
+        $this->wake();
+
+        if ($this->streams === [] && ($this->draining || $this->silent)) {
+            $this->shutdown($this->draining ? 'Connection closed after the server said GOAWAY' : 'Connection closed: nothing arrived on it for a whole timeout');
         }
     }
 
@@ -322,7 +354,7 @@ final class Http2Connection
                 throw new HttpError('Connection closed: the server is going away and takes no new requests', unprocessed: true);
             }
 
-            if (count($this->streams) >= $this->peerMaxStreams) {
+            if ($this->openStreams() >= $this->peerMaxStreams) {
                 return null;
             }
 
@@ -346,6 +378,24 @@ final class Http2Connection
 
             return $stream;
         });
+    }
+
+    /**
+     * The streams that count against the server's SETTINGS_MAX_CONCURRENT_STREAMS: not those it has
+     * ended or reset, which are closed (RFC 9113 §5.1) though their body may not have been read yet —
+     * counting those would hold the next request up until somebody reads, which may be never.
+     */
+    private function openStreams(): int
+    {
+        $open = 0;
+
+        foreach ($this->streams as $stream) {
+            if (!$stream->ended && $stream->error === null) {
+                $open++;
+            }
+        }
+
+        return $open;
     }
 
     /** Write the body as DATA frames, as far as the two send windows allow, waiting for more when they do not. */
@@ -448,38 +498,47 @@ final class Http2Connection
     {
         $started = microtime(true);
 
-        while (!$done()) {
-            if ($this->closedReason !== null) {
-                throw new HttpError($this->closedReason);
-            }
+        try {
+            while (!$done()) {
+                if ($this->closedReason !== null) {
+                    throw new HttpError($this->closedReason);
+                }
 
-            $remaining = 0.0;
+                $remaining = 0.0;
 
-            if ($timeout > 0.0) {
-                $remaining = $timeout - (microtime(true) - $started);
+                if ($timeout > 0.0) {
+                    $remaining = $timeout - (microtime(true) - $started);
 
-                if ($remaining <= 0.0) {
-                    throw new HttpError(sprintf('HTTP/2 stream timed out after %.1fs', $timeout));
+                    if ($remaining <= 0.0) {
+                        throw new HttpError(sprintf('HTTP/2 stream timed out after %.1fs', $timeout));
+                    }
+                }
+
+                $signal?->throwIfAborted();
+
+                if ($this->reading) {
+                    $this->awaitActivity($remaining, $signal);
+
+                    continue;
+                }
+
+                $this->reading = true;
+
+                try {
+                    $this->readSome($remaining, $signal);
+                } finally {
+                    // Whoever reads next is whichever waiter gets here first.
+                    $this->reading = false;
+                    $this->wake();
                 }
             }
-
-            $signal?->throwIfAborted();
-
-            if ($this->reading) {
-                $this->awaitActivity($remaining, $signal);
-
-                continue;
+        } catch (Throwable $error) {
+            // A wait that gave up — not one called off — while the server sent nothing at all.
+            if (!$error instanceof AbortError && $this->lastRead < $started) {
+                $this->silent = true;
             }
 
-            $this->reading = true;
-
-            try {
-                $this->readSome($remaining, $signal);
-            } finally {
-                // Whoever reads next is whichever waiter gets here first.
-                $this->reading = false;
-                $this->wake();
-            }
+            throw $error;
         }
     }
 
@@ -502,6 +561,7 @@ final class Http2Connection
             return;
         }
 
+        $this->lastRead = microtime(true);
         $this->input .= $chunk;
         $this->parse();
     }
@@ -516,26 +576,28 @@ final class Http2Connection
         while ($this->closedReason === null) {
             try {
                 $chunk = $this->socket->readAvailable(65536);
+
+                if ($chunk === null) {
+                    $this->shutdown('Connection closed by the server');
+
+                    return;
+                }
+
+                if ($chunk === '') {
+                    return;
+                }
+
+                $this->lastRead = microtime(true);
+                $this->input .= $chunk;
+                // Answering what arrived (a PING, SETTINGS) writes, and that can fail too.
+                $this->parse();
             } catch (Throwable $error) {
-                // An idle connection the server dropped is not this caller's failure: the reason is kept
-                // as the connection's (`closedReason`), `isUsable()` says no, and the pool lets it go.
+                // An idle connection that died is not this caller's failure: the reason is kept as
+                // the connection's (`closedReason`), `isUsable()` says no, and the pool lets it go.
                 $this->shutdown('Connection closed: ' . $error->getMessage());
 
                 return;
             }
-
-            if ($chunk === null) {
-                $this->shutdown('Connection closed by the server');
-
-                return;
-            }
-
-            if ($chunk === '') {
-                return;
-            }
-
-            $this->input .= $chunk;
-            $this->parse();
         }
     }
 
@@ -862,7 +924,8 @@ final class Http2Connection
             return;
         }
 
-        $stream->error = new HttpError('Connection closed: the server reset the stream (' . (self::ERROR_NAMES[$code] ?? "error {$code}") . ')');
+        // REFUSED_STREAM: "the stream was closed prior to any processing" (RFC 9113 §8.7), so it may go out again.
+        $stream->error = new HttpError('Connection closed: the server reset the stream (' . (self::ERROR_NAMES[$code] ?? "error {$code}") . ')', unprocessed: $code === 7);
     }
 
     private function onSettings(int $flags, string $payload): void
