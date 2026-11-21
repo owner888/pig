@@ -59,27 +59,23 @@ final class ExtensionDiscoveryTest extends TestCase
         rmdir($dir);
     }
 
-    public function testOnlyDiscoversPhpExtensionsFromPigDirectories(): void
+    public function testOnlyWhatLoadedIsListedNotEveryFileInTheFolders(): void
     {
+        // Upstream lists `getExtensions().extensions`: a folder's extension a setting or a custom
+        // session left out did not load, and is not named.
         $pigExt = $this->homeDir . '/extensions';
-        $piExt = $this->piHomeDir . '/extensions';
-        mkdir($pigExt, 0755, true);
-        mkdir($piExt, 0755, true);
-
+        mkdir($pigExt . '/pig-vless', 0755, true);
+        file_put_contents($pigExt . '/pig-vless/index.php', '<?php');
         file_put_contents($pigExt . '/my-hook.php', '<?php');
-        file_put_contents($pigExt . '/ignored.ts', '// ts in pig dir ignored');
-        // Pi extensions should not be scanned because PHP cannot mix JS/TS
-        file_put_contents($piExt . '/copy.ts', '// ts');
-        file_put_contents($piExt . '/system-notify.ts', '// ts');
 
-        $labels = ExtensionDiscovery::discover($this->cwd);
-
-        $this->assertSame(['my-hook.php'], $labels);
+        $this->assertSame([], ExtensionDiscovery::discover([]));
+        $this->assertSame(['my-hook.php'], ExtensionDiscovery::discover([$pigExt . '/my-hook.php']));
+        $this->assertSame(['my-hook.php', 'pig-vless'], ExtensionDiscovery::discover([$pigExt . '/pig-vless/index.php', $pigExt . '/my-hook.php']));
     }
 
     public function testExtraPathsAreIncluded(): void
     {
-        $labels = ExtensionDiscovery::discover($this->cwd, ['/path/to/custom-hook.php']);
+        $labels = ExtensionDiscovery::discover(['/path/to/custom-hook.php']);
 
         $this->assertSame(['custom-hook.php'], $labels);
     }
@@ -90,7 +86,7 @@ final class ExtensionDiscoveryTest extends TestCase
         $mcp = \Pig\CodingAgent\Extensions\BuiltinExtensions::pathOf('mcp');
         $this->assertNotNull($mcp);
 
-        $labels = ExtensionDiscovery::discover($this->cwd, [$mcp, '/path/to/custom-hook.php']);
+        $labels = ExtensionDiscovery::discover([$mcp, '/path/to/custom-hook.php']);
 
         $this->assertSame(['custom-hook.php'], $labels);
     }

@@ -1086,9 +1086,11 @@ final class RpcModeTest extends TestCase
 
         // A session with no loadout has no context files and no skills; `SystemMessageTranscriptTest`
         // has the ones a loadout carries.
+        // `deploy.php` lies in the folder but this session loaded no extension, so none is named
+        // (upstream's `getExtensions().extensions`); `testEveryLoadedExtension…` has loaded ones.
         $builtinTools = PHP_OS_FAMILY === 'Windows' ? \Pig\CodingAgent\Tools\ToolSet::ALL : ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'];
         $this->assertSame(
-            ['context' => [], 'skills' => [], 'prompts' => ['/audit', '/review'], 'extensions' => ['deploy.php'], 'tools' => $this->session->activeTools(), 'builtinTools' => $builtinTools, 'loadedExtensions' => [], 'leftOutExtensions' => []],
+            ['context' => [], 'skills' => [], 'prompts' => ['/audit', '/review'], 'extensions' => [], 'tools' => $this->session->activeTools(), 'builtinTools' => $builtinTools, 'loadedExtensions' => [], 'leftOutExtensions' => []],
             $this->data(['type' => 'get_loaded_resources']),
         );
     }

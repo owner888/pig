@@ -773,7 +773,7 @@ final class RpcMode
             'skills' => array_map(static fn (Skill $skill): string => $skill->name, $this->session->skills()),
             'prompts' => $prompts,
             // Not the built-ins, which the terminal leaves out of [Extensions] too.
-            'extensions' => ExtensionDiscovery::discover($this->cwd, $this->extensionRunner?->paths() ?? []),
+            'extensions' => ExtensionDiscovery::discover($this->extensionRunner?->paths() ?? []),
             'tools' => $this->session->activeTools(),
             'builtinTools' => array_values(array_filter(
                 \Pig\CodingAgent\Tools\ToolSet::ALL,

@@ -37,6 +37,35 @@ final readonly class ResolvedPaths
         return new self($this->extensions, $this->skills, $this->prompts, $this->themes, $failures);
     }
 
+    /**
+     * Without the packages one of whose extensions is named — every resource they bring, their
+     * skills, prompts and themes with the extension. `pig web`'s custom session: an extension left
+     * unticked there is a package left out, so nothing of it reaches the conversation.
+     *
+     * @param list<string> $extensionNames as `ExtensionLoader::nameOf()` names them
+     */
+    public function withoutPackagesOf(array $extensionNames): self
+    {
+        $sources = [];
+
+        foreach ($this->extensions as $resource) {
+            if ($resource->metadata->origin === 'package' && in_array(\Pig\CodingAgent\Extensions\ExtensionLoader::nameOf($resource->path), $extensionNames, true)) {
+                $sources[$resource->metadata->source] = true;
+            }
+        }
+
+        if ($sources === []) {
+            return $this;
+        }
+
+        $keep = static fn (array $resources): array => array_values(array_filter(
+            $resources,
+            static fn (ResolvedResource $resource): bool => $resource->metadata->origin !== 'package' || !isset($sources[$resource->metadata->source]),
+        ));
+
+        return new self($keep($this->extensions), $keep($this->skills), $keep($this->prompts), $keep($this->themes), $this->installFailures);
+    }
+
     /** @return list<ResolvedResource> */
     public function of(string $type): array
     {

@@ -1451,7 +1451,7 @@ final class InteractiveMode
             $extraPaths[] = is_string($ext) ? $ext : $ext->path;
         }
 
-        return ExtensionDiscovery::discover($this->cwd, $extraPaths);
+        return ExtensionDiscovery::discover($extraPaths);
     }
 
     /**

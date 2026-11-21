@@ -897,7 +897,17 @@ if ($packageSources !== []) {
     }
 }
 
-$resolvePackages = static function (bool $trusted) use ($cwd, &$packageResources, $packageProgress, $temporaryResources): \Pig\CodingAgent\Packages\ResolvedPaths {
+// `pig web`'s custom session: the extensions its page left unticked, by name (`HttpServer`'s
+// `start_session`), not loaded — a built-in among them left out of the built-ins too, as `--no-mcp`
+// leaves out `mcp`. Read once and cleared, so a pig this one starts does not inherit it.
+$webDisabled = array_values(array_filter(explode(',', (string) getenv('PIG_WEB_DISABLED_EXTENSIONS')), static fn (string $name): bool => $name !== ''));
+$webDisabledBuiltins = array_values(array_filter(array_map(
+    static fn (string $name): string|false => array_search($name, \Pig\CodingAgent\Extensions\BuiltinExtensions::FOLDERS, true),
+    $webDisabled,
+)));
+putenv('PIG_WEB_DISABLED_EXTENSIONS');
+
+$resolvePackages = static function (bool $trusted) use ($cwd, &$packageResources, $packageProgress, $temporaryResources, $webDisabled): \Pig\CodingAgent\Packages\ResolvedPaths {
     if ($packageResources !== null) {
         return $packageResources;
     }
@@ -916,6 +926,9 @@ $resolvePackages = static function (bool $trusted) use ($cwd, &$packageResources
     foreach ($resolved->installFailures as $failure) {
         fwrite(STDERR, Style::yellow("Warning: {$failure->warning()}\n"));
     }
+
+    // A custom session's unticked extension takes its package's skills, prompts and themes with it.
+    $resolved = $resolved->withoutPackagesOf($webDisabled);
 
     // The temporary package's other resources ride along; its extensions went to the loader
     // as `$cliExtensionPaths`, so they are not listed twice.
@@ -970,15 +983,6 @@ $decideTrust = static function (array $loaded) use ($cwd, $askTrust, $settleTrus
     return $trusted;
 };
 
-// `pig web`'s custom session: the extensions its page left unticked, by name (`HttpServer`'s
-// `start_session`), not loaded — a built-in among them left out of the built-ins too, as `--no-mcp`
-// leaves out `mcp`. Read once and cleared, so a pig this one starts does not inherit it.
-$webDisabled = array_values(array_filter(explode(',', (string) getenv('PIG_WEB_DISABLED_EXTENSIONS')), static fn (string $name): bool => $name !== ''));
-$webDisabledBuiltins = array_values(array_filter(array_map(
-    static fn (string $name): string|false => array_search($name, \Pig\CodingAgent\Extensions\BuiltinExtensions::FOLDERS, true),
-    $webDisabled,
-)));
-putenv('PIG_WEB_DISABLED_EXTENSIONS');
 
 // On first run on a fresh machine, ensure bundled extensions are populated into
 // ~/.pig/agent/extensions so they are available out of the box.
