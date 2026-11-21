@@ -52,6 +52,12 @@ final class Http2Server
 
     private string $input = '';
 
+    /** What `send()` could not write yet, written as the client reads (`$writer`). */
+    private string $pending = '';
+
+    /** The watcher that writes `$pending`, while there is any. */
+    private ?string $writer = null;
+
     private bool $prefaceSeen = false;
 
     private readonly HpackDecoder $decoder;
@@ -83,6 +89,8 @@ final class Http2Server
 
         $this->open = [];
         $this->peer = null;
+        $this->pending = '';
+        $this->writer = null;
     }
 
     /**
@@ -128,7 +136,13 @@ final class Http2Server
     /** @param resource $connection */
     private function begin(mixed $connection): void
     {
+        if ($this->writer !== null) {
+            Loop::get()->cancel($this->writer);
+            $this->writer = null;
+        }
+
         $this->peer = $connection;
+        $this->pending = '';
         $this->input = '';
         $this->prefaceSeen = false;
         $this->connections++;
@@ -143,15 +157,55 @@ final class Http2Server
             return;
         }
 
-        // Small by design: the test server's replies are a few frames.
-        stream_set_blocking($this->peer, true);
-        fwrite($this->peer, $bytes);
-        stream_set_blocking($this->peer, false);
+        // Never a blocking write: the client reads on this same loop, so a write larger than the
+        // socket buffers (a download's 600 KB; macOS's loopback buffers are far smaller than
+        // Linux's) would wait for a read that cannot happen. What does not fit waits for the client.
+        $this->pending .= $bytes;
+        $this->flush();
+    }
+
+    private function flush(): void
+    {
+        while ($this->pending !== '' && is_resource($this->peer)) {
+            $written = fwrite($this->peer, $this->pending);
+
+            if ($written === false || $written === 0) {
+                break;
+            }
+
+            $this->pending = substr($this->pending, $written);
+        }
+
+        if ($this->pending === '' || !is_resource($this->peer)) {
+            if ($this->writer !== null) {
+                Loop::get()->cancel($this->writer);
+                $this->writer = null;
+            }
+
+            return;
+        }
+
+        if ($this->writer === null) {
+            $this->writer = Loop::get()->onWritable($this->peer, fn () => $this->flush());
+            $this->watchers[] = $this->writer;
+        }
     }
 
     /** Hang up on the client. */
     public function hangUp(): void
     {
+        // What was sent before hanging up arrives first, as it would from a real server.
+        if ($this->pending !== '' && is_resource($this->peer)) {
+            stream_set_blocking($this->peer, true);
+            fwrite($this->peer, $this->pending);
+            $this->pending = '';
+        }
+
+        if ($this->writer !== null) {
+            Loop::get()->cancel($this->writer);
+            $this->writer = null;
+        }
+
         if ($this->peerWatcher !== null) {
             Loop::get()->cancel($this->peerWatcher);
             $this->peerWatcher = null;

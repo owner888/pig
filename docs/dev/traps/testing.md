@@ -1183,3 +1183,21 @@ connection was on every later server's.
 
 **Rule**: a test server that sets options on its connections is made with a context of its own
 (`stream_context_create()`), as `Http2Server` and `KeepAliveServer` are.
+
+## `Http2Server` wrote a 600 KB download with a blocking write on the client's own loop
+
+**Symptom**: `Http2ConnectionTest::testADownloadIsGivenAWiderWindowOnceItHasUsedTheFirst` failed on
+macOS with `Socket timed out after 5.0s`, and passed every time on Linux.
+
+**Cause**: `Http2Server::send()` switched the socket to blocking and wrote whatever it was handed.
+The server runs on the same loop as the client, so a write larger than the loopback buffers waits
+for a read that cannot happen until it returns. Linux's buffers take 600 KB; macOS's do not.
+
+**Rule**: a test server never blocks on a write. `send()` writes what fits and queues the rest for
+an `onWritable` watcher; a test with a small `SO_SNDBUF` on the server hangs the old one and
+passes the new.
+
+```php
+$this->pending .= $bytes;
+$this->flush(); // fwrite() what fits, then Loop::onWritable() for the rest
+```
