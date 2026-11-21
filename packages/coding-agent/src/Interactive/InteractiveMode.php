@@ -3243,7 +3243,7 @@ final class InteractiveMode
         try {
             $written = $target !== null && str_ends_with($target, '.jsonl')
                 ? JsonlExport::write($store, $target, $this->cwd)
-                : HtmlExport::write($store, $target ?? HtmlExport::defaultPath($store, $this->cwd));
+                : HtmlExport::write($store, $target ?? HtmlExport::defaultPath($store, $this->cwd), systemPrompt: $this->session->systemPrompt());
         } catch (Throwable $error) {
             $this->sayError('Failed to export session: ' . $error->getMessage());
 
@@ -3413,7 +3413,7 @@ final class InteractiveMode
             }
 
             try {
-                $html = HtmlExport::render($messages, $store->cwd);
+                $html = HtmlExport::render($messages, $store->cwd, systemPrompt: $this->session->systemPrompt());
             } catch (Throwable $error) {
                 $this->sayError('Failed to export session: ' . $error->getMessage());
 

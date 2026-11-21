@@ -1480,6 +1480,7 @@ final class RpcMode
         return ['path' => HtmlExport::write(
             $store,
             $path === '' ? HtmlExport::defaultPath($store, $this->cwd) : $path,
+            systemPrompt: $this->session->systemPrompt(),
         )];
     }
 

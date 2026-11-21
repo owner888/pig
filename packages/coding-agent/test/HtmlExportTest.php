@@ -218,6 +218,75 @@ final class HtmlExportTest extends TestCase
         $this->assertStringContainsString('exited 7', $html);
     }
 
+    // ---- the system prompt, as upstream's export shows it ------------------------------------
+
+    public function testTheLeadingSystemMessageIsTheSystemPromptWithItsTools(): void
+    {
+        $tool = new \Pig\Ai\Tool('read', 'Read a file', ['type' => 'object', 'properties' => [
+            'path' => ['type' => 'string', 'description' => 'Where it is'],
+            'limit' => ['type' => 'integer'],
+        ], 'required' => ['path']]);
+        $html = $this->html([
+            new \Pig\Ai\SystemMessage('You are a coding assistant.', ['rules' => '<rules>be <brief></rules>', 'gone' => null], [$tool]),
+            new UserMessage('hello'),
+        ]);
+
+        // Upstream's `getSystemMessageText()`: the content, then each section that is there.
+        $this->assertStringContainsString('System Prompt', $html);
+        $this->assertStringContainsString("You are a coding assistant.\n\n&lt;rules&gt;be &lt;brief&gt;&lt;/rules&gt;", $html);
+        $this->assertStringNotContainsString('System Prompt Update', $html);
+        $this->assertStringContainsString('Available Tools', $html);
+        $this->assertStringContainsString('<code>read</code>', $html);
+        $this->assertStringContainsString('Read a file', $html);
+        $this->assertMatchesRegularExpression('/path.*string.*required.*Where it is/s', $html);
+        $this->assertMatchesRegularExpression('/limit.*integer.*optional/s', $html);
+        // Before the conversation, as it was sent.
+        $main = substr($html, (int) strpos($html, '<main>'));
+        $this->assertLessThan(strpos($main, 'hello'), strpos($main, 'System Prompt'));
+    }
+
+    public function testALaterSystemMessageIsAnUpdateThatSaysWhatItChanged(): void
+    {
+        $html = $this->html([
+            new \Pig\Ai\SystemMessage('base'),
+            new UserMessage('hello'),
+            new \Pig\Ai\SystemMessage(
+                'Be terse now.',
+                ['project_context' => 'new context', 'rules' => null],
+                [new \Pig\Ai\Tool('bash', 'Run a command', ['type' => 'object', 'properties' => []])],
+                [new \Pig\Ai\ToolReference('grep')],
+            ),
+        ]);
+
+        // Upstream's `describeSystemUpdate()` and `renderSystemMessageUpdate()`.
+        $this->assertStringContainsString('System Prompt Update: instructions, project_context, -rules, tools +bash -grep', $html);
+        $this->assertStringContainsString('Updated system prompt section &quot;project_context&quot;:', $html);
+        $this->assertStringContainsString('Removed system prompt section &quot;rules&quot;.', $html);
+        $this->assertStringContainsString('Tools Added', $html);
+        $this->assertStringContainsString('Tools Removed', $html);
+        $this->assertStringContainsString('<code>grep</code>', $html);
+    }
+
+    public function testAfterACompactionThatCarriesThePromptASystemMessageIsAnUpdate(): void
+    {
+        $compaction = new CompactionEntry('earlier', [], [], 0, replaced: 3, systemMessage: new \Pig\Ai\SystemMessage('base'));
+        $html = $this->html([$compaction, new \Pig\Ai\SystemMessage('Be terse now.')]);
+
+        $this->assertStringContainsString('System Prompt Update: instructions', $html);
+    }
+
+    public function testASessionWithNoSystemMessageShowsThePromptItWasExportedWith(): void
+    {
+        $old = HtmlExport::render([new UserMessage('hello')], '/p', null, 'The prompt now.');
+        $this->assertStringContainsString('System Prompt', $old);
+        $this->assertStringContainsString('The prompt now.', $old);
+
+        // One that has them shows them where they are, and not the one it was exported with.
+        $new = HtmlExport::render([new \Pig\Ai\SystemMessage('The prompt then.'), new UserMessage('hello')], '/p', null, 'The prompt now.');
+        $this->assertStringContainsString('The prompt then.', $new);
+        $this->assertStringNotContainsString('The prompt now.', $new);
+    }
+
     public function testACompactionSaysHowMuchItReplaced(): void
     {
         $html = $this->html([new CompactionEntry('we talked about things', [], [], 0, replaced: 42)]);

@@ -8,11 +8,14 @@ use Pig\Agent\AgentError;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\ImageContent;
 use Pig\Ai\StopReason;
+use Pig\Ai\SystemMessage;
 use Pig\Ai\TextContent;
+use Pig\Ai\Tool;
 use Pig\Ai\ThinkingContent;
 use Pig\Ai\ToolCall;
 use Pig\Ai\ToolResultMessage;
 use Pig\Ai\UserMessage;
+use Pig\Ai\Utils\Text;
 use Pig\Ai\Utils\Utf8;
 use Pig\CodingAgent\Session\BashExecutionMessage;
 use Pig\CodingAgent\Session\BranchSummaryEntry;
@@ -51,7 +54,7 @@ final class HtmlExport
      *
      * @throws AgentError when there is nothing to export, or it cannot be written
      */
-    public static function write(SessionManager $session, string $path, ?string $theme = null): string
+    public static function write(SessionManager $session, string $path, ?string $theme = null, ?string $systemPrompt = null): string
     {
         $messages = $session->messages();
 
@@ -59,7 +62,7 @@ final class HtmlExport
             throw new AgentError('Nothing to export yet — say something first.');
         }
 
-        $html = self::render($messages, $session->cwd, $theme);
+        $html = self::render($messages, $session->cwd, $theme, $systemPrompt);
 
         if (file_put_contents($path, $html) === false) {
             throw new AgentError("Could not write {$path}");
@@ -113,15 +116,35 @@ final class HtmlExport
      * @param list<mixed> $messages
      * @param string|null $theme the theme whose colours the page takes; null for the current one, as upstream's
      *        `getResolvedThemeColors()` takes it
+     * @param string|null $systemPrompt the exporting session's prompt, shown only when the messages carry
+     *        no system message — upstream's "older sessions have none, so fall back to the exporting
+     *        agent's current state". Upstream lists that agent's tools too; nothing hands this its tool
+     *        definitions, so a session that old shows the prompt alone. `fromFile()` has no session to ask.
      */
-    public static function render(array $messages, string $cwd, ?string $theme = null): string
+    public static function render(array $messages, string $cwd, ?string $theme = null, ?string $systemPrompt = null): string
     {
         $title = 'pig — ' . self::opening($messages);
         $body = '';
         $calls = [];
+        // Upstream's `isLeadingSystemEntry()`: the first message that carries the system state starts
+        // the prompt, and every later one patches it. A compaction that kept the prompt carries it.
+        $carried = false;
+        $hasSystem = false;
 
         foreach ($messages as $message) {
+            if ($message instanceof SystemMessage) {
+                $body .= self::system($message, !$carried);
+                $carried = $hasSystem = true;
+
+                continue;
+            }
+
             $body .= self::message($message, $calls);
+            $carried = $carried || ($message instanceof CompactionEntry && $message->systemMessage !== null);
+        }
+
+        if (!$hasSystem && $systemPrompt !== null && $systemPrompt !== '') {
+            $body = "<section class=\"turn system\">\n" . self::prompt('System Prompt', $systemPrompt) . "</section>\n" . $body;
         }
 
         return '<!DOCTYPE html>' . "\n"
@@ -177,6 +200,102 @@ final class HtmlExport
             $message instanceof CustomMessage => self::hook($message),
             default => '',
         };
+    }
+
+    /**
+     * A system message as upstream's export shows it: the leading one as "System Prompt" and the
+     * tools it declares, a later one as "System Prompt Update" with what it changed.
+     */
+    private static function system(SystemMessage $message, bool $leading): string
+    {
+        if ($leading) {
+            $text = Text::getSystemMessageText($message);
+            $html = ($text !== '' ? self::prompt('System Prompt', $text) : '')
+                . self::tools('Available Tools', $message->toolsAdded ?? []);
+        } else {
+            $text = Text::renderSystemMessageUpdate($message);
+            $changes = self::describeSystemUpdate($message);
+            $html = ($text !== '' ? self::prompt('System Prompt Update' . ($changes !== '' ? ": {$changes}" : ''), $text) : '')
+                . self::tools('Tools Added', $message->toolsAdded ?? [])
+                . self::removedTools($message->toolsRemoved ?? []);
+        }
+
+        return $html === '' ? '' : "<section class=\"turn system\">\n{$html}</section>\n";
+    }
+
+    /** Upstream's `describeSystemUpdate()`: "instructions, project_context, -rules, tools +bash -grep". */
+    private static function describeSystemUpdate(SystemMessage $message): string
+    {
+        $parts = Text::contentText($message->content) !== '' ? ['instructions'] : [];
+
+        foreach ($message->sections ?? [] as $name => $value) {
+            $parts[] = $value === null ? "-{$name}" : (string) $name;
+        }
+
+        $tools = [
+            ...array_map(static fn (Tool $tool): string => "+{$tool->name}", $message->toolsAdded ?? []),
+            ...array_map(static fn (\Pig\Ai\ToolReference $tool): string => "-{$tool->name}", $message->toolsRemoved ?? []),
+        ];
+
+        if ($tools !== []) {
+            $parts[] = 'tools ' . implode(' ', $tools);
+        }
+
+        return implode(', ', $parts);
+    }
+
+    /** The prompt's text as it was sent, folded when long — upstream's `renderSystemPromptBlock()`. */
+    private static function prompt(string $title, string $text): string
+    {
+        return self::folded(MarkdownHtml::escape($title), '<pre class="prompt">' . MarkdownHtml::escape($text) . "</pre>\n", 'system-prompt');
+    }
+
+    /**
+     * Each tool with its description, and its parameters with their type and whether they are
+     * required — upstream's `renderToolsList()`.
+     *
+     * @param list<Tool> $tools
+     */
+    private static function tools(string $title, array $tools): string
+    {
+        if ($tools === []) {
+            return '';
+        }
+
+        $items = '';
+
+        foreach ($tools as $tool) {
+            $properties = is_array($tool->parameters['properties'] ?? null) ? $tool->parameters['properties'] : [];
+            $required = is_array($tool->parameters['required'] ?? null) ? $tool->parameters['required'] : [];
+            $parameters = '';
+
+            foreach ($properties as $name => $property) {
+                $name = (string) $name;
+                $type = is_array($property) ? ($property['type'] ?? 'any') : 'any';
+                $type = is_array($type) ? implode(',', $type) : (string) $type;
+                $description = is_array($property) && is_string($property['description'] ?? null) ? $property['description'] : '';
+                $parameters .= '<li><code>' . MarkdownHtml::escape($name) . '</code> <span class="where">' . MarkdownHtml::escape($type)
+                    . ' · ' . (in_array($name, $required, true) ? 'required' : 'optional') . '</span>'
+                    . ($description !== '' ? ' — ' . MarkdownHtml::escape($description) : '') . "</li>\n";
+            }
+
+            $items .= '<li><code>' . MarkdownHtml::escape($tool->name) . '</code> — ' . MarkdownHtml::escape($tool->description)
+                . ($parameters !== '' ? "\n<ul>\n{$parameters}</ul>\n" : '') . "</li>\n";
+        }
+
+        return self::folded(MarkdownHtml::escape($title) . ' (' . count($tools) . ')', "<ul>\n{$items}</ul>\n", 'tools');
+    }
+
+    /** @param list<\Pig\Ai\ToolReference> $tools */
+    private static function removedTools(array $tools): string
+    {
+        if ($tools === []) {
+            return '';
+        }
+
+        $items = implode('', array_map(static fn (\Pig\Ai\ToolReference $tool): string => '<li><code>' . MarkdownHtml::escape($tool->name) . "</code></li>\n", $tools));
+
+        return self::folded('Tools Removed (' . count($tools) . ')', "<ul>\n{$items}</ul>\n", 'tools');
     }
 
     private static function user(UserMessage $message): string
@@ -431,6 +550,8 @@ final class HtmlExport
         .turn { padding: .75rem 1rem; border-radius: 8px; margin: 1rem 0; background: var(--card); }
         .turn.user { background: var(--user); }
         .turn.compaction { background: transparent; border: 1px dashed var(--line); }
+        .turn.system { background: transparent; border: 1px solid var(--line); }
+        pre.prompt { white-space: pre-wrap; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
         .turn h2 { font-size: .75rem; text-transform: uppercase; letter-spacing: .08em;
           color: var(--dim); margin: 0 0 .5rem; font-weight: 600; }
         p { margin: .6rem 0; }
