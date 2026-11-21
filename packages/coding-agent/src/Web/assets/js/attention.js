@@ -8,6 +8,10 @@
  * person said yes — a system notification, which a click brings the conversation back from. Over
  * `http://` on a LAN address `Notification` does not exist at all, so it is simply not offered.
  *
+ * The notification goes through the service worker (`sw.js`), never the `Notification` constructor:
+ * Android Chrome throws on it, so a phone with permission granted, over https, showed nothing.
+ * `renotify`, because Android replaces a notification with the same tag without a sound otherwise.
+ *
  * What sets it off is an extension's `$ctx->ui->systemNotify()` (`examples/extensions/
  * system-notify.php` on a turn settling): the page decides only how to say it.
  */
@@ -17,7 +21,17 @@ let unseen = 0;
 let audio = null;
 let icon = null;       // { link, plain, dotted }
 
-const canNotify = () => window.isSecureContext && "Notification" in window;
+let worker = null;      // the registration of `sw.js`, a Promise
+const opens = new Map(); // notification id → what a click on it opens
+let lastId = 0;
+
+const canNotify = () => window.isSecureContext && "Notification" in window && "serviceWorker" in navigator;
+
+/** `sw.js`, registered once. Not `navigator.serviceWorker.ready`: that waits for one controlling this page, and `sw.js` controls none. */
+function register() {
+  worker ??= navigator.serviceWorker.register("/assets/js/sw.js");
+  return worker;
+}
 
 /** Whether the person is looking at something other than this page. */
 export const away = () => document.hidden || !document.hasFocus();
@@ -44,10 +58,11 @@ export function notifyAway({ title, body, onOpen }) {
   dot(true);
   chime();
   if (canNotify() && Notification.permission === "granted") {
-    try {
-      const n = new Notification(title, { body, tag: title, icon: "/favicon.svg" });
-      n.onclick = () => { window.focus(); onOpen?.(); n.close(); };
-    } catch {}
+    const id = ++lastId;
+    if (onOpen) opens.set(id, onOpen);
+    register()
+      .then((reg) => reg.showNotification(title, { body, tag: title, renotify: true, icon: "/favicon.svg", data: { id } }))
+      .catch((e) => console.error("pig: the notification was not shown", e));
   }
 }
 
@@ -88,6 +103,16 @@ async function dot(on) {
     }
     icon.link.href = on && unseen > 0 ? icon.dotted : icon.plain;
   } catch {}
+}
+
+if (canNotify()) {
+  register().catch((e) => console.error("pig: the service worker for notifications was not registered", e));
+  navigator.serviceWorker.addEventListener("message", (e) => {
+    if (e.data?.type !== "notificationclick") return;
+    opens.get(e.data.id)?.();
+    opens.delete(e.data.id);
+  });
+  navigator.serviceWorker.startMessages();
 }
 
 window.addEventListener("focus", clear);

@@ -45,6 +45,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Fixed
+
+- Fixed `pig web` showing no system notification on Android Chrome, over https and with permission granted: Android has no `Notification` constructor for a page and threw, which the page swallowed. Notifications now go through a service worker (`assets/js/sw.js`, which controls no page and caches nothing) with `showNotification()`, and a click still opens the conversation that sent it. A notification with the same title now sounds again on Android (`renotify`) instead of replacing the last one silently.
+
 ## [2.0.19] - 2026-11-21
 
 ### Added

@@ -435,3 +435,20 @@ Regression tests: `WebsocketProtocolTest::testPermessageDeflateNegotiatesAndComp
 `RpcModeTest::testHistoryRefsStripOpaqueProviderSignatures`,
 `WebMessageBlocksTest::testUnreachableRetriesDoNotMultiplyAndClosingATabDetachesIt`.
 
+## Android Chrome showed no notification, over https, with permission granted
+
+**Symptom**: `pig web` on a phone over https (Tailscale): the permission prompt came and was
+accepted, the title gained `(n) ✓`, but no system notification ever appeared. Desktop Chrome
+showed them.
+
+**Cause**: `attention.js` called the `Notification` constructor. Android Chrome has no such constructor for
+a page — it throws `TypeError: Illegal constructor` — and the surrounding `catch {}` swallowed it.
+
+**Rule**: the page shows a notification only through its service worker:
+`navigator.serviceWorker.register("/assets/js/sw.js")`, then `registration.showNotification()`.
+Never `navigator.serviceWorker.ready`: `sw.js`'s scope is `/assets/js/`, it controls no page, and
+`ready` would never resolve. A click is `sw.js`'s `notificationclick`: it focuses the pig tab
+looked at last and posts the notification's id to every pig tab, and the one that sent it opens its
+conversation. `renotify: true`, or Android replaces a notification with the same tag silently.
+
+Regression test: `WebNotificationTest::testNotificationsGoThroughTheServiceWorker`.
