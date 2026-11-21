@@ -150,6 +150,7 @@ final class RpcModeTest extends TestCase
         array $modelScope = [],
         bool $images = false,
         ?\Pig\CodingAgent\Auth $auth = null,
+        array $leftOutExtensions = [],
     ): void {
         $this->answers = $answers;
         [$this->in, $this->peer] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, 0);
@@ -208,6 +209,7 @@ final class RpcModeTest extends TestCase
             auth: $auth,
             in: $this->in,
             out: $this->out,
+            leftOutExtensions: $leftOutExtensions,
         );
 
         $this->mode->start();
@@ -1086,7 +1088,7 @@ final class RpcModeTest extends TestCase
         // has the ones a loadout carries.
         $builtinTools = PHP_OS_FAMILY === 'Windows' ? \Pig\CodingAgent\Tools\ToolSet::ALL : ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'];
         $this->assertSame(
-            ['context' => [], 'skills' => [], 'prompts' => ['/audit', '/review'], 'extensions' => ['deploy.php'], 'tools' => $this->session->activeTools(), 'builtinTools' => $builtinTools, 'loadedExtensions' => []],
+            ['context' => [], 'skills' => [], 'prompts' => ['/audit', '/review'], 'extensions' => ['deploy.php'], 'tools' => $this->session->activeTools(), 'builtinTools' => $builtinTools, 'loadedExtensions' => [], 'leftOutExtensions' => []],
             $this->data(['type' => 'get_loaded_resources']),
         );
     }
@@ -1122,6 +1124,20 @@ final class RpcModeTest extends TestCase
         $this->assertSame(
             [['name' => 'deploy', 'builtin' => null], ['name' => 'pig-mcp', 'builtin' => 'mcp']],
             $this->data(['type' => 'get_loaded_resources'])['loadedExtensions'],
+        );
+    }
+
+    /**
+     * A custom session's dialog opened again starts at the default: what this one left out is
+     * offered too, so it can be ticked back on, a built-in by its `builtin:` name as well.
+     */
+    public function testWhatACustomSessionLeftOutIsOfferedAgain(): void
+    {
+        $this->start(leftOutExtensions: ['pig-vless', 'pig-mcp']);
+
+        $this->assertSame(
+            [['name' => 'pig-vless', 'builtin' => null], ['name' => 'pig-mcp', 'builtin' => 'mcp']],
+            $this->data(['type' => 'get_loaded_resources'])['leftOutExtensions'],
         );
     }
 

@@ -1384,7 +1384,7 @@ Timings::printTimings();
 $exit = 0;
 
 if ($mode === 'rpc') {
-    $running = new RpcMode($session, $cwd, $extensionRunner, $customTools, $settings, $auth, createRuntime: $createRuntime);
+    $running = new RpcMode($session, $cwd, $extensionRunner, $customTools, $settings, $auth, createRuntime: $createRuntime, leftOutExtensions: $webDisabled);
 
     // One fiber around the whole program: the prompt suspends on a socket, the terminal
     // wakes on a keystroke, and both need the same loop underneath them.

@@ -1882,9 +1882,10 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
 
     /**
      * "New custom session": private or not, which built-in tools are on, and which extensions load.
-     * The extensions offered are the ones the active conversation loaded (`get_loaded_resources`),
-     * all ticked, since those are what a new one in its folder loads; a ticked one has every tool it
-     * brings on (`HttpServer::customSession()`).
+     * The extensions offered are the ones the active conversation loaded (`get_loaded_resources`)
+     * and the ones a custom conversation left out, all ticked, since those are what a new one in its
+     * folder loads; a ticked one has every tool it brings on (`HttpServer::customSession()`). Built
+     * afresh every time: nothing ticked or unticked last time carries over.
      */
     async function openCustomSessionDialog() {
       let resources = null;
@@ -1899,7 +1900,10 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       const check = (group, value, label, checked, hint = "") =>
         `<label style="display:flex; align-items:center; gap:6px; font-size:var(--text-base);"><input type="checkbox" data-group="${group}" value="${escapeHtml(value)}"${checked ? " checked" : ""}> ${escapeHtml(label)}${hint ? ` <span style="color:var(--color-dim); font-size:var(--text-sm);">${escapeHtml(hint)}</span>` : ""}</label>`;
       const tools = resources?.builtinTools || [];
-      const extensions = resources?.loadedExtensions || [];
+      // Every dialog starts at the default: what the conversation loaded and what a custom one it
+      // was opened from left out (`leftOutExtensions`), all ticked.
+      const extensions = [...(resources?.loadedExtensions || []), ...(resources?.leftOutExtensions || [])]
+        .filter((ext, index, all) => all.findIndex((other) => other.name === ext.name) === index);
       const choices = resources ? `
             <div class="modal-section">${escapeHtml(t("custom_session_tools"))}</div>
             <div style="display:flex; flex-wrap:wrap; gap:8px 16px;">${tools.map((tool) => check("tool", tool, tool, CUSTOM_SESSION_TOOLS.includes(tool))).join("")}</div>

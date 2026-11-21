@@ -114,6 +114,24 @@ final class ToolExposureTest extends TestCase
         );
     }
 
+    public function testThePromptListsOnlyTheToolsTheRequestDeclares(): void
+    {
+        // Upstream: "the tool list and rules must match the declarations the request carries" —
+        // a tool `prepareLoadout` hides is active but in neither, its snippet and guideline too.
+        $shown = new ToolDefinition('shown', 'shown', 'Shown.', ['type' => 'object', 'properties' => []], static fn () => new AgentToolResult([]), promptSnippet: 'The shown tool', promptGuidelines: ['Use shown first']);
+        $kept = new ToolDefinition('kept', 'kept', 'Kept.', ['type' => 'object', 'properties' => []], static fn () => new AgentToolResult([]), promptSnippet: 'The kept tool', promptGuidelines: ['Use kept'], prepareLoadout: static fn (): array => ['hiddenDeclarations' => ['shown', 'read']]);
+        [$session, $loadout] = $this->session([$shown, $kept]);
+
+        $this->assertSame(['read', 'shown', 'kept'], $session->activeTools());
+        $this->assertSame(['kept'], self::names($session->agent->tools()));
+        $prompt = $loadout->systemPrompt();
+        $this->assertStringContainsString("Available tools:\n- kept: The kept tool\n\nAdditional tools may be available.", $prompt);
+        $this->assertStringNotContainsString('- shown:', $prompt);
+        $this->assertStringNotContainsString('- read:', $prompt);
+        $this->assertStringContainsString('Use kept', $prompt);
+        $this->assertStringNotContainsString('Use shown first', $prompt);
+    }
+
     public function testARunsNamedToolIsActivatedEvenWhenDeferredButNotWhenHidden(): void
     {
         [$session] = $this->session([self::tool('later', 'deferred'), self::tool('gone', 'hidden')], static fn (string $name): bool => in_array($name, ['later', 'gone'], true));

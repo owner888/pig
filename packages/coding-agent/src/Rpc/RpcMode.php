@@ -102,6 +102,8 @@ final class RpcMode
      * @param (Closure(string, \Pig\CodingAgent\Session\SessionManager, ?Closure): \Pig\CodingAgent\StartedSession)|null $createRuntime
      *        upstream's runtime factory: a session for another working directory, for
      *        `switch_session` to a conversation from another project (`AgentSession::switchTo()`)
+     * @param list<string> $leftOutExtensions the extensions a `pig web` custom session left out, by
+     *        the names its dialog sent (`PIG_WEB_DISABLED_EXTENSIONS`)
      */
     public function __construct(
         private AgentSession $session,
@@ -114,6 +116,7 @@ final class RpcMode
         $out = null,
         $err = null,
         private readonly ?Closure $createRuntime = null,
+        private readonly array $leftOutExtensions = [],
     ) {
         $this->in = $in ?? STDIN;
         $this->out = $out ?? STDOUT;
@@ -743,9 +746,11 @@ final class RpcMode
      * built-in tools this machine can run (`powershell` only on Windows), and `loadedExtensions`,
      * every extension this conversation loaded by the name the loader knows it by — the built-ins
      * among them, each with its `builtin:` name — which is the name the dialog sends back for one
-     * to leave out.
+     * to leave out. And `leftOutExtensions`, the ones a custom session's dialog left unticked
+     * (`PIG_WEB_DISABLED_EXTENSIONS`), so a dialog opened from it offers them again, ticked as
+     * every dialog starts: the default, whatever the conversation it was opened from left out.
      *
-     * @return array{context: list<array{name: string, path: string}>, skills: list<string>, prompts: list<string>, extensions: list<string>, tools: list<string>, builtinTools: list<string>, loadedExtensions: list<array{name: string, builtin: ?string}>}
+     * @return array{context: list<array{name: string, path: string}>, skills: list<string>, prompts: list<string>, extensions: list<string>, tools: list<string>, builtinTools: list<string>, loadedExtensions: list<array{name: string, builtin: ?string}>, leftOutExtensions: list<array{name: string, builtin: ?string}>}
      */
     private function loadedResources(): array
     {
@@ -780,6 +785,13 @@ final class RpcMode
                     'builtin' => \Pig\CodingAgent\Extensions\BuiltinExtensions::nameOf($path),
                 ],
                 $this->extensionRunner?->paths() ?? [],
+            ),
+            'leftOutExtensions' => array_map(
+                static fn (string $name): array => [
+                    'name' => $name,
+                    'builtin' => ($builtin = array_search($name, \Pig\CodingAgent\Extensions\BuiltinExtensions::FOLDERS, true)) !== false ? (string) $builtin : null,
+                ],
+                $this->leftOutExtensions,
             ),
         ];
     }

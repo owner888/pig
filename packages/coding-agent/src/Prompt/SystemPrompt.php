@@ -229,7 +229,10 @@ final class SystemPrompt
             $lines[] = "- {$name}: {$snippet}";
         }
 
-        $list = implode("\n", $lines);
+        // Upstream's `buildSystemPromptSections()`: the declared tools with something to say,
+        // "(none)" without one, and a line saying the list is not all there is — a tool with no
+        // snippet is still declared, and one behind `tool_search` or `codemode` is still callable.
+        $list = ($lines !== [] ? implode("\n", $lines) : '(none)') . "\n\nAdditional tools may be available.";
 
         // A guideline said twice is noise; the built-ins' come first because they are read first.
         $all = [];

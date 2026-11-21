@@ -98,6 +98,15 @@ final class SystemPromptTest extends ToolTestCase
         $this->assertStringNotContainsString('- bash: ', $prompt);
     }
 
+    public function testTheListSaysItIsNotEveryToolAsUpstreamsDoes(): void
+    {
+        // Upstream's `buildSystemPromptSections()`: a tool without a snippet is declared all the
+        // same, and one behind `tool_search` or `codemode` is callable, so the list says so.
+        $this->assertStringContainsString("- write: ", $this->prompt());
+        $this->assertStringContainsString("\n\nAdditional tools may be available.\n", $this->prompt());
+        $this->assertStringContainsString("Available tools:\n(none)\n\nAdditional tools may be available.", $this->prompt([]));
+    }
+
     public function testGuidelinesFollowFromTheToolsAndNotFromAFixedList(): void
     {
         $full = $this->prompt(ToolSet::CODING);

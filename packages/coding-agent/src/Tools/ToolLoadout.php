@@ -313,10 +313,13 @@ final class ToolLoadout
         $this->registered = $this->names();
         $this->activatedOnRegistration = array_values(array_filter($this->registered, $this->isActivatedOnRefresh(...)));
 
-        [$snippets, $guidelines] = $this->customTools->promptContributions($active);
+        // Upstream's `declaredTools`: "the tool list and rules must match the declarations the
+        // request carries", so a tool `prepareLoadout` hid (codemode's) is in neither.
+        $declaredActive = array_values(array_intersect($active, $declaredNames));
+        [$snippets, $guidelines] = $this->customTools->promptContributions($declaredActive);
         $this->sections = SystemPrompt::sections(
             $this->cwd,
-            $builtIn,
+            array_values(array_intersect($builtIn, $declaredNames)),
             SystemPrompt::resolve($this->systemPrompt),
             SystemPrompt::resolve($this->appendSystemPrompt),
             $this->contextFiles,
