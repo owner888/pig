@@ -16,6 +16,7 @@ use Pig\Ai\ClassifierResult;
 use Pig\Ai\ClassifierScoreAnswer;
 use Pig\Ai\ClassifierScoreQuestion;
 use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\HttpTransport;
 use Pig\Ai\ProviderError;
 use Pig\Ai\StopReason;
 use Pig\Ai\Timestamp;
@@ -51,7 +52,7 @@ final class OpenAiDecisions
      */
     private const array NO_RETRY_STATUSES = [504];
 
-    public function __construct(private readonly HttpClient $http = new HttpClient())
+    public function __construct(private readonly HttpTransport $http = new HttpClient())
     {
     }
 

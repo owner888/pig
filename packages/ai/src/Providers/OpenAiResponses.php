@@ -8,6 +8,7 @@ use Pig\Ai\ClientIdentity;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
 use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\HttpTransport;
 use Pig\Ai\Http\Response;
 use Pig\Ai\Http\Request;
 use Pig\Ai\Http\SseParser;
@@ -64,7 +65,7 @@ final class OpenAiResponses
 
     private const string CHATGPT_WORKSPACE_LIMIT_HINT = "You've reached your ChatGPT workspace's usage limit. Ask your workspace admin to increase it at admin.openai.com → Workspace → Usage limits.";
 
-    public function __construct(private readonly HttpClient $http = new HttpClient())
+    public function __construct(private readonly HttpTransport $http = new HttpClient())
     {
     }
 

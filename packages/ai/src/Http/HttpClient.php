@@ -24,7 +24,7 @@ use Throwable;
  * once a response has been read to its end the connection waits in `Http1Pool` (a few seconds, or
  * as long as the server said) for the next request to that origin.
  */
-final class HttpClient
+final class HttpClient implements HttpTransport
 {
     /** What a TLS connection offers, in order of preference. */
     private const array ALPN = ['h2', 'http/1.1'];

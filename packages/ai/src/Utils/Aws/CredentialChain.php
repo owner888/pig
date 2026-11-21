@@ -6,6 +6,7 @@ namespace Pig\Ai\Utils\Aws;
 
 use Closure;
 use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\HttpTransport;
 use Pig\Ai\Http\Request;
 use Pig\Async\AbortError;
 use Pig\Async\AbortSignal;
@@ -80,7 +81,7 @@ final class CredentialChain
     public function __construct(
         private readonly ?string $profile,
         private readonly ?string $region,
-        private readonly HttpClient $http = new HttpClient(),
+        private readonly HttpTransport $http = new HttpClient(),
         private readonly ?AbortSignal $signal = null,
         private readonly ?Closure $now = null,
         private readonly int $maxAttempts = 3,

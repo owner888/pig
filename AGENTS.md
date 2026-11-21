@@ -70,6 +70,8 @@ PHP >= 8.3 (`require.php` in `composer.json`; why: [decisions](docs/dev/decision
   value, no clamp or floor without a reproduced bug behind it.
 - A plain HTTP request that may be retried goes through `Pig\Ai\Http\Retrying::fetch()`; model
   requests keep `ProviderRetry` and `Retry`, as upstream.
+- Code that only sends takes `Pig\Ai\Http\HttpTransport`, never `HttpClient`, so an extension can
+  wrap its client once (upstream wraps `fetch`); `HttpTransportTest` checks it.
 - `Deferred::complete()` twice throws; ported code that relies on a promise ignoring a second
   resolve guards with `isComplete()` and says so.
 - `CHANGELOG.md` entries go under `## Unreleased`, in upstream's sections (`New Features`, `Added`,

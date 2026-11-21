@@ -6,6 +6,7 @@ namespace Pig\Ai\Utils\Oauth;
 
 use Closure;
 use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\HttpTransport;
 use Pig\Ai\Http\Request;
 use Pig\Ai\Http\Response;
 use Pig\Ai\StreamOptions;
@@ -36,9 +37,9 @@ final class KimiCoding
 
     private const int REFRESH_MAX_RETRIES = 3;
 
-    private readonly HttpClient $http;
+    private readonly HttpTransport $http;
 
-    public function __construct(?HttpClient $http = null, private readonly ?string $oauthHost = null)
+    public function __construct(?HttpTransport $http = null, private readonly ?string $oauthHost = null)
     {
         $this->http = $http ?? new HttpClient(timeout: self::REQUEST_TIMEOUT_SECONDS);
     }

@@ -342,6 +342,12 @@ implementation to fall back to. The second is that this is a dated judgement, no
 official PHP SDK appears for OpenAI and for Gemini, and the streaming question is answerable, the
 arithmetic changes and this section should be re-run rather than quoted.
 
+What is handed the client is typed `Http\HttpTransport`, the one-method interface `HttpClient`
+implements, not the class: upstream's providers take a `fetch` anything can wrap, and an extension
+that must see every request it makes (pig-antigravity's daily limit of 429s) wraps its client once in
+a decorator instead of at every call. `HttpClient` stays `final`; `follow()` is its own, so the one
+class that follows redirects with a handed-in client (`UpdateCheck`) still asks for the class.
+
 ## Vertex AI and Amazon Bedrock: two more SDKs, emulated rather than wrapped
 
 `google-vertex.ts` and `bedrock-converse-stream.ts` are thin over `@google/genai` +

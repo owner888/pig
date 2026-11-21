@@ -6,6 +6,7 @@ namespace Pig\Ai\Utils;
 
 use Closure;
 use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\HttpTransport;
 use Pig\Ai\Http\Request;
 use Pig\Ai\Http\Response;
 use Pig\Ai\ProviderError;
@@ -82,7 +83,7 @@ final class GoogleAuth
      */
     public function __construct(
         private readonly ?string $keyFilename,
-        private readonly HttpClient $http = new HttpClient(),
+        private readonly HttpTransport $http = new HttpClient(),
         private readonly ?Closure $now = null,
         private readonly string $tokenUrl = self::TOKEN_URL,
         private readonly ?Closure $sleep = null,

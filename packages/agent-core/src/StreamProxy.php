@@ -8,6 +8,7 @@ use Pig\Ai\AnthropicMessagesCompat;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
 use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\HttpTransport;
 use Pig\Ai\Http\Request;
 use Pig\Ai\Model;
 use Pig\Ai\Pricing;
@@ -76,7 +77,7 @@ final class StreamProxy
     public function __construct(
         private readonly string $proxyUrl,
         private readonly string $authToken,
-        private readonly HttpClient $http = new HttpClient(),
+        private readonly HttpTransport $http = new HttpClient(),
     ) {
     }
 

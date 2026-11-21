@@ -7,6 +7,7 @@ namespace Pig\Ai\Utils\Aws;
 use Closure;
 use Generator;
 use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\HttpTransport;
 use Pig\Ai\Http\HttpError;
 use Pig\Ai\Http\Request;
 use Pig\Ai\Http\Response;
@@ -120,7 +121,7 @@ final class BedrockRuntimeClient
      */
     public function __construct(
         private readonly array $config,
-        private readonly HttpClient $http = new HttpClient(),
+        private readonly HttpTransport $http = new HttpClient(),
         private readonly ?Closure $now = null,
         private readonly ?Closure $sleep = null,
     ) {

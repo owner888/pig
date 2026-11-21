@@ -8,6 +8,7 @@ use Pig\Ai\ClientIdentity;
 use Pig\Ai\AssistantImages;
 use Pig\Ai\Cost;
 use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\HttpTransport;
 use Pig\Ai\Http\Request;
 use Pig\Ai\Http\Response;
 use Pig\Ai\ImageContent;
@@ -42,7 +43,7 @@ use Throwable;
  */
 final class OpenRouterImages
 {
-    public function __construct(private readonly HttpClient $http = new HttpClient())
+    public function __construct(private readonly HttpTransport $http = new HttpClient())
     {
     }
 

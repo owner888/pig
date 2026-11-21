@@ -6,6 +6,7 @@ namespace Pig\Ai;
 
 use InvalidArgumentException;
 use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\HttpTransport;
 use Pig\Ai\Http\Request;
 use Pig\Ai\Http\Retrying;
 use Pig\Ai\Http\Response;
@@ -74,7 +75,7 @@ final class RemoteCatalog
      *
      * @return array{0: Response, 1: string} the response and its body
      */
-    public static function request(string $provider, string $baseUrl, ?string $etag = null, ?HttpClient $http = null, ?AbortSignal $signal = null): array
+    public static function request(string $provider, string $baseUrl, ?string $etag = null, ?HttpTransport $http = null, ?AbortSignal $signal = null): array
     {
         $url = rtrim($baseUrl, '/') . '/api/models/providers/' . rawurlencode($provider) . '?types=' . implode(',', self::MODEL_TYPES);
         $client = $http ?? new HttpClient(timeout: self::TIMEOUT_SECONDS);

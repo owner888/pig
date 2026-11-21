@@ -8,6 +8,7 @@ use Pig\Ai\ClientIdentity;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
 use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\HttpTransport;
 use Pig\Ai\Http\Request;
 use Pig\Ai\Http\Response;
 use Pig\Ai\Model;
@@ -65,7 +66,7 @@ final class GoogleVertex
      *        test uses to point the token endpoint at itself
      */
     public function __construct(
-        private readonly HttpClient $http = new HttpClient(),
+        private readonly HttpTransport $http = new HttpClient(),
         private readonly ?\Closure $auth = null,
     ) {
     }

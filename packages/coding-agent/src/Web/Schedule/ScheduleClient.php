@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Web\Schedule;
 
 use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\HttpTransport;
 use Pig\Ai\Http\HttpError;
 use Pig\Ai\Http\Request;
 use Pig\Async\SocketError;
@@ -37,7 +38,7 @@ final class ScheduleClient
     private function __construct(
         public readonly string $url,
         private readonly string $token,
-        private readonly HttpClient $http,
+        private readonly HttpTransport $http,
     ) {
     }
 
@@ -46,7 +47,7 @@ final class ScheduleClient
      *
      * @throws RuntimeException saying what to do when no server runs it, or one too old to be asked
      */
-    public static function find(?string $home = null, ?HttpClient $http = null): self
+    public static function find(?string $home = null, ?HttpTransport $http = null): self
     {
         $home ??= Config::home();
         $owner = ScheduleManager::owner($home);

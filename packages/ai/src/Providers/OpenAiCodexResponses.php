@@ -12,6 +12,7 @@ use Pig\Ai\DiagnosticErrorInfo;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
 use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\HttpTransport;
 use Pig\Ai\Http\Request;
 use Pig\Ai\Http\Response;
 use Pig\Ai\Http\WebSocket;
@@ -126,7 +127,7 @@ final class OpenAiCodexResponses
     /** @var array<string, true> upstream's `websocketSseFallbackSessions` */
     private static array $websocketSseFallbackSessions = [];
 
-    public function __construct(private readonly HttpClient $http = new HttpClient())
+    public function __construct(private readonly HttpTransport $http = new HttpClient())
     {
     }
 

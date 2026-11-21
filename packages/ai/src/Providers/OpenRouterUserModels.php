@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\Ai\Providers;
 
 use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\HttpTransport;
 use Pig\Ai\Http\Request;
 use Pig\Ai\Model;
 use Pig\Ai\Pricing;
@@ -38,7 +39,7 @@ final class OpenRouterUserModels
      * @return list<array<string, mixed>>|null
      * @throws RuntimeException on any other failure: "OpenRouter model list request failed: <status>"
      */
-    public static function fetch(string $key, ?string $baseUrl = null, ?HttpClient $http = null, ?AbortSignal $signal = null): ?array
+    public static function fetch(string $key, ?string $baseUrl = null, ?HttpTransport $http = null, ?AbortSignal $signal = null): ?array
     {
         $response = ($http ?? new HttpClient(timeout: self::TIMEOUT_SECONDS))->send(new Request(
             'GET',

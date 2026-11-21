@@ -13,6 +13,7 @@ use Pig\Ai\DiagnosticErrorInfo;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
 use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\HttpTransport;
 use Pig\Ai\Http\Request;
 use Pig\Ai\Http\Response;
 use Pig\Ai\Http\SseEvent;
@@ -176,7 +177,7 @@ final class Anthropic
         'uuid',
     ];
 
-    public function __construct(private readonly HttpClient $http = new HttpClient())
+    public function __construct(private readonly HttpTransport $http = new HttpClient())
     {
     }
 

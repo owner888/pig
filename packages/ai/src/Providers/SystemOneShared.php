@@ -16,7 +16,7 @@ use Pig\Ai\ClassifierOptions;
 use Pig\Ai\ClassifierResult;
 use Pig\Ai\ClassifierScoreAnswer;
 use Pig\Ai\ClassifierScoreQuestion;
-use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\HttpTransport;
 use Pig\Ai\Http\Request;
 use Pig\Ai\Http\Response;
 use Pig\Ai\ProviderError;
@@ -70,7 +70,7 @@ final class SystemOneShared
         ClassifierModel $model,
         ClassifierContext $context,
         ?ClassifierOptions $options,
-        HttpClient $http,
+        HttpTransport $http,
     ): ClassifierResult {
         $timestamp = Timestamp::nowMs();
         $usage = null;
@@ -160,7 +160,7 @@ final class SystemOneShared
      * @param array<string, string> $headers
      * @return array{0: Response, 1: mixed} the response and its body, objects as `stdClass`
      */
-    public static function postJson(HttpClient $http, string $url, array $headers, string $body, ?AbortSignal $signal, ?int $timeoutMs, string $label): array
+    public static function postJson(HttpTransport $http, string $url, array $headers, string $body, ?AbortSignal $signal, ?int $timeoutMs, string $label): array
     {
         $signal?->throwIfAborted();
         $requestSignal = $signal;

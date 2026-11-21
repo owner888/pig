@@ -12,6 +12,7 @@ use Pig\Ai\DiagnosticErrorInfo;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
 use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\HttpTransport;
 use Pig\Ai\ImageContent;
 use Pig\Ai\Model;
 use Pig\Ai\StartEvent;
@@ -130,7 +131,7 @@ final class Bedrock
      * @param (\Closure(int): void)|null $sleep the retry back-off's wait, in milliseconds, for a test
      */
     public function __construct(
-        private readonly HttpClient $http = new HttpClient(),
+        private readonly HttpTransport $http = new HttpClient(),
         private readonly ?\Closure $now = null,
         private readonly ?\Closure $sleep = null,
     ) {

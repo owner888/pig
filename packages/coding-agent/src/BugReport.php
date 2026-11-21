@@ -9,6 +9,7 @@ use Pig\Agent\AgentError;
 use Pig\Ai\AssistantMessage;
 use Pig\Ai\Context;
 use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\HttpTransport;
 use Pig\Ai\Http\Request;
 use Pig\Ai\Model;
 use Pig\Ai\SimpleStreamOptions;
@@ -225,7 +226,7 @@ final class BugReport
      * @throws \RuntimeException with what went wrong — the server's status, its own `error`, or
      *         the transport's failure — which the caller offers the zip export for
      */
-    public static function upload(string $hint, string $report, ?HttpClient $http = null, ?AbortSignal $signal = null): string
+    public static function upload(string $hint, string $report, ?HttpTransport $http = null, ?AbortSignal $signal = null): string
     {
         $client = $http ?? new HttpClient(timeout: 30.0);
         $payload = (string) json_encode([

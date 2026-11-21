@@ -10,6 +10,7 @@ use Pig\Ai\ClassifierModel;
 use Pig\Ai\ClassifierOptions;
 use Pig\Ai\ClassifierResult;
 use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\HttpTransport;
 use Pig\Ai\ProviderError;
 use Pig\Ai\SystemOneCompat;
 use Pig\Ai\Utils\JsJson;
@@ -34,7 +35,7 @@ final class CloudflareWorkersAiSystemOne implements SystemOneTransport
 {
     private const string LABEL = 'Cloudflare Workers AI';
 
-    public function __construct(private readonly HttpClient $http = new HttpClient())
+    public function __construct(private readonly HttpTransport $http = new HttpClient())
     {
     }
 

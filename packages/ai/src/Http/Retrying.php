@@ -46,7 +46,7 @@ final class Retrying
      * @return array{0: Response, 1: string} the response and its whole body
      */
     public static function fetch(
-        HttpClient $http,
+        HttpTransport $http,
         Request $request,
         int $attempts = 3,
         float $baseDelay = 0.5,

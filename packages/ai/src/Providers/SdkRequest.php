@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Pig\Ai\Providers;
 
 use Closure;
-use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\HttpTransport;
 use Pig\Ai\Http\HttpError;
 use Pig\Ai\Http\Request;
 use Pig\Ai\Http\Response;
@@ -71,7 +71,7 @@ final class SdkRequest
      *        SDK `APIError` message, or that and what the provider's catch displays for it
      */
     public static function send(
-        HttpClient $http,
+        HttpTransport $http,
         Request $request,
         ?AbortSignal $signal,
         int $timeoutMs,

@@ -6,6 +6,7 @@ namespace Pig\CodingAgent\Export;
 
 use Pig\Agent\AgentTool;
 use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\HttpTransport;
 use Pig\Ai\Http\Request;
 use Pig\Async\AbortSignal;
 use Pig\CodingAgent\Session\AgentSession;
@@ -119,7 +120,7 @@ final class SessionShare
      * @return array{id: string, deleteToken: string, expiresAt: int}
      * @throws RuntimeException with the server's reason, or the transport's
      */
-    public static function upload(string $body, int $days, ?HttpClient $http = null, ?AbortSignal $signal = null, ?string $server = null): array
+    public static function upload(string $body, int $days, ?HttpTransport $http = null, ?AbortSignal $signal = null, ?string $server = null): array
     {
         $server ??= self::server();
         $request = new Request('POST', $server . '/api/shares?days=' . $days, [
@@ -150,7 +151,7 @@ final class SessionShare
      *
      * @throws RuntimeException with the server's reason, or the transport's
      */
-    public static function delete(string $id, string $deleteToken, ?HttpClient $http = null, ?AbortSignal $signal = null, ?string $server = null): void
+    public static function delete(string $id, string $deleteToken, ?HttpTransport $http = null, ?AbortSignal $signal = null, ?string $server = null): void
     {
         $server ??= self::server();
         $request = new Request('DELETE', $server . '/api/shares/' . rawurlencode($id), [
@@ -199,7 +200,7 @@ final class SessionShare
      *
      * @return array{0: int, 1: array<string, mixed>}
      */
-    private static function send(HttpClient $http, Request $request, ?AbortSignal $signal, string $server): array
+    private static function send(HttpTransport $http, Request $request, ?AbortSignal $signal, string $server): array
     {
         try {
             $response = $http->send($request, $signal);

@@ -10,6 +10,7 @@ use Pig\Ai\AssistantMessage;
 use Pig\Ai\DoneEvent;
 use Pig\Ai\ErrorEvent;
 use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\HttpTransport;
 use Pig\Ai\Http\Response;
 use Pig\Ai\Http\Request;
 use Pig\Ai\Http\SseParser;
@@ -86,7 +87,7 @@ final class OpenAiCompletions
     /** OpenAI's ceiling on a chat-completions tool call id. */
     private const int MAX_ID_LENGTH = 40;
 
-    public function __construct(private readonly HttpClient $http = new HttpClient())
+    public function __construct(private readonly HttpTransport $http = new HttpClient())
     {
     }
 

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pig\Ai\Utils\Oauth;
 
 use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\HttpTransport;
 
 /**
  * Which sign-in a set of credentials belongs to.
@@ -100,7 +101,7 @@ enum OauthProvider: string
      */
     public function refresh(
         OauthCredentials $credentials,
-        ?HttpClient $http = null,
+        ?HttpTransport $http = null,
         ?string $clientId = null,
         ?string $clientSecret = null,
     ): OauthCredentials {

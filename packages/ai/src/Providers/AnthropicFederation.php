@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Providers;
 
-use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\HttpTransport;
 use Pig\Ai\Http\Request;
 use Pig\Ai\Model;
 use Pig\Ai\StreamOptions;
@@ -95,7 +95,7 @@ final class AnthropicFederation
     private function __construct(
         private readonly array $config,
         private readonly string $baseUrl,
-        private readonly HttpClient $http,
+        private readonly HttpTransport $http,
     ) {
     }
 
@@ -156,7 +156,7 @@ final class AnthropicFederation
      *
      * @param array{organization_id: string, workspace_id: string|null, authentication: array<string, mixed>} $config
      */
-    public static function client(string $baseUrl, array $config, HttpClient $http): self
+    public static function client(string $baseUrl, array $config, HttpTransport $http): self
     {
         $key = (string) json_encode([$baseUrl, $config], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 

@@ -6,6 +6,7 @@ namespace Pig\Mcp\Transports;
 
 use Closure;
 use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\HttpTransport;
 use Pig\Ai\Http\HttpError;
 use Pig\Ai\Http\Request;
 use Pig\Ai\Http\Response;
@@ -75,7 +76,7 @@ final class StreamableHttpTransport extends TransportEvents
         private readonly string $url,
         private readonly array $headers = [],
         private readonly ?AuthProvider $authProvider = null,
-        private readonly ?HttpClient $http = null,
+        private readonly ?HttpTransport $http = null,
         private readonly bool $openGetStream = true,
         private readonly int $maxMessageBytes = self::DEFAULT_MAX_MESSAGE_BYTES,
         private readonly array $reconnect = [],
@@ -279,7 +280,7 @@ final class StreamableHttpTransport extends TransportEvents
         return $headers;
     }
 
-    private function client(): HttpClient
+    private function client(): HttpTransport
     {
         return $this->http ?? new HttpClient($this->timeout);
     }
