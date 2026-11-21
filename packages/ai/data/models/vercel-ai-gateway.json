@@ -562,7 +562,7 @@
         ],
         "cost": {
             "input": 0.06,
-            "output": 2.2,
+            "output": 1.96,
             "cacheRead": 0.059,
             "cacheWrite": 0.0
         },
@@ -2559,13 +2559,13 @@
             "text"
         ],
         "cost": {
-            "input": 0.66,
-            "output": 1.98,
-            "cacheRead": 0.066,
+            "input": 1.32,
+            "output": 3.96,
+            "cacheRead": 0.132,
             "cacheWrite": 0.0
         },
-        "contextWindow": 1000000,
-        "maxTokens": 384000,
+        "contextWindow": 1048600,
+        "maxTokens": 1048600,
         "compat": {
             "allowEmptySignature": true
         }
@@ -3613,7 +3613,7 @@
     {
         "type": "chat",
         "id": "google/gemma-4-26b-a4b-it",
-        "name": "Google Gemma 4 26B A4B",
+        "name": "Gemma 4 26B A4B IT",
         "api": "anthropic-messages",
         "provider": "vercel-ai-gateway",
         "baseUrl": "https://ai-gateway.vercel.sh",
@@ -4465,13 +4465,13 @@
             "text"
         ],
         "cost": {
-            "input": 0.21,
-            "output": 0.84,
-            "cacheRead": 0.042,
+            "input": 0.3,
+            "output": 1.2,
+            "cacheRead": 0.06,
             "cacheWrite": 0.0
         },
-        "contextWindow": 196608,
-        "maxTokens": 196608,
+        "contextWindow": 204800,
+        "maxTokens": 131072,
         "compat": {
             "allowEmptySignature": true
         }
@@ -9657,49 +9657,6 @@
     },
     {
         "type": "chat",
-        "id": "spacexai/grok-build-0.1",
-        "name": "Grok Build 0.1",
-        "api": "anthropic-messages",
-        "provider": "vercel-ai-gateway",
-        "baseUrl": "https://ai-gateway.vercel.sh",
-        "reasoning": true,
-        "input": [
-            "text",
-            "image"
-        ],
-        "cost": {
-            "input": 1.0,
-            "output": 2.0,
-            "cacheRead": 0.2,
-            "cacheWrite": 0.0,
-            "tiers": [
-                {
-                    "inputTokensAbove": 200000,
-                    "input": 2.0,
-                    "output": 4.0,
-                    "cacheRead": 0.4,
-                    "cacheWrite": 0.0
-                }
-            ]
-        },
-        "contextWindow": 256000,
-        "maxTokens": 256000,
-        "compat": {
-            "allowEmptySignature": true
-        },
-        "inputLimits": {
-            "images": {
-                "resize": {
-                    "maxWidth": 2000,
-                    "maxHeight": 2000,
-                    "maxBytes": 4718592,
-                    "jpegQuality": 80
-                }
-            }
-        }
-    },
-    {
-        "type": "chat",
         "id": "spacexai/grok-voice-3.0",
         "name": "Grok Voice 3.0",
         "api": "anthropic-messages",
@@ -10727,24 +10684,6 @@
     },
     {
         "type": "classifier",
-        "id": "liquid/d1",
-        "name": "Liquid d1",
-        "api": "typesafe-system-one",
-        "provider": "vercel-ai-gateway",
-        "baseUrl": "https://ai-gateway.vercel.sh/typesafe/v1",
-        "input": [
-            "text"
-        ],
-        "cost": {
-            "input": 0.02,
-            "output": 0.0,
-            "cacheRead": 0.0,
-            "cacheWrite": 0.0
-        },
-        "contextWindow": 65536
-    },
-    {
-        "type": "classifier",
         "id": "liquid/d1-ultra",
         "name": "Liquid d1 Ultra",
         "api": "typesafe-system-one",
@@ -10832,6 +10771,24 @@
             "cacheWrite": 0.0
         },
         "contextWindow": 32768
+    },
+    {
+        "type": "classifier",
+        "id": "modaic/mo",
+        "name": "Mo",
+        "api": "typesafe-system-one",
+        "provider": "vercel-ai-gateway",
+        "baseUrl": "https://ai-gateway.vercel.sh/typesafe/v1",
+        "input": [
+            "text"
+        ],
+        "cost": {
+            "input": 0.04,
+            "output": 0.0,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 262144
     },
     {
         "type": "classifier",
