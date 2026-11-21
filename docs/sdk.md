@@ -205,7 +205,7 @@ use Pig\CodingAgent\Extensions\NoUi;
 
 $started = CodingAgent::session($cwd, $settings, $auth, extensionPaths: array_filter([
     BuiltinExtensions::pathOf('mcp'),          // mcp.json servers
-    BuiltinExtensions::pathOf('codemode'),     // `codemode` exposure
+    BuiltinExtensions::pathOf('codemode'),     // `codemode` / `codemode-deferred` exposure
     BuiltinExtensions::pathOf('tool-search'),  // `deferred` exposure
 ]));
 

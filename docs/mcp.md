@@ -139,18 +139,11 @@ pig registers instead of using the document when `clientName` is set or `callbac
 
 Each server's tools are registered as `mcp__<server>__<tool>`. The `exposure` setting controls how the model reaches them:
 
-- `codemode` (default): the tools are callable from [`codemode`](/docs/latest/cli#tools) scripts, but neither declared to the model nor listed in the `codemode` tool's description, which lists only the server's namespace. Scripts find them with `search_tools()`, `describe_tool()`, `describe_namespace()`, or in `ALL_TOOLS`, and can call several MCP tools, in parallel if needed, while returning only the part of the result the model needs.
-- `deferred`: the tools are not declared to the model until the [`tool_search`](/docs/latest/cli#tools) tool loads them. The model searches, and the matches are declared from its next call on and called directly, without codemode. Use it for large servers whose tools should be called directly after discovery.
-- `direct`: the tools are declared to the model like built-in tools, and are also callable from codemode scripts.
+- `codemode` (default): the tools are callable from [`codemode`](/docs/latest/cli#tools) scripts and listed in the `codemode` tool's description, but are not declared to the model. Large MCP tool lists stay out of the model's tool declarations, and scripts can call several MCP tools, in parallel if needed, while returning only the part of the result the model needs. pig activates the `codemode` tool when such a server connects. Large servers do not fill the description: declarations share a token budget, and scripts find the remaining tools with `search_tools()` (see [`codemode`](/docs/latest/cli#how-codemode-works)).
+- `codemode-deferred`: like `codemode`, but the tools are not listed in the `codemode` tool's description either. Scripts call them by name and find them with `search_tools()`, `describe_namespace()`, or in `ALL_TOOLS`. Use it for large servers that codemode scripts use rarely.
+- `deferred`: the tools are not declared to the model until the [`tool_search`](/docs/latest/cli#tools) tool loads them. The model searches, and the matches are declared from its next call on and called directly, without codemode. pig activates the `tool_search` tool when such a server connects. Use it for large servers without codemode.
+- `direct`: the tools are declared to the model like built-in tools, and are also callable from codemode scripts while `codemode` is active.
 - `hidden`: the tools are registered but cannot be called.
-
-`codemode-deferred` is accepted as another name for `codemode`.
-
-pig activates `codemode` for a server with `codemode` exposure and `tool_search` for one with `deferred` exposure, when the session starts and again after a sign-in, a reconnect, or a change in `/mcp`. To make the model see a tool without searching, give it `direct` exposure with `toolExposure`.
-
-To keep `codemode` from being activated for MCP servers, set `"autoEnableCodemode": false` beside `mcpServers`; a project's `mcp.json` overrides the user's. pig warns once per session when neither `codemode` nor `tool_search` is active and the tools that are not `direct` cannot be called.
-
-`--tools` does not remove MCP tools unless one of its entries starts with `mcp__`. MCP tools it keeps without matching them are there for `codemode` and `tool_search` only: they are declared to the model only once `tool_search` loads them, so a `direct` one is not declared at all. `pig --tools read,codemode,'mcp__radius__*'` keeps only the tools of `radius`.
 
 `toolExposure` sets the exposure of single tools and overrides `exposure` for them. Keys are tool names as the server offers them, or patterns where `*` matches any characters. An exact name wins over patterns; among patterns, the first match in the object wins. With `hidden` as the server's exposure, only the listed tools are reachable:
 
@@ -172,7 +165,9 @@ To keep `codemode` from being activated for MCP servers, set `"autoEnableCodemod
 
 `pig mcp list` marks tools whose exposure differs from the server's, and the Tools view in `/mcp` shows it too.
 
-Tools with `codemode` or `deferred` exposure can be reached through either tool: codemode scripts can call them, and `tool_search` can load them. Calls from codemode scripts do not depend on the active tool set, so they stay callable after `/tree`, resume, and fork. Tools loaded by `tool_search` are recorded in the transcript like any other tool change and stay declared on that branch. `codemode` and `tool_search` are always registered but inactive until something activates them; to have `codemode` active without MCP servers too, add `"+codemode"` to `defaultTools` in [settings](/docs/latest/settings#tools).
+In pig the two tools do not share their tools: codemode scripts reach `codemode` and `codemode-deferred` tools (and every tool the agent has registered, including `deferred` tools once `tool_search` has loaded them), while `tool_search` searches and loads only `deferred` tools. Unlike upstream pi, a script cannot call a `deferred` tool that has not been loaded, and `tool_search` cannot load a `codemode` tool.
+
+`codemode` is always registered but inactive; a server with `codemode` or `codemode-deferred` tools turns it on when it connects, and it stays on. `tool_search` is registered while any `deferred` tool is listed and goes away again when nothing needs it. Tools called from codemode scripts do not depend on the active tool set, so they stay callable after `/tree`, resume, and fork. Tools loaded by `tool_search` are recorded in the transcript like any other tool change and stay declared on that branch. To have `codemode` active without MCP servers too, add `"+codemode"` to `defaultTools` in [settings](/docs/latest/settings#tools). To keep MCP tools away from codemode, give the servers `direct` or `deferred` exposure.
 
 Text results over 20KB reach the model with the middle cut out, in the format Codex uses: the start and end of the text around a `…N chars truncated…` marker. The full text is saved to a temp file whose path the result names. Codemode scripts always receive the whole result, so a script can filter a large result down to what the model needs.
 
@@ -186,7 +181,7 @@ When a connected server offers [resources](https://modelcontextprotocol.io/speci
 - `list_mcp_resource_templates` lists URI templates for resources the servers do not list, in the same way.
 - `read_mcp_resource` reads a resource given `server` and `uri`. Text resources reach the model as text and images as images; other binary resources are saved to temp files, and the model sees the file path. Scripts receive `['server' => ..., 'uri' => ..., 'contents' => [...]]`.
 
-The tools reach every enabled server with resources whose exposure is not `hidden`, and take the widest exposure among them: `direct` if one of the servers is direct, else `codemode`, else `deferred`. Resource links in tool results name `read_mcp_resource` and the server.
+The tools reach every enabled server with resources whose exposure is not `hidden`, and take the widest exposure among them: `direct` if one of the servers is direct, else `codemode`, else `codemode-deferred`, else `deferred`. Resource links in tool results name `read_mcp_resource` and the server.
 
 Resources for MCP Apps (`ui://` URIs or `text/html;profile=mcp-app`) are left out of the listings, since pig does not render them, and so are resource icons.
 
@@ -194,7 +189,7 @@ Reading and listing resources is retried once after a transient HTTP error (408,
 
 ## Permissions
 
-Every MCP call goes through pig's tool pipeline, so `tool_call` and `tool_result` extension handlers, including permission gates, apply to MCP tools. Calls made from codemode scripts carry the `codemode` call's id as `parentToolCallId` and their own id `<script call id>/<n>`. pig does not pass on the tool annotations servers declare (`readOnlyHint`, `destructiveHint`, and so on): `$pig->getAllTools()` reports each tool's name, description, parameters, exposure, and whether it is active, so a permission extension decides by tool name and arguments (see [Extensions](/docs/latest/extensions#2-guard-dangerous-operations-tool_call)).
+Every MCP call goes through pig's tool pipeline, so `tool_call` and `tool_result` extension handlers, including permission gates, apply to MCP tools. Calls made from codemode scripts carry the `codemode` call's id as `parentToolCallId` and their own id `<script call id>/<n>`. pig does not pass on the tool annotations servers declare (`readOnlyHint`, `destructiveHint`, and so on): `$pig->getAllTools()` reports each tool's name, description, parameters, and whether it is active, so a permission extension decides by tool name and arguments (see [Extensions](/docs/latest/extensions#2-guard-dangerous-operations-tool_call)).
 
 ## Servers from extensions
 
@@ -206,4 +201,4 @@ An installed extension that registers the `/mcp` command replaces the built-in M
 
 ## SDK
 
-SDK sessions do not load the built-in extensions. Pass the MCP extension, the codemode extension for `codemode` servers, and the tool search extension for `deferred` servers in `extensionPaths`. See [SDK](/docs/latest/sdk#codemode-and-mcp).
+SDK sessions do not load the built-in extensions. Pass the MCP extension, the codemode extension for `codemode` and `codemode-deferred` servers, and the tool search extension for `deferred` servers in `extensionPaths`. See [SDK](/docs/latest/sdk#codemode-and-mcp).
