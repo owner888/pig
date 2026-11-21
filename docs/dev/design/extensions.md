@@ -355,21 +355,22 @@ for what the config file means. Two things are pig's own and both are consequenc
   is a QuickJS VM in wasm and PHP has no wasm runtime. That was true of the *sandbox* and not of
   the *feature*, which is "the model writes code that calls tools and filters the results, and
   only what it keeps reaches the model". See the section below.
-- **`deferred` has no loadout under it.** Upstream keeps an active set per tool and records a
-  `tool_search` load in the transcript, so a loaded tool survives `/tree` and resume. pig has no
-  such record: a deferred tool is simply **not registered** until `tool_search` names it, then
-  registered like any other, through the same `adopt()`/`onChange()` door a connecting server uses.
-  `tool_search` itself is **`extensions/pig-tool-search/`'s**, as upstream's is the built-in
-  `tool-search` extension's, not the MCP extension's: pig-mcp lists each deferred tool in the
-  static `Pig\Codemode\DeferredTools` (description and schema for the search, the server as its
-  namespace, a `load` closure that registers it through pig-mcp's own API, and `loaded`), and
-  pig-tool-search registers `tool_search` while that list is non-empty and loads the matches
-  through it. It stands in for upstream's `getAllTools()` by exposure plus `setActiveTools()`,
-  which pig's loadout cannot express. Both are built-ins, so they load together; one without the
-  other leaves deferred tools unreachable (`--no-extensions -e builtin:mcp -e builtin:tool-search`).
-  The cost is that a resumed session starts with the deferred tools unloaded and the model searches
-  again; the gain is no second copy of what the agent's tools are. `ToolSearch` is upstream's
-  `tool-search/tool.js` arithmetic for arithmetic — tokenizer, stemmer, Okapi BM25 — and the one
+- **Exposure is the loadout's, as upstream's.** `ToolDefinition::$exposure` is upstream's
+  `ToolExposure` (`direct`, `model-only`, `codemode`, `deferred`, `hidden`) and `ToolLoadout`
+  applies upstream's rules: only a declarable (`direct`/`model-only`) tool is activated by
+  registering it, a `hidden` one is never active, and `callable()` — what
+  `AgentSession::executeTool()` and codemode scripts reach — is the active `direct` tools plus
+  every `codemode` or `deferred` one. pig-mcp registers every tool with `toToolExposure()` of its
+  server's exposure (`codemode` → `deferred`), pig-tool-search searches `getAllTools()` for the
+  inactive `codemode`/`deferred` ones and loads the matches with `setActiveTools()`, and
+  `prepareLoadout` receives a `LoadoutView` (upstream's `ToolLoadout` interface: declared, callable,
+  registered, `exposure()`, `namespace()`). A load is recorded in the transcript, so it survives
+  `/tree` and resume. Until this, pig kept deferred tools unregistered in a static
+  `DeferredTools` list and codemode-only ones in a static `Registry`; both are gone. pig's own
+  addition is the `toolExposure` setting (`Settings::toolExposure()`, `ToolLoadout::useToolExposure()`),
+  which overrides any tool's exposure by name or pattern, as the developer asked, so the schemas
+  of rarely used tools stay out of every request.
+- **`ToolSearch` is upstream's `tool-search/tool.js`**, arithmetic for arithmetic — tokenizer, stemmer, Okapi BM25 — and the one
   thing worth knowing about it is that **`GitHub` tokenizes to `git hub`** there too (every
   lower-to-upper boundary splits), so a server named `github` is found by its name and not by the
   word inside a camelCased tool.
@@ -449,12 +450,9 @@ and the dialogs. Four things decided on the way:
   `Auth` entry on renewing under a lock.
 
 **The resource tools are one set with one exposure**, upstream's rule: the widest among the
-servers that have resources. With pig's deferred-is-not-registered arrangement that means
-they go into `DeferredTools` under a pseudo-source `mcp resources` when no resource server is
-direct, and `tool_search` lists that source beside the servers. `tool_search` follows the list
-on every change (`DeferredTools::onChange()`), so there is no sync step to order any more; what
-is ordered is that a deferred tool already loaded (or pending from a resumed transcript) is
-registered **before** it is listed, so `tool_search` is re-registered after it and stays last.
+servers that have resources (`direct`, then `codemode`, then `deferred`), and `hidden` when none
+has any. They are registered again with it when it changes, and taken off the active set when
+they stop being `direct`.
 
 **Nothing of upstream's MCP extension is left out now**, codemode aside, and the live checks were
 `server-filesystem` (stdio, tools), GitHub (streamable HTTP, 46 tools with a header; OAuth
@@ -483,7 +481,7 @@ names: `run`, `status`, `output`, `any`, `count`, `name`, `result`, `toString`.
 `McpExtensionTest` drives the whole thing through `ExtensionLoader::load()` with the stdio fixture
 server (`packages/mcp/test/fixtures/stdio-server.php`): session start, the ten-second wait, a
 server that fails, the startup report, a call through the connection, `/mcp`, a deferred tool
-appearing only after `tool_search` finds it, and shutdown leaving the loop idle. Two of its first assertions were guesses that the code refuted — the middle cut's
+declared only after `tool_search` finds it, and shutdown leaving the loop idle. Two of its first assertions were guesses that the code refuted — the middle cut's
 byte count and a server with no exposure named reporting `(deferred)` — which is the usual cost of
 asserting before measuring.
 
@@ -541,11 +539,9 @@ which the host reads as a crash. The rest of the helpers keep upstream's names: 
 **Nested calls go through the hooked tool**, so the permission gate reaches `bash` from a script
 exactly as from the model — `testANestedCallGoesThroughTheToolCallHookLikeAnyOther` runs a `tool_call`
 guard against `$tools->bash()` inside `parallel_settled()` and reads the refusal out of the arm. A
-`codemode`-exposed MCP tool is the exception by design: it is **not on the agent at all** (the model
-must not see it), so the MCP extension puts it in `Pig\Codemode\Registry` and the codemode tool
-calls it from there. The registry is static for `Models::register()`'s reason — two extensions in
-either load order have to see one list — and registering into it is what activates codemode
-(upstream's `ensureDiscoveryActive()`: it only ever activates, never deactivates).
+`codemode`- or `deferred`-exposed tool is on the loadout's callable list but not declared, so a
+script reaches it through the same pipeline; codemode does not activate itself — the MCP extension
+does for a `codemode` server (upstream's `ensureDiscoveryActive()`: it only ever activates).
 
 **codemode is registered inactive, as upstream's (`defaultActive: false`).** `ToolDefinition::$defaultActive`
 is upstream's `ToolDefinition.defaultActive`; `ToolLoadout::isActivatedByDefault()` keeps such a tool

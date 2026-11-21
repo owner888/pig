@@ -96,7 +96,7 @@ $pig->registerTool(new ToolDefinition(
 ));
 ```
 
-Pass `defaultActive: false` to register a tool inactive, as `codemode` is: it stays off until `--tools`, `defaultTools` or `setActiveTools()` names it. Returning `new AgentToolResult(..., terminate: true)` from `execute` ends the agent loop after the tool batch completes (when every call in the batch returned `terminate: true`), without making another model call.
+Pass `defaultActive: false` to register a tool inactive, as `codemode` is: it stays off until `--tools`, `defaultTools` or `setActiveTools()` names it. `exposure:` says how the model reaches the tool (see [Tool exposure](/docs/latest/cli#tool-exposure)): only a `direct` (the default) or `model-only` tool is activated by registering it; a `codemode` or `deferred` one is callable from other tools and waits for `tool_search`, and a `hidden` one is unreachable. `namespace: ['name' => ..., 'description' => ...]` groups tools, for example by MCP server, for `tool_search` and the `codemode` description, and `outputSchema:` is the JSON Schema of the `structuredContent` your results carry, which `codemode` scripts then receive instead of the text. `$pig->getAllTools()` reports every tool's `exposure` and `namespace` beside whether it is active. Returning `new AgentToolResult(..., terminate: true)` from `execute` ends the agent loop after the tool batch completes (when every call in the batch returned `terminate: true`), without making another model call.
 
 ### 2. Guard Dangerous Operations (`tool_call`)
 

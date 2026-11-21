@@ -23,21 +23,21 @@ use RuntimeException;
  *     "docs": { "url": "https://example.com/mcp", "headers": { "Authorization": "Bearer ${DOCS_TOKEN}" } } } }
  * ```
  *
- * **Exposure.** `codemode` (the default, as upstream's), `codemode-deferred`, `deferred`, `direct`
- * and `hidden`, read as written (`here()`).
+ * **Exposure.** `codemode` (the default, as upstream's), `deferred`, `direct` and `hidden`, and
+ * `codemode-deferred` read as `codemode`, as upstream's `MCP_EXPOSURE_ALIASES` reads it (`here()`).
  */
 final class McpConfig
 {
     public const string FILE = 'mcp.json';
 
     /**
-     * Upstream's five exposures are pig's five now that codemode is ported. The table stays
-     * because `here()` is what every reader asks, and a sixth value from a newer pi lands on
-     * the default rather than on a crash.
+     * Upstream's four exposures, and its older name `codemode-deferred` for `codemode`. The table
+     * stays because `here()` is what every reader asks, and a value from a newer pi lands on the
+     * default rather than on a crash.
      */
     public const array EXPOSURE_HERE = [
         'codemode' => 'codemode',
-        'codemode-deferred' => 'codemode-deferred',
+        'codemode-deferred' => 'codemode',
         'deferred' => 'deferred',
         'direct' => 'direct',
         'hidden' => 'hidden',

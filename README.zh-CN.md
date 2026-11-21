@@ -263,7 +263,7 @@ pig 会话里的一轮对话，背后是 pig 自己的工具、hooks 和扩展�
 | :--- | :--- | :--- |
 | **`pig-llama`** · `builtin:llama.cpp` | `extensions/pig-llama/` | `llama.cpp` provider：模型来自运行中的 `llama-server` router，`/login llama.cpp` 填地址和 key，`/llama` 加载、卸载、下载模型（含 Hugging Face 搜索）。 |
 | **`pig-codemode`** · `builtin:codemode` | `extensions/pig-codemode/` | 在安全沙箱子进程（`open_basedir`, `disable_functions`）中批量并行执行多工具代码，节省巨量上下文。 |
-| **`pig-tool-search`** · `builtin:tool-search` | `extensions/pig-tool-search/` | `tool_search`：在扩展延后注册的工具（MCP 的 `deferred` 暴露方式）里做 BM25 检索，并加载命中的工具。 |
+| **`pig-tool-search`** · `builtin:tool-search` | `extensions/pig-tool-search/` | `tool_search`：在已注册、暴露方式为 `codemode` 或 `deferred` 且尚未启用的工具（如 MCP 工具）里做 BM25 检索，并启用命中的工具。`toolExposure` 设置可以把任何工具设为延后。 |
 | **`pig-mcp`** · `builtin:mcp` | `extensions/pig-mcp/` | Model Context Protocol 原生客户端，连接标准 stdio 与 HTTP MCP 服务，支持动态 OAuth 换票（`mcp.json`）。 |
 | **`pig-schedule`** · `builtin:schedule` | `extensions/pig-schedule/` | `schedule` 工具：聊天里直接设置定时任务，每次改动先确认，由运行中的 `pig web` 保存。pig 自有。 |
 

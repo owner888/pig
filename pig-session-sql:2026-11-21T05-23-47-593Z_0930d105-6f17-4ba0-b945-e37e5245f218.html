@@ -1,0 +1,961 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pig — 你好</title>
+<style>
+:root { --bg: #16161d; --fg: #d8d8e0; --dim: #8a8a99; --card: #1e1e26; --line: #2c2c38;
+  --user: #2a2a3a; --accent: #8abeb7; --error: #cc6666; --code: #14141a; }
+[data-theme="light"] { --bg: #fbfbfd; --fg: #2a2a33; --dim: #6a6a78; --card: #ffffff;
+  --line: #e2e2ea; --user: #eef1f6; --accent: #2a7d74; --error: #a33; --code: #f4f4f8; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 0 1rem 4rem; background: var(--bg); color: var(--fg);
+  font: 15px/1.6 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif; }
+header, main { max-width: 52rem; margin: 0 auto; }
+header { padding: 2rem 0 1rem; border-bottom: 1px solid var(--line); margin-bottom: 1rem; }
+h1 { font-size: 1.3rem; margin: 0; }
+.where { color: var(--dim); font-size: .85rem; margin: .3rem 0 0; }
+.turn { padding: .75rem 1rem; border-radius: 8px; margin: 1rem 0; background: var(--card); }
+.turn.user { background: var(--user); }
+.turn.compaction { background: transparent; border: 1px dashed var(--line); }
+.turn.system { background: transparent; border: 1px solid var(--line); }
+pre.prompt { white-space: pre-wrap; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.turn h2 { font-size: .75rem; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--dim); margin: 0 0 .5rem; font-weight: 600; }
+p { margin: .6rem 0; }
+pre { background: var(--code); border: 1px solid var(--line); border-radius: 6px;
+  padding: .6rem .8rem; overflow-x: auto; margin: .6rem 0; }
+code { font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+p code, li code, td code { background: var(--code); padding: .1em .35em; border-radius: 4px; }
+details { margin: .5rem 0; border: 1px solid var(--line); border-radius: 6px; padding: .4rem .6rem; }
+summary { cursor: pointer; color: var(--dim); font: 13px/1.5 ui-monospace, Menlo, monospace; }
+details.failed { border-color: var(--error); }
+details.failed > summary { color: var(--error); }
+.failed { color: var(--error); }
+.empty, .href { color: var(--dim); }
+blockquote { border-left: 3px solid var(--line); margin: .6rem 0; padding: 0 0 0 .8rem; color: var(--dim); }
+table { border-collapse: collapse; margin: .6rem 0; }
+th, td { border: 1px solid var(--line); padding: .3rem .6rem; text-align: left; }
+img { max-width: 100%; border-radius: 6px; margin: .5rem 0; }
+a { color: var(--accent); }
+hr { border: 0; border-top: 1px solid var(--line); margin: 1.2rem 0; }
+.hl-comment { font-style: italic; }
+        .hl-comment { color: #9da5a9; }
+        .hl-string { color: #de8d5a; }
+        .hl-number { color: #68b78d; }
+        .hl-keyword { color: #69add0; }
+        .hl-type { color: #a798d7; }
+        .hl-function { color: #cd9a22; }
+        .hl-variable { color: #5db3ba; }
+        :root, [data-theme="light"] { --bg: #21252c; --card: #282c34; }
+</style>
+</head>
+<body>
+<header><h1>你好</h1><p class="where">/Users/kaka/Development/owner/pig</p></header>
+<main>
+<section class="turn system">
+<details class="system-prompt"><summary>System Prompt</summary>
+<pre class="prompt">You are a coding assistant running inside pig, a coding agent harness. Help users inspect files, run commands, and modify code.
+
+Available tools:
+- read: Read a file, or look at an image
+- bash: Run a bash command
+- edit: Change parts of a file by replacing exact text, several separate places in one call
+- write: Create a file, or replace one outright
+- schedule: schedule: set up tasks pig runs on its own on a schedule (cron), each task with a conversation of its own
+- read_url_content: Read a public web page as markdown via the Antigravity crawler
+- codemode: Run PHP that calls other tools
+
+Guidelines:
+- Use bash for file operations like ls, rg, find
+- You can inspect PIG_* environment variables for current model and session details.
+- Use read to examine files before editing. You must use this tool instead of cat or sed.
+- Use edit for targeted changes. Batch changes to one file in a single call.
+- Each edits[].oldText must exactly and uniquely match the original file. Keep matches short and non-overlapping; merge nearby changes without including large unchanged regions.
+- Use write only for new files or complete rewrites
+- When summarizing your actions, output plain text directly - do NOT use cat or bash to display what you did
+- Be concise in your responses
+- Show file paths clearly when working with files
+- When the user asks for something to happen on a schedule (&quot;every morning&quot;, &quot;each Monday&quot;, &quot;tomorrow at 9&quot;), use the schedule tool rather than describing how to set it up.
+- A scheduled task runs in a conversation of its own that knows nothing of this one: write its prompt to stand on its own — the repository or folder, what to check, what to report.
+- A scheduled run reports by default: unless the user asked otherwise, write its prompt so that it asks before pulling, merging, committing or editing files.
+- Tapping the phone screen is a last resort. When adb from bash can do it (adb shell am start, input, settings, pm, dumpsys; adb push/pull/install), do that first; use the android_* screen tools only when the person asks for them or adb cannot do the job.
+- Use read_url_content when you have a specific URL whose contents you need, instead of guessing from a search result summary.
+- One URL per call, and prefer the page that holds the answer over a site root or a category index.
+- Long pages return their beginning and save the full page to a local file; read or search that file instead of fetching the URL again.
+- It cannot log in, run JavaScript, or read local and private addresses, so do not use it for those.
+- Use codemode to batch independent tool calls (parallel_settled), chain them, or filter large output, instead of many separate calls.
+
+&lt;docs&gt;
+Pig documentation (read only when the user asks about the harness itself, its SDK, extensions, themes, skills, or TUI):
+- Main documentation: /Users/kaka/Development/owner/pig/README.md
+- Additional docs: /Users/kaka/Development/owner/pig/docs
+- Examples: /Users/kaka/Development/owner/pig/examples (extensions, custom tools, SDK)
+- When reading pig docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory
+- When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), packages (docs/packages.md), environment variables (docs/environment-variables.md), MCP servers (docs/mcp.md)
+- When asked to change how pig itself behaves: settings and defaults (docs/settings.md), command-line options and which tools are on, such as enabling codemode (docs/cli.md), slash commands (docs/slash-commands.md). For any other topic, list Additional docs: every page is named for what it covers, and a link to /docs/latest/&lt;page&gt; is the file docs/&lt;page&gt;.md
+- Before implementing harness changes, read the relevant docs and examples in full, following related cross-references.
+&lt;/docs&gt;
+
+# Project Context
+
+These files were loaded from the project:
+
+## /Users/kaka/.pig/agent/AGENTS.md
+
+# 全局规则
+
+这些规则适用于所有项目。项目自己的 AGENTS.md 另有规定时，以项目的为准。
+
+## 严禁硬编码隐私与机主信息（公共仓库红线）
+
+- 严禁在代码、注释、提交或文档中硬编码机主用户名、个人特定路径、私有 IP、测试设备地址或特定环境假设。
+- 读取系统环境必须使用标准通用机制（如 `getenv(&#039;HOME&#039;) ?: getenv(&#039;USERPROFILE&#039;)`），绝不允许使用机主用户名或环境特有值作为 fallback 兜底。
+- 数据展示必须实事求是：有值就展示真实值；无值时统一显示 `-` / `--` 或将整个分组/模块直接跳过，严禁通过假数据强行兜底。
+- **公开仓库与私有仓库区别对待**：公开仓库（以 GitHub 可见性为准，目前有 `myphp`、`agc_linking`）适用上面的红线，且范围不止文件，还包括提交历史：作者名、邮箱、提交说明里也不能带机主用户名、本机路径、私有地址，提交作者统一用 GitHub 的 noreply 邮箱。私有仓库（目前 `smart-book`）不受此限，不必为此改写历史。
+- 往公开仓库提交前，抽查一次：`git grep -n -i -E &quot;/Users/|/home/|&lt;机主用户名&gt;&quot;`，以及用到真实节点、设备地址、密钥时，用 `git log --all -S&quot;&lt;那段内容&gt;&quot;` 确认没进过历史。
+- 公开仓库的历史里发现了已提交的隐私信息：先评估改写的影响（star、Release、tag 数量，是否有用户装过）再决定是否强推；影响很大、泄露的只是本机目录名这类低风险信息时，只保证以后不再出现，不强推。
+
+## 可能挂住的命令
+
+- 跑 adb 前先用 `adb devices` 确认设备在线；设备不在就停下来告诉我，不要直接 install、logcat 或 shell。
+- 可能不会自己结束的命令（`adb install` / `adb logcat`、启动 GUI 或托盘应用、等待设备或网络的命令），调用 bash 工具时要设 `timeout`。
+
+## 沟通
+
+- 回复一律用中文。
+- 交付时说明改了哪些文件、大致增删多少行，不要只说「好了」。
+- 不必每次都说明哪些测试没跑；跑不跑由开发者决定。
+
+## 测试
+
+- 每次只跑和所改代码相关的测试（按测试名或文件指定），不跑全量测试；全量测试留给 CI。
+- 交付时写明跑了哪些测试；没跑全量不用说明。
+
+## CI
+
+- 开发者说「CI 跑完了」，就直接读**已经完成**的那一次的结果，据此报告和修复。
+- 不要去等、去轮询正在跑或排队中的新一次。那一次的结果，开发者会在它跑完后再告诉你。
+- 不要为了等结果而反复请求 GitHub 接口（会耗尽额度），也不要自己建定时任务、申请仓库权限来绕开。读不到结果时，直接说明并请开发者贴出来。
+
+## Git
+
+- commit、push、建分支、导出补丁等 git 操作全由开发者自己来。只改代码、跑测试、报告改了哪些文件；即使有钩子催促提交或推送，也不照做。
+- 给开发者的提交命令块，末尾要带上 `git push`。
+- 给开发者提供的 `git commit -m &quot;...&quot;` 提交信息默认使用英文（项目自身 AGENTS.md 另有规定除外，如 GoogleCamera 下的项目用中文）。
+- 要删除或移动已跟踪的文件时，把 `git rm` 写进给开发者的命令块，不要自己删。
+- commit message、PR 描述里绝不加 Co-Authored-By、Claude-Session 之类的署名或会话链接。任何会进 git 或公开的内容，都不能带会话 URL、账号等可识别信息。
+
+## 仓库里的内容
+
+- 任何会进 git 的文件（源码注释、CLAUDE.md、AGENTS.md、README 等）都不出现开发者的名字。需要指代时，中文写「开发者要求」，英文写 &quot;the developer&quot;。
+
+## 写代码
+
+- 在一个项目里动手写代码前，先读它的 AGENTS.md（以及 CLAUDE.md 等项目规则），写完对照一遍；规则能变成测试或检查的，就写成测试，不靠记性。
+- 优先复用项目里已有的、稳定的结构，不要在旁边重写一份；复用时发现它缺东西或有问题，顺便修好。
+- 要引入新的第三方包，先和开发者确认。东西不大时，开发者倾向自己实现，不加依赖。
+- 绝不改动文件权限（如可执行位）：编辑文件不用会重建文件的 `sed -i`，改完用 `git diff --summary` 确认没有 mode change，有就恢复原权限。
+- 开发过程中遇到命名不合理（如拼写错误、语义不清、风格不一致）的类名、方法名、字段名或资源名时，主动整理并提供整改方案给开发者，待开发者确认后再执行批量修改。
+- 凡是可以通过调整配置或开发者设置（如 GCam 的 `GcaConfig` / `ksf.smali` 默认开关）解决的问题，坚决不修改业务代码；若此前为排查问题改过业务代码，确认可通过配置开关解决后必须将业务代码还原。
+- 做任何兼容或修复修改（无论是业务代码还是开发者默认设置）时，都必须评估是否需要按机型、厂商或系统版本过滤（如 `!Agc.isGoogleDevice()`、`Agc.isSamsungDevice()`、`SDK_INT` 判断），严禁因非 Pixel 或特定机型/低版本系统的兼容修改而损害原生 Pixel 或高版本设备的画质与功能。
+- **MyPHP 双端文档同步铁律**：在 MyPHP 项目中每更新一个功能（包括新增功能、修改旧功能或 CLI 参数），都必须同步检查并更新 GitHub 仓库文档（`myphp/docs/`、`README.md`、`bin/skills/myphp-app/`）以及 `smart-book` 官网文档（`/Users/kaka/Development/owner/smart-book/app/Views/myphp/docs/` 下的英文与 `zh-cn/` 中文文档）。发现中文文档缺少某个功能或条目（英文有而 `zh-cn/` 没有），顺手补上，不要因为「本次没改到」而放过。
+
+
+## /Users/kaka/Development/owner/pig/AGENTS.md
+
+# pig — pi ported to PHP
+
+A file-by-file port of [earendil-works/pi](https://github.com/earendil-works/pi): agent core,
+unified LLM API, terminal UI, coding agent CLI. Zero runtime dependencies beyond PHP itself.
+
+## This file stays under 200 lines (hard rule)
+
+All of it goes into every request, so `AGENTS.md` holds what every task needs and an index to
+`docs/dev/`; a trap, a design note or a decision goes there, never here. `AgentsFileTest` fails
+the suite once this file passes 200 lines.
+
+## This file is written in English
+
+Every rule, trap entry, table and heading in this file and under `docs/dev/` is English — not because of the reader&#039;s
+language but because the file is read by the model alongside upstream&#039;s TypeScript, both READMEs&#039;
+English half and the source comments, and a rule that exists in two languages is a rule with two
+copies that can drift. Two things stay as they are: a person&#039;s words quoted verbatim (*&quot;任务还没
+完成，但是总是偶发触发系统通知&quot;*), and CJK strings that are data (`你好`, `代码审查` in the
+width tables). The developer&#039;s requests are reported in English (&quot;the developer asked for…&quot;),
+never pasted.
+
+## pig is a minimal agent
+
+**The developer&#039;s standing rule, above every other decision in this file: pig stays minimal, and
+nothing that muddles the logic gets added.** More tools, more options, more paths through the same
+code are not free — the model spends part of every turn choosing between them, and every extra arm
+is a place for the rules to disagree with each other, which is what most of the traps in
+`docs/dev/traps/` turned out to be.
+
+So a feature that upstream does not have needs a reason that survives being read out loud, and a
+feature upstream *does* have arrives in upstream&#039;s shape rather than a wider one. When a choice is
+between two workable designs, the one with fewer branches wins. When something is already in reach
+another way — searching through `bash` rather than a third search tool — the second way does not get
+added for convenience.
+
+This is the rule that decided the built-in tool set: four by default, as upstream has it, with
+`grep`, `find` and `ls` reachable by name through `--tools`.
+
+### The developer&#039;s name does not appear in this repository
+
+Every file here goes to git, so **the developer is &quot;the developer&quot;** — never a name, in source
+comments, docblocks, test fixtures, `AGENTS.md`, `docs/dev/` or either README. A test that needs a home directory
+uses `/Users/dev/...`, a fixture that needs a tenant header uses `acme`, an example address is
+`dev@example`. This was found the hard way: the name had reached six files, including a docblock in
+`CustomModels` and a row in the table below, because a fixture written from a real path is the
+easiest thing in the world to paste.
+
+## Upstream
+
+**Port against the latest pi** — upstream `main` (github.com/earendil-works/pi, published as
+`@earendil-works/pi-*`), not a pinned commit. Before porting or &quot;fixing&quot; anything, read the file as
+it is on upstream `main` today; a difference from it is a bug unless `docs/dev/decisions.md` or
+the code&#039;s own comment records it as the developer&#039;s choice.
+
+Where pig cannot follow upstream (PHP, the platform) and what it does instead: [docs/dev/upstream.md](docs/dev/upstream.md).
+
+## Layout
+
+```
+packages/async/      → Pig\Async\        (pig/async)       Loop, Future, Deferred, Async, Socket, Abort*
+packages/ai/         → Pig\Ai\           (pig/ai)          unified LLM API, HTTP/SSE, Anthropic; Extension\ for a provider an extension brings
+packages/agent-core/ → Pig\Agent\        (pig/agent-core)  AgentLoop, Agent, tools, events
+packages/tui/        → Pig\Tui\          (pig/tui)         renderer, widths, keys, editor, markdown, images, env
+packages/coding-agent/ → Pig\CodingAgent\ (pig/coding-agent) tools, theme, session, interactive CLI
+bin/pig                                     the entry point
+```
+
+The rest of what this section used to hold — the two `Paths` classes, `Pig\Tui\Env`, how much of
+each package is ported — is in [docs/dev/design/overview.md](docs/dev/design/overview.md).
+
+## Commands
+
+```bash
+composer install        # PHPUnit 12; the five packages/ are autoloaded by the root package
+php test/lint.php       # php -l over every file (PHPUnit only parses what it loads)
+vendor/bin/phpunit      # filter: vendor/bin/phpunit --filter Loop
+php test/live.php       # the providers against the real endpoints — costs money, needs keys
+                        # `… google` for one provider, `… google/&lt;model-id&gt;` for one model
+php scripts/generate-models.php   # rewrite the built-in rows (scripts/BuiltinCatalog.php) from models.dev,
+                        # then the pi-format catalogue Ai\Models reads (packages/ai/data/models/)
+                        # `--dry-run` prints them instead; `--from &lt;file&gt;` reads a saved api.json
+php scripts/build-models.php      # rebuild packages/ai/data/models/ after editing BuiltinCatalog.php by hand
+php scripts/bench-tui.php [session.jsonl] [regular|fullscreen] [cols] [rows]
+                        # ms and bytes per frame on a real conversation against a fake terminal
+php scripts/eval.php [--json] [--keep] [name …] [-- &lt;bin/pig options&gt;]
+                        # the cases under evals/ through `bin/pig -p`, pass/fail + tokens + cost — costs money
+```
+
+PHPUnit 12 is the newest release that still runs on PHP 8.3, so it is what the floor allows.
+PHPUnit 13 requires 8.4 and becomes available if the floor ever moves.
+
+`test/AssertsThrows.php` adds one assertion on top of PHPUnit: `assertThrows()` asserts a throw
+mid-test and hands back the exception, which `expectException()` cannot do because it scopes to
+the whole method.
+
+The dev container has no route to packagist, so tests run on the Mac, not in the agent sandbox.
+
+## Version floor: PHP &gt;= 8.3
+
+`require.php` in the root `composer.json` is the source of truth. Why 8.3, and what moving it would
+change: [docs/dev/decisions.md](docs/dev/decisions.md#version-floor-php--83).
+
+## Conventions
+
+- **A new composer dependency is the developer&#039;s call, every time.** Ask before adding one, and say what
+  it would cost to write instead — something small enough to write in an afternoon gets written
+  here. Zero runtime dependencies is the point of the project, not an accident of it. `partial-json`
+  and `sanitize-unicode` were both replaced by a file each rather than pulled in.
+- `README.md` and `README.zh-CN.md` are one document in two languages. Every change to one lands
+  in the other in the same commit — a half-translated README is worse than an untranslated one.
+- `declare(strict_types=1)` in every file; PSR-12; one class per file.
+- `match` over `switch`, `#[\Override]` on every override, `str_contains`/`str_starts_with`,
+  constructor property promotion, `readonly` for anything that should not change after construction.
+- No `@` error suppression — `test/lint.php` fails the build on one. A function that warns *and*
+  returns false gets a `set_error_handler` around it, because the warning text is usually the only
+  place the errno appears; where the condition is knowable in advance, check it instead
+  (`SessionManager::lines()` checks `is_readable` rather than suppressing `file()`).
+- No silent fallback: `catch` must re-throw (`throw new X(..., $e)`). No `?? default` to paper
+  over a missing value, no `clamp`/floor without a reproduced bug behind it.
+- **A plain HTTP request that may be tried again goes through `Pig\Ai\Http\Retrying::fetch()`** —
+  a catalog, a market-data page, a download. Never write the retry loop at the call site: the
+  rules (which failures, the wait, `Retry-After`, abort) live in one place. Model requests are the
+  exception and keep `ProviderRetry` (the SDKs&#039; policy) and `Retry` (the turn), as upstream has them.
+- `Deferred::complete()` twice throws. Where ported code relies on a JS promise ignoring its
+  second resolve, the call site guards with `isComplete()` and says so in a comment — so the
+  leniency stays local instead of becoming a global rule.
+- **`CHANGELOG.md` matches upstream pi&#039;s format exactly.** Every release uses the `## [x.y.z] - YYYY-MM-DD` header (e.g. `## [0.87.1] - 2026-09-22`) and groups items into four standard sections: `### New Features` (major highlights, new model workflows), `### Added` (new capabilities, options, APIs, tools), `### Changed` (behavioral updates, defaults, refactoring), and `### Fixed` (bug fixes, crash preventions, protocol corrections). Only sections with items are included, and entries clearly state what changed and why.
+- **Iron rule: If PHP can solve it, use pure PHP — never bridge to other languages (Python, Node.js, etc.).** Pig&#039;s core tenet is zero runtime dependencies beyond PHP itself. If a task, tool, automation, protocol, or extension can be accomplished in PHP (via built-in streams, fibers, processes, sockets, or native platform CLI tools like `adb`, `stty`, `sips`), it must be written in pure PHP. Never introduce Python, Node.js, npm, pip, or auxiliary interpreter wrappers as middleman glue layers. Extensions are 100% pure PHP using `ExtensionApi` and scoped closures. Do not query npm/pip registries, parse foreign package formats, or shell out to auxiliary interpreters when native PHP handles the job directly.
+- **UI copy and placeholders stay minimal.** Feature descriptions and shortcut hints are never piled into core controls: the main input&#039;s placeholder stays as short as `Ask pig a question` / `向 pig 提问...`, never `(Enter to send, Shift+Enter for new line)` and the like. Shortcuts and usage belong in the shortcuts HUD (`⌘ Shortcuts`), the help text or a hover tooltip, so the core interaction surface stays clean.
+- **Every release bumps the patch version; an existing tag is never overwritten (no force-pushed tags).** SemVer: every release raises the version (`v0.2.3` → `v0.2.4`), gets a new tag of its own pushed to the remote, and never uses `git tag -f` or `git push -f` on an existing tag.
+- **Never push git commits, tags, or releases automatically.** Only commit, tag, or push to git after the developer has explicitly reviewed the code changes and specifically said to release/push.
+- **The built-in model catalogue is regenerated before every release**, as upstream&#039;s `build` runs `generate-models` first: `php scripts/generate-models.php` (it ends by running `build-models.php`), its result in a commit of its own so models.dev&#039;s drift stays out of the release&#039;s real changes, then the tests. Also after porting anything that changes the generator&#039;s rules or `BuiltinCatalog.php`. Not in between: each run pulls whatever models.dev changed meanwhile.
+- **Documentation is updated before the tag, without being reminded.** Before `git tag`, go over everything user-visible in the release (commands, options, settings, slash commands, file formats, defaults) and update, in order: (1) `README.md` + `README.zh-CN.md`; (2) the site docs, `../smart-book/app/Views/pig/docs/{en,zh-cn}/*.md` (a new page also goes into `nav.json`) — pigagent.dev/docs serves them; (3) `php scripts/sync-docs.php` copies the site&#039;s English pages into `docs/*.md`, the copy the package ships (`DocsTest` fails while they differ); (4) `CHANGELOG.md`&#039;s `## Unreleased` becomes `## [x.y.z] - date`, and the file is copied to `../smart-book/app/Views/pig/CHANGELOG.md`, which the site&#039;s banner version and /changelog page read. A purely internal refactor does (4) only. The release notes say what each of the four changed, or why one was not.
+- **What pig can do is written in the docs in the change that adds it, because the model reads them, not the source.** Asked about pig itself — &quot;turn codemode on by default&quot; — the model is sent to `docs/` by the system prompt&#039;s `docs` section (`SystemPrompt::docsSection()`), and what is not written there it looks for in the code, slowly. So a new tool, setting, command, option or slash command gets its entry in the site page for it (`cli.md` for tools and options, `settings.md`, `slash-commands.md`, …; zh-cn too) in the same change, saying what it is, its default, and the exact line that turns it on or off. A tool pig ships must be named in `cli.md` (`DocsTest` holds this); a new page is named for its topic, which is how the `docs` section finds it without being edited. `docs/*.md` is never edited by hand: the site&#039;s repository is the source and `scripts/sync-docs.php` the only writer.
+
+## Where the rest is
+
+This file is what every task needs; everything else is under `docs/dev/` and is read when the work
+reaches it. **Before changing code in an area, read that area&#039;s traps file.** A new trap entry —
+symptom, cause, rule, the code — goes at the end of its area&#039;s traps file, never here: this file
+stays under 200 lines, because all of it is in every request.
+
+- [Decisions on record](docs/dev/decisions.md) — choices made on purpose; read before &quot;fixing&quot;
+  something that looks wrong.
+- [Known traps](docs/dev/traps/README.md) — the three shapes nearly every find takes, and the
+  questions to ask before reading a file against upstream.
+
+| Area | | | Covers |
+|---|---|---|---|
+| tui | [design](docs/dev/design/tui.md) | [traps](docs/dev/traps/tui.md) | the terminal UI: rendering, widths, keys, the editor, themes, fullscreen |
+| web | [design](docs/dev/design/web.md), [UI sizes](docs/dev/design/web-ui.md) | [traps](docs/dev/traps/web.md) | `pig web`: the page, the WebSocket, tabs, login, the terminal drawer, the service; **read the UI sizes before any CSS** |
+| rpc | [design](docs/dev/design/rpc.md) | [traps](docs/dev/traps/rpc.md) | `--mode rpc`, print and JSON mode, `--mode mcp` |
+| providers | [design](docs/dev/design/providers.md) | [traps](docs/dev/traps/providers.md) | each provider API, the model registry, thinking levels, usage, overflow |
+| auth | [design](docs/dev/design/auth.md) | [traps](docs/dev/traps/auth.md) | OAuth flows, API keys, `auth.json` |
+| session | [design](docs/dev/design/session.md) | [traps](docs/dev/traps/session.md) | the session file, compaction, branches, resuming, the system prompt, retries |
+| tools | [design](docs/dev/design/tools.md) | [traps](docs/dev/traps/tools.md) | built-in tools, subprocesses, command-line flags, directories and configuration |
+| runtime | [design](docs/dev/design/runtime.md) | [traps](docs/dev/traps/runtime.md) | PHP and the async runtime: Fiber, Loop, Future, sockets, where PHP is not JavaScript |
+| extensions | [design](docs/dev/design/extensions.md) | [traps](docs/dev/traps/extensions.md) | extensions, hooks, MCP, codemode, skills, prompt templates, the bundled extensions |
+| testing | [design](docs/dev/design/testing.md) | [traps](docs/dev/traps/testing.md) | the test suite, mutation sweeps, live provider tests, packaging |
+
+The following skills provide specialized instructions for specific tasks.
+Use the read tool to load a skill&#039;s file when the task matches its description.
+Resolve relative paths against the skill&#039;s directory (parent of SKILL.md). Use absolute paths in tool calls.
+
+&lt;available_skills&gt;
+  &lt;skill&gt;
+    &lt;name&gt;apkx&lt;/name&gt;
+    &lt;description&gt;Android APK reverse engineering, split bundle (APKM/XAPK) merging, smali directory organization, single-smali decompilation with jadx, AAR/plugin/Go-native injection, repackaging/signing, APK pulling from device, and unattended ADB smoke testing via the apkx CLI. Use whenever decompiling, modifying, repackaging, inspecting, or debugging Android APKs or smali projects.&lt;/description&gt;
+    &lt;location&gt;/Users/kaka/.pig/agent/skills/apkx/SKILL.md&lt;/location&gt;
+  &lt;/skill&gt;
+  &lt;skill&gt;
+    &lt;name&gt;iphone-use&lt;/name&gt;
+    &lt;description&gt;通过 PUA（Phone Use Agent）MCP 工具高效操作真实 iPhone；新对话默认先初始化并取得 READY，服务未启动时沿 setup 启动流程继续。默认乐观执行导航、点击、输入和滚动，在下一步观察时顺带判断进度，只对关键最终结果显式验收；指导 App 查找、列表采集、手机屏幕侧边栏及密码或 Face ID 认证接管。&lt;/description&gt;
+    &lt;location&gt;/Users/kaka/.pig/agent/skills/iphone-use/SKILL.md&lt;/location&gt;
+  &lt;/skill&gt;
+  &lt;skill&gt;
+    &lt;name&gt;iphone-use-setup&lt;/name&gt;
+    &lt;description&gt;配置 PUA（Phone Use Agent），在用户自己的 iPhone 上安装、签名并启动手机端执行服务；新对话默认先初始化 READY，服务未启动时复用配置与构建启动，诊断 USB 和 Xcode 连接并打开手机屏幕侧边栏；适用于首次配置、冷启动、断线恢复或签名过期。&lt;/description&gt;
+    &lt;location&gt;/Users/kaka/.pig/agent/skills/iphone-use-setup/SKILL.md&lt;/location&gt;
+  &lt;/skill&gt;
+  &lt;skill&gt;
+    &lt;name&gt;myphp-app&lt;/name&gt;
+    &lt;description&gt;Write new PHP desktop (macOS, Windows, Linux) and mobile (Android, iOS, iPadOS) apps, windows and screens with MyPHP, native UI in SwiftUI-style declarative views or a web frontend, from a blank project to a tested, packaged app. Use when creating a MyPHP app, adding a window, page, view or service to one, or turning a design (SwiftUI or otherwise) into MyPHP code.&lt;/description&gt;
+    &lt;location&gt;/Users/kaka/.pig/agent/skills/myphp-app/SKILL.md&lt;/location&gt;
+  &lt;/skill&gt;
+  &lt;skill&gt;
+    &lt;name&gt;omniphp&lt;/name&gt;
+    &lt;description&gt;OmniPHP 框架与 Workerman 5.x 常驻内存全栈架构开发规范（PHP 8.4 基线，含自研 Laravel 复刻体系、旧写法→新写法替换表、三必备时间字段铁律、纯无状态 Handler、Context 与 DB/Redis 门面规范）。凡涉及 OmniPHP 框架、Workerman、常驻内存、PHP 8.4+ 开发时必须加载此规范。&lt;/description&gt;
+    &lt;location&gt;/Users/kaka/.pig/agent/skills/omniphp/SKILL.md&lt;/location&gt;
+  &lt;/skill&gt;
+  &lt;skill&gt;
+    &lt;name&gt;android-use&lt;/name&gt;
+    &lt;description&gt;Drive a real or emulated Android phone over ADB, in pure PHP. Last resort after the command line — when adb from bash can do it (start an activity, change a setting, push/pull/install), do that; use these screen tools only when the person asks for them or adb cannot do the job. Start a new task with android_ready to get the device channel and the current screen; supports taps, swipes, Chinese text input, launching apps by package and a screenshot when the view needs checking; has notes on common apps (WeChat, Xiaohongshu, Douyin, …).&lt;/description&gt;
+    &lt;location&gt;/Users/kaka/.pig/agent/git/github.com/owner888/pig-android-use/skills/android-use/SKILL.md&lt;/location&gt;
+  &lt;/skill&gt;
+  &lt;skill&gt;
+    &lt;name&gt;content-transcribe&lt;/name&gt;
+    &lt;description&gt;把视频、播客、文章整理成文字:摘要、分章节、摘引文或改写成文章&lt;/description&gt;
+    &lt;location&gt;/Users/kaka/.pig/agent/git/github.com/owner888/pig-android-use/skills/content-transcribe/SKILL.md&lt;/location&gt;
+  &lt;/skill&gt;
+  &lt;skill&gt;
+    &lt;name&gt;info-research&lt;/name&gt;
+    &lt;description&gt;在网上把一件事查清楚:找方向、读原始出处、多方核对,写明出处和时间&lt;/description&gt;
+    &lt;location&gt;/Users/kaka/.pig/agent/git/github.com/owner888/pig-android-use/skills/info-research/SKILL.md&lt;/location&gt;
+  &lt;/skill&gt;
+  &lt;skill&gt;
+    &lt;name&gt;messaging&lt;/name&gt;
+    &lt;description&gt;读聊天记录和邮件、拟回复,发给对的人并确认已发出&lt;/description&gt;
+    &lt;location&gt;/Users/kaka/.pig/agent/git/github.com/owner888/pig-android-use/skills/messaging/SKILL.md&lt;/location&gt;
+  &lt;/skill&gt;
+  &lt;skill&gt;
+    &lt;name&gt;quant&lt;/name&gt;
+    &lt;description&gt;Dry-run crypto trading inside pig — a paper wallet fed by live Binance candles, with a moving-average strategy and risk limits. Use the quant_* tools when the person asks about the bot&amp;apos;s state, positions, trades or candles, or asks you to place a paper order; use /quant to start or stop it. Nothing here touches a real exchange account.&lt;/description&gt;
+    &lt;location&gt;/Users/kaka/Development/owner/pig-quant/skills/quant/SKILL.md&lt;/location&gt;
+  &lt;/skill&gt;
+&lt;/available_skills&gt;
+
+Current working directory: /Users/kaka/Development/owner/pig
+
+&lt;mcp_servers&gt;
+MCP servers whose tools are not declared to you. Call the tools of `codemode` servers from codemode scripts.
+- mcp__iphone_use (codemode): PUA means Phone Use Agent; all iPhone Use tools use the pua_ prefix. Read iphone-use-setup before setup and iphone-use for tasks. First phone task in a new chat: pua_ready(recover=true, screenshot=false); only ready=true permits phone tasks, then re…
+&lt;/mcp_servers&gt;</pre>
+</details>
+<details class="tools"><summary>Available Tools (35)</summary>
+<ul>
+<li><code>read</code> — Read the contents of a file. Handles text and images (png, jpeg, gif, webp); images are returned as attachments you can look at. Text output is cut off at 2000 lines or 50.0KB, whichever comes first — use offset and limit to read the rest of a large file.
+
+Codemode: `$tools-&gt;read([...])` resolves to a string.
+<ul>
+<li><code>path</code> <span class="where">string · required</span> — Path to the file, relative or absolute</li>
+<li><code>offset</code> <span class="where">number · optional</span> — Line to start at, counting from 1</li>
+<li><code>limit</code> <span class="where">number · optional</span> — How many lines to read</li>
+</ul>
+</li>
+<li><code>bash</code> — Run a bash command in the working directory. Returns stdout and stderr together. Output is cut to the last 2000 lines or 50.0KB, whichever comes first, and the full output is written to a file whose path is included when that happens. A timeout in seconds can be given; there is none by default.
+
+Codemode: `$tools-&gt;bash([...])` resolves to `{ output, truncated, full_output_path?, exit_code, wall_time_seconds }`.
+<ul>
+<li><code>command</code> <span class="where">string · required</span> — The command to run</li>
+<li><code>timeout</code> <span class="where">number · optional</span> — Seconds to allow before killing it</li>
+</ul>
+</li>
+<li><code>edit</code> — Edit a file by replacing exact text. Each edits[].oldText must match the original file exactly, whitespace and all, and appear exactly once — include the surrounding lines if it does not. Edits are matched against the file as it was, not one after another, and must not overlap: merge changes to the same or nearby lines into one edit, without large unchanged regions in between. Use write to replace a whole file.
+
+Codemode: `$tools-&gt;edit([...])` resolves to a string.
+<ul>
+<li><code>path</code> <span class="where">string · required</span> — Path to the file, relative or absolute</li>
+<li><code>edits</code> <span class="where">array · required</span> — One or more replacements, each matched against the original file. No two may overlap; merge changes to the same or nearby lines into one.</li>
+</ul>
+</li>
+<li><code>write</code> — Write content to a file. Creates it if it does not exist and overwrites it if it does, so use edit to change part of an existing file. Parent directories are created as needed.
+
+Codemode: `$tools-&gt;write([...])` resolves to a string.
+<ul>
+<li><code>path</code> <span class="where">string · required</span> — Path to the file, relative or absolute</li>
+<li><code>content</code> <span class="where">string · required</span> — What to write</li>
+</ul>
+</li>
+<li><code>schedule</code> — Create and manage scheduled tasks: a prompt pig runs on its own on a schedule — every day at 9, on weekdays, once at a given time, or only when asked — each in the task&#039;s own conversation in a given folder (in the sidebar from the moment it is created), listed in the web UI&#039;s Scheduled page. Runs happen while `pig web` runs on this machine. Every change is shown to the user to confirm first. Actions: list; runs (a task&#039;s recent runs); create; update; delete; enable; disable; run (now). The schedule is a five-field cron expression in the task&#039;s timezone (`0 9 * * *` every day at 9:00, `0 9 * * 1-5` weekdays), or `at` for one run, or neither for a task that runs only when asked.
+
+Codemode: `$tools-&gt;schedule([...])` resolves to a string.
+<ul>
+<li><code>action</code> <span class="where">string · required</span> — What to do</li>
+<li><code>id</code> <span class="where">string · optional</span> — The task, for every action but list and create</li>
+<li><code>name</code> <span class="where">string · optional</span> — A short name for the task</li>
+<li><code>prompt</code> <span class="where">string · optional</span> — What each run is asked, in the task&#039;s own conversation — which knows nothing of this one, so say everything: the repository or files, what to check, what to report, and what to ask before doing</li>
+<li><code>cwd</code> <span class="where">string · optional</span> — The folder each run starts in; defaults to the current one</li>
+<li><code>cron</code> <span class="where">string · optional</span> — Five-field cron expression: minute hour day-of-month month day-of-week</li>
+<li><code>at</code> <span class="where">string · optional</span> — One run at this local time, e.g. &#039;2026-10-12 09:00&#039;</li>
+<li><code>manual</code> <span class="where">boolean · optional</span> — update: make the task run only when asked</li>
+<li><code>timezone</code> <span class="where">string · optional</span> — IANA timezone the schedule is in, e.g. &#039;Asia/Singapore&#039;; defaults to this machine&#039;s</li>
+<li><code>model</code> <span class="where">string · optional</span> — provider/id for the runs; defaults to pig&#039;s default model</li>
+<li><code>thinking</code> <span class="where">string · optional</span> — Thinking level for the runs: off, minimal, low, medium, high, xhigh</li>
+<li><code>permission</code> <span class="where">string · optional</span> — auto (the default for a new task): a run&#039;s confirmations are answered yes and it does not stop to wait; ask: a run stops at each one until the user answers</li>
+</ul>
+</li>
+<li><code>ffgrep</code> — Search file contents with ripgrep and real-time Git-aware ranking. Matches in modified, staged, or untracked files are automatically boosted to the top with a [git: status] badge. Supports multi-pattern OR search via &quot;patterns&quot;. Respects .gitignore.
+
+Codemode: `$tools-&gt;ffgrep([...])` resolves to a string.
+<ul>
+<li><code>pattern</code> <span class="where">string · optional</span> — The search pattern or regular expression</li>
+<li><code>patterns</code> <span class="where">array · optional</span> — Optional list of multiple literal patterns to search with OR logic (like Aho-Corasick)</li>
+<li><code>path</code> <span class="where">string · optional</span> — Directory or file to search (defaults to current working directory)</li>
+<li><code>glob</code> <span class="where">string · optional</span> — Filter files by glob pattern, e.g. &quot;*.php&quot; or &quot;!*Test.php&quot;</li>
+<li><code>literal</code> <span class="where">boolean · optional</span> — Treat pattern as a literal string rather than regex (default true)</li>
+<li><code>ignoreCase</code> <span class="where">boolean · optional</span> — Case-insensitive search (default false, uses smart-case)</li>
+<li><code>context</code> <span class="where">integer · optional</span> — Lines of context to show around each match (default 0)</li>
+<li><code>limit</code> <span class="where">integer · optional</span> — Maximum matching lines to return (default 100, max 1000)</li>
+</ul>
+</li>
+<li><code>fffind</code> — Find files by name or glob pattern with real-time Git-aware ranking. Recently modified and untracked files are ranked at the top of results. Respects .gitignore.
+
+Codemode: `$tools-&gt;fffind([...])` resolves to a string.
+<ul>
+<li><code>pattern</code> <span class="where">string · required</span> — Glob pattern or substring to match file names/paths</li>
+<li><code>path</code> <span class="where">string · optional</span> — Directory to search (defaults to current working directory)</li>
+<li><code>limit</code> <span class="where">integer · optional</span> — Maximum results to return (default 200, max 1000)</li>
+</ul>
+</li>
+<li><code>android_doctor</code> — Diagnose local ADB environment, connected Android devices, screen resolution and battery/focus state.
+
+Codemode: `$tools-&gt;android_doctor([...])` resolves to a string.
+<ul>
+<li><code>serial</code> <span class="where">string · optional</span> — Optional specific device serial number.</li>
+</ul>
+</li>
+<li><code>android_ready</code> — Check if an Android device is connected, wake it up, and return initial viewport dimensions and screenshot.
+
+Codemode: `$tools-&gt;android_ready([...])` resolves to a string.
+<ul>
+<li><code>serial</code> <span class="where">string · optional</span> — Optional specific device serial number.</li>
+<li><code>screenshot</code> <span class="where">boolean · optional</span> — Whether to include screenshot. Default true.</li>
+</ul>
+</li>
+<li><code>android_observe</code> — Capture the current screen screenshot and foreground app info from the Android device.
+
+Codemode: `$tools-&gt;android_observe([...])` resolves to a string.
+<ul>
+<li><code>mode</code> <span class="where">string · optional</span> — Observation mode. Default both.</li>
+<li><code>screen</code> <span class="where">string · optional</span> — Which screen: &quot;main&quot; (default) is the phone&#039;s own; &quot;background&quot; is pig&#039;s own screen, which the person does not see, so they can keep using the phone while you work. Open the app there first with android_launch_app(screen=&quot;background&quot;).</li>
+<li><code>serial</code> <span class="where">string · optional</span> — Optional specific device serial number.</li>
+</ul>
+</li>
+<li><code>android_tap</code> — Tap on screen coordinates (x, y). Coordinates can match the scaled screenshot and will automatically convert to physical pixels with anti-ban jitter.
+
+Codemode: `$tools-&gt;android_tap([...])` resolves to a string.
+<ul>
+<li><code>x</code> <span class="where">number · required</span> — X coordinate to tap.</li>
+<li><code>y</code> <span class="where">number · required</span> — Y coordinate to tap.</li>
+<li><code>observe</code> <span class="where">string · optional</span> — Post-action observation. Default none.</li>
+<li><code>screen</code> <span class="where">string · optional</span> — Which screen: &quot;main&quot; (default) is the phone&#039;s own; &quot;background&quot; is pig&#039;s own screen, which the person does not see, so they can keep using the phone while you work. Open the app there first with android_launch_app(screen=&quot;background&quot;).</li>
+<li><code>serial</code> <span class="where">string · optional</span> — Optional specific device serial number.</li>
+</ul>
+</li>
+<li><code>android_swipe</code> — Swipe on Android screen by direction (&quot;up&quot;, &quot;down&quot;, &quot;left&quot;, &quot;right&quot;) or by explicit from/to coordinates.
+
+Codemode: `$tools-&gt;android_swipe([...])` resolves to a string.
+<ul>
+<li><code>direction</code> <span class="where">string · optional</span> — Finger movement direction. &quot;up&quot; usually scrolls down.</li>
+<li><code>from_x</code> <span class="where">number · optional</span> — Optional explicit start X.</li>
+<li><code>from_y</code> <span class="where">number · optional</span> — Optional explicit start Y.</li>
+<li><code>to_x</code> <span class="where">number · optional</span> — Optional explicit end X.</li>
+<li><code>to_y</code> <span class="where">number · optional</span> — Optional explicit end Y.</li>
+<li><code>duration_ms</code> <span class="where">integer · optional</span> — Gesture duration in milliseconds. Default 300.</li>
+<li><code>observe</code> <span class="where">string · optional</span> — Post-action observation. Default none.</li>
+<li><code>screen</code> <span class="where">string · optional</span> — Which screen: &quot;main&quot; (default) is the phone&#039;s own; &quot;background&quot; is pig&#039;s own screen, which the person does not see, so they can keep using the phone while you work. Open the app there first with android_launch_app(screen=&quot;background&quot;).</li>
+<li><code>serial</code> <span class="where">string · optional</span> — Optional specific device serial number.</li>
+</ul>
+</li>
+<li><code>android_type_text</code> — Type text into the input field that has the focus (tap it first) — Chinese, emoji and several lines too. Says how it went in (`method`) and whether the field, read back, holds the text (`verified`): false means look before going on.
+
+Codemode: `$tools-&gt;android_type_text([...])` resolves to a string.
+<ul>
+<li><code>text</code> <span class="where">string · required</span> — The full text to enter.</li>
+<li><code>screen</code> <span class="where">string · optional</span> — Which screen: &quot;main&quot; (default) is the phone&#039;s own; &quot;background&quot; is pig&#039;s own screen, which the person does not see, so they can keep using the phone while you work. Open the app there first with android_launch_app(screen=&quot;background&quot;).</li>
+<li><code>serial</code> <span class="where">string · optional</span> — Optional specific device serial number.</li>
+</ul>
+</li>
+<li><code>android_press_button</code> — Simulate physical hardware or navigation button presses (home, back, power, volumeup, volumedown, enter, app_switch).
+
+Codemode: `$tools-&gt;android_press_button([...])` resolves to a string.
+<ul>
+<li><code>name</code> <span class="where">string · required</span> — Button to press.</li>
+<li><code>screen</code> <span class="where">string · optional</span> — Which screen: &quot;main&quot; (default) is the phone&#039;s own; &quot;background&quot; is pig&#039;s own screen, which the person does not see, so they can keep using the phone while you work. Open the app there first with android_launch_app(screen=&quot;background&quot;).</li>
+<li><code>serial</code> <span class="where">string · optional</span> — Optional specific device serial number.</li>
+</ul>
+</li>
+<li><code>android_launch_app</code> — Launch an Android application by package name (e.g. com.tencent.mm, com.android.settings).
+
+Codemode: `$tools-&gt;android_launch_app([...])` resolves to a string.
+<ul>
+<li><code>package</code> <span class="where">string · required</span> — Target application package name.</li>
+<li><code>screen</code> <span class="where">string · optional</span> — Which screen: &quot;main&quot; (default) is the phone&#039;s own; &quot;background&quot; is pig&#039;s own screen, which the person does not see, so they can keep using the phone while you work. Open the app there first with android_launch_app(screen=&quot;background&quot;).</li>
+<li><code>serial</code> <span class="where">string · optional</span> — Optional specific device serial number.</li>
+</ul>
+</li>
+<li><code>android_connect</code> — Connect to an Android device over WiFi/TCP (requires device to have Wireless Debugging enabled).
+
+Codemode: `$tools-&gt;android_connect([...])` resolves to a string.
+<ul>
+<li><code>address</code> <span class="where">string · required</span> — Device address in IP:port format (e.g. 192.168.1.100:5555).</li>
+</ul>
+</li>
+<li><code>android_tree</code> — Dump native Android View hierarchy tree and return compact, token-saving JSON nodes with labels, IDs and bounds. When the tree is not enough to work from (an app that draws its own UI), it also returns the screen text the tree lacks (OCR, macOS) or the screenshot.
+
+Codemode: `$tools-&gt;android_tree([...])` resolves to a string.
+<ul>
+<li><code>max_nodes</code> <span class="where">integer · optional</span> — Max number of interactive nodes to return. Default 60.</li>
+<li><code>screen</code> <span class="where">string · optional</span> — Which screen: &quot;main&quot; (default) is the phone&#039;s own; &quot;background&quot; is pig&#039;s own screen, which the person does not see, so they can keep using the phone while you work. Open the app there first with android_launch_app(screen=&quot;background&quot;).</li>
+<li><code>serial</code> <span class="where">string · optional</span> — Optional specific device serial number.</li>
+</ul>
+</li>
+<li><code>android_batch</code> — Execute up to 15 sequential actions with anti-ban random coordinate jitter and humanized micro-delays (150-350ms).
+
+Codemode: `$tools-&gt;android_batch([...])` resolves to a string.
+<ul>
+<li><code>steps</code> <span class="where">array · required</span> — List of action objects: {op: &quot;tap&quot;|&quot;swipe&quot;|&quot;type_text&quot;|&quot;press_button&quot;|&quot;wait&quot;, args: {...}}</li>
+<li><code>observe</code> <span class="where">string · optional</span> — Observe screen after the batch completes. Default screenshot.</li>
+<li><code>screen</code> <span class="where">string · optional</span> — Which screen: &quot;main&quot; (default) is the phone&#039;s own; &quot;background&quot; is pig&#039;s own screen, which the person does not see, so they can keep using the phone while you work. Open the app there first with android_launch_app(screen=&quot;background&quot;).</li>
+<li><code>serial</code> <span class="where">string · optional</span> — Optional specific device serial number.</li>
+</ul>
+</li>
+<li><code>web_search</code> — Search the web for real-time information, documentation, news, or technical references using DuckDuckGo. Returns top search results with titles, snippets, and source URLs.
+
+Codemode: `$tools-&gt;web_search([...])` resolves to a string.
+<ul>
+<li><code>query</code> <span class="where">string · required</span> — The search query (e.g. &quot;laravel 11 releases&quot;, &quot;anthropic adaptive thinking api doc&quot;)</li>
+<li><code>maxResults</code> <span class="where">integer · optional</span> — Maximum number of results to return (default 5, max 10)</li>
+</ul>
+</li>
+<li><code>fetch_web_page</code> — Fetch the readable text content of a web page by URL, stripped of scripts, navigation, and styles. Useful for reading documentation, API references, or articles found via web_search. Reads what the server sends: if the result is empty or a &quot;enable JavaScript&quot; shell, use browse_web_page instead.
+
+Codemode: `$tools-&gt;fetch_web_page([...])` resolves to a string.
+<ul>
+<li><code>url</code> <span class="where">string · required</span> — The full HTTP or HTTPS URL of the page to fetch</li>
+<li><code>maxLength</code> <span class="where">integer · optional</span> — Maximum characters of text to return (default 30000, max 60000)</li>
+</ul>
+</li>
+<li><code>browse_web_page</code> — Render a web page in a headless Chrome and return the text of the live DOM after its JavaScript has run. For single-page apps, dashboards and docs sites that fetch_web_page returns empty or as a loading shell. Slower than fetch_web_page (a few seconds) and needs Chrome installed; prefer fetch_web_page for plain pages.
+
+Codemode: `$tools-&gt;browse_web_page([...])` resolves to a string.
+<ul>
+<li><code>url</code> <span class="where">string · required</span> — The full HTTP or HTTPS URL of the page to render</li>
+<li><code>maxLength</code> <span class="where">integer · optional</span> — Maximum characters of text to return (default 30000, max 60000)</li>
+<li><code>waitSeconds</code> <span class="where">number · optional</span> — How long to wait for the page to load before reading it (default 25, max 60)</li>
+</ul>
+</li>
+<li><code>quant_status</code> — The dry-run trading engine: whether it is streaming (and in which pig process, ownerPid), the exchange, symbols, strategy and risk limits, cash, equity, open positions with unrealized P&amp;L, last prices, the last trades.
+
+Codemode: `$tools-&gt;quant_status([...])` resolves to a string.</li>
+<li><code>quant_candles</code> — The last candles the engine holds for a symbol it trades (no network call): openTime, open, high, low, close, volume, closeTime, closed. Times are Unix milliseconds.
+
+Codemode: `$tools-&gt;quant_candles([...])` resolves to a string.
+<ul>
+<li><code>symbol</code> <span class="where">string · required</span> — A symbol the engine trades, e.g. BTCUSDT</li>
+<li><code>limit</code> <span class="where">integer · optional</span> — How many, newest last (default 50, max 500)</li>
+</ul>
+</li>
+<li><code>quant_trades</code> — The paper trades so far, oldest first: time, symbol, side, quantity, price, fee, quoteAmount, pnl (sells only), reason.
+
+Codemode: `$tools-&gt;quant_trades([...])` resolves to a string.
+<ul>
+<li><code>limit</code> <span class="where">integer · optional</span> — The last N trades (default 50)</li>
+</ul>
+</li>
+<li><code>quant_order</code> — Place a paper order at the last price seen, through the same risk limits the strategy has. Nothing reaches an exchange. A buy spends quote_amount (the configured order size when omitted); a sell closes quantity of the position (all of it when omitted). Refused orders throw with the reason.
+
+Codemode: `$tools-&gt;quant_order([...])` resolves to a string.
+<ul>
+<li><code>side</code> <span class="where">string · required</span></li>
+<li><code>symbol</code> <span class="where">string · required</span> — A symbol the engine trades</li>
+<li><code>quote_amount</code> <span class="where">number · optional</span> — Buy: how much quote (USDT) to spend</li>
+<li><code>quantity</code> <span class="where">number · optional</span> — Sell: how much base to sell</li>
+<li><code>reason</code> <span class="where">string · optional</span> — Why, in a few words; kept with the trade</li>
+</ul>
+</li>
+<li><code>quant_backtest</code> — Run the configured strategy over past candles (fetched from the exchange, cached by month) and report: final equity, return vs buy-and-hold, max drawdown, trades, win rate, profit factor, fees, average hold, the last trades and a downsampled equity curve. The dry-run wallet is not touched. Overrides change one run only. Takes seconds to a minute for a month of 1m candles.
+
+Codemode: `$tools-&gt;quant_backtest([...])` resolves to a string.
+<ul>
+<li><code>symbol</code> <span class="where">string · required</span> — e.g. BTCUSDT; a basket is comma-separated, BTC-USDT,ETH-USDT,SOL-USDT — one wallet, equal-weight buy &amp; hold for comparison</li>
+<li><code>interval</code> <span class="where">string · required</span> — Candle interval: 1m, 5m, 15m, 1h, 4h, 1d</li>
+<li><code>from</code> <span class="where">string · required</span> — Start, UTC: 2026-10-01 or 2026-10-01T09:30</li>
+<li><code>to</code> <span class="where">string · optional</span> — End, UTC; now when omitted</li>
+<li><code>overrides</code> <span class="where">object · optional</span> — Settings for this run only, by name: initialQuote, feeRate, slippage, orderQuote, fast, slow, maxOrderQuote, maxExposureQuote, maxPositions, stopLossPct, warmupCandles. orderQuote, maxOrderQuote and maxExposureQuote may also be &quot;all&quot; or &quot;50%&quot; (a share of the free cash for the order size, of the equity for the limits) so profits compound.</li>
+</ul>
+</li>
+<li><code>quant_sweep</code> — Backtest every combination of parameter ranges over the same candles and return one row per combination (return, buy-and-hold, max drawdown, profit factor, closed trades, win rate). Use it to see whether a good parameter sits among good neighbours or alone; a lone good cell is an overfit. A range is &quot;10..30:5&quot; (start..end:step), a list &quot;30,50,100&quot;; a plain number holds that setting for every run. At most 500 combinations.
+
+Codemode: `$tools-&gt;quant_sweep([...])` resolves to a string.
+<ul>
+<li><code>symbol</code> <span class="where">string · required</span> — e.g. BTCUSDT; a basket is comma-separated, BTC-USDT,ETH-USDT,SOL-USDT — one wallet, equal-weight buy &amp; hold for comparison</li>
+<li><code>interval</code> <span class="where">string · required</span> — Candle interval: 1m, 5m, 15m, 1h, 4h, 1d</li>
+<li><code>from</code> <span class="where">string · required</span> — Start, UTC: 2026-10-01 or 2026-10-01T09:30</li>
+<li><code>to</code> <span class="where">string · optional</span> — End, UTC; now when omitted</li>
+<li><code>overrides</code> <span class="where">object · required</span> — By name (initialQuote, feeRate, slippage, orderQuote, fast, slow, maxOrderQuote, maxExposureQuote, maxPositions, stopLossPct, warmupCandles): a range &quot;10..30:5&quot;, a list &quot;30,50,100&quot;, or one number; orderQuote, maxOrderQuote and maxExposureQuote may be &quot;all&quot; or &quot;50%&quot;</li>
+</ul>
+</li>
+<li><code>quant_funding</code> — What a cash-and-carry (long spot, short the perpetual, same notional) would have collected in funding over a range, from Binance perpetual funding history: gross and net of one round trip (four legs), annualized, on the capital both legs tie up, the share and longest stretch of negative settlements, and every month&#039;s total. Observation only. The price cancels out in a carry; what remains is funding, exchange risk and the basis at entry/exit (not modelled).
+
+Codemode: `$tools-&gt;quant_funding([...])` resolves to a string.
+<ul>
+<li><code>symbol</code> <span class="where">string · required</span> — e.g. BTC-USDT or BTCUSDT — the USDT perpetual</li>
+<li><code>from</code> <span class="where">string · required</span> — Start, UTC: 2024-11-01</li>
+<li><code>to</code> <span class="where">string · optional</span> — End, UTC; now when omitted</li>
+</ul>
+</li>
+<li><code>quant_funding_watch</code> — The funding watcher: whether it is polling, each watched perpetual&#039;s current funding rate per settlement and annualized, when it next settles, which ones are over the alert threshold and since when, and polls that failed. Alerts are also appended to ~/.pig/agent/quant/funding/alerts.jsonl. Start and stop are the person&#039;s (/quant funding watch start|stop).
+
+Codemode: `$tools-&gt;quant_funding_watch([...])` resolves to a string.</li>
+<li><code>quant_spread</code> — The price gap between two exchanges for one symbol, watched live (observation only, nothing is traded). &quot;status&quot;: whether it is running, the live gap in bps and the latest prices. &quot;report&quot;: the complete minutes of the last N days summarized — mean and percentile gaps, how often and how long the gap cleared the round-trip cost threshold. 1 bps = 0.01%.
+
+Codemode: `$tools-&gt;quant_spread([...])` resolves to a string.
+<ul>
+<li><code>what</code> <span class="where">string · required</span></li>
+<li><code>days</code> <span class="where">integer · optional</span> — For report: the last N days, today included (default 1)</li>
+</ul>
+</li>
+<li><code>read_url_content</code> — Read a public web page through Google&#039;s Antigravity crawler and return it as markdown. Use it for documentation, articles, changelogs, and standards pages when search snippets are not enough. The crawl runs on Google&#039;s side: no JavaScript execution, no cookies, and no pages behind a login — for those, ask the user to open the page in their browser.
+
+Codemode: `$tools-&gt;read_url_content([...])` resolves to a string.
+<ul>
+<li><code>url</code> <span class="where">string · required</span> — Public http(s) URL to fetch.</li>
+</ul>
+</li>
+<li><code>google_search</code> — Search the live web using Google Search grounding over Google Cloud Code Assist. Returns an evidence brief, sources, and verified citations.
+
+Codemode: `$tools-&gt;google_search([...])` resolves to a string.
+<ul>
+<li><code>query</code> <span class="where">string · required</span> — The search query to look up.</li>
+<li><code>instruction</code> <span class="where">string · optional</span> — Optional specific directive to guide search synthesis.</li>
+<li><code>urls</code> <span class="where">array · optional</span> — Optional specific target URLs to analyze in detail.</li>
+<li><code>thinking</code> <span class="where">boolean · optional</span> — Optional flag to enable deep reasoning for search planning.</li>
+</ul>
+</li>
+<li><code>generate_image</code> — Generate an image via Antigravity using the signed-in Google account, optionally guided by local reference images. Saves under .pig/generated-images/ unless path is set.
+
+Codemode: `$tools-&gt;generate_image([...])` resolves to a string.
+<ul>
+<li><code>prompt</code> <span class="where">string · required</span> — Image description.</li>
+<li><code>aspectRatio</code> <span class="where">string · optional</span> — Aspect ratio for the generated image.</li>
+<li><code>model</code> <span class="where">string · optional</span> — Image model id. Default: gemini-3.1-flash-image.</li>
+<li><code>referenceImages</code> <span class="where">array · optional</span> — Reference images to send alongside the prompt.</li>
+<li><code>path</code> <span class="where">string · optional</span> — Project-relative file or directory to save the image.</li>
+</ul>
+</li>
+<li><code>analyze_video</code> — Watch a local video file with Google Gemini, which understands video (motion, audio, on-screen text, UI flows), and return its answer as text. Use this whenever you need to know what is in a video — the current model cannot see video itself. Supported: mp4, m4v, mov, webm, mkv, avi, mpeg, mpg, 3gp, flv, wmv. Large files are uploaded, which can take a minute or more.
+
+Codemode: `$tools-&gt;analyze_video([...])` resolves to a string.
+<ul>
+<li><code>path</code> <span class="where">string · required</span> — Path to the video file, absolute or relative to the working directory</li>
+<li><code>prompt</code> <span class="where">string · optional</span> — What to ask about the video. Be specific (e.g. &quot;list every UI screen shown and what the user taps&quot;). Defaults to a detailed description of content, actions and UI details.</li>
+</ul>
+</li>
+<li><code>codemode</code> — Run PHP that calls other tools. The input is raw PHP source (no `&lt;?php`, not JSON, no code fence), run as a function body in a sandboxed `php` process: top-level `return` works and `$tools` is in scope. No shell, file system, network or `include`.
+- `$tools-&gt;name([...args])` answers a string, or an array if the tool&#039;s declaration says so, and throws on failure. An array-returning tool may answer on failure too; check its fields. A result with pictures in it answers `[&#039;text&#039; =&gt; ..., &#039;images&#039; =&gt; [block, ...]]`; show one with `image($r[&#039;images&#039;][0])`. Calls still running when the script ends are cancelled.
+- Optional first line: `// @options: {&quot;max_output_tokens&quot;: 10000, &quot;timeout_ms&quot;: 60000}`
+
+Globals:
+- `text($value)`, `image($dataUrlOrImageBlock)`, `echo`, and top-level `return` add output; `exit_script()` ends the script (not `exit`). `image()` also saves the image to a temp file and the result names its path.
+- `parallel([fn () =&gt; ..., ...])` runs independent calls at once, keys kept; `parallel_settled([...])` answers `[&#039;ok&#039; =&gt; bool, &#039;value&#039; | &#039;error&#039;]` per arm so one failure does not stop the rest.
+- `store($key, $value)` and `load($key)` keep small JSON values across codemode calls.
+- `ALL_TOOLS`, `search_tools($query, [&#039;limit&#039; =&gt; 8, &#039;namespace&#039; =&gt; ...])`, `describe_tool($name)`, `describe_namespace($name)`: find unlisted tools, such as MCP tools.
+- `$models`: classifiers and image generation.
+- The full reference is /Users/kaka/Development/owner/pig/extensions/pig-codemode/CODEMODE.md; read it when a detail above is not enough.
+
+Some nested tools are not listed here. They are still on `$tools` and in `ALL_TOOLS`; `search_tools($query)` finds them.
+
+Nested tools:
+
+## iphone_use (some tools not listed)
+PUA means Phone Use Agent; all iPhone Use tools use the pua_ prefix. Read iphone-use-setup before setup and iphone-use for tasks. First phone task in a new chat: pua_ready(recover=true, screenshot=false); only ready=true permits phone tasks, then reuse READY&#039;s observation and the healthy channel. If READY fails with pua_unreachable/not_ready, continue initialization rather than end the task: pua_setup(action=status), reuse an active start/recovery job or start once from the existing config/build, poll that job until service.ready=true, then READY again. Missing config/source/build uses the setup skill. recover=true is runtime recovery, not cold startup; for state=recovering follow its setup job until the service is ready, then READY again. Honor explicit diagnostic/no-start/no-restart instructions. The live iPhone screen opens or reuses the same side panel with READY; setup/recovery and preview pause/resume keep the existing panel. Use pua_screen to reopen a closed panel, not to refresh an already open one. Opening it does not prove readiness or require an extra user confirmation, and widget frames never substitute for a model observation or final verification. Results are one compact JSON text. Tree nodes give type without the XCUIElementType prefix and rect=[x,y,width,height] in iPhone points; an omitted name equals label, an omitted value repeats the text, omitted enabled/visible/in_viewport are true. A listed node is not proven hittable: fixed headers and overlays can cover it. A screenshot arrives as an image in the same result; through functions.exec forward each image block with image(block) and text blocks with text(block.text), never text(the whole result) or base64. If image forwarding is unavailable, use view_image on image.path or error.observation.image.path. It is scaled for reading: image pixels x image.pixel_to_point [x,y] = iPhone points. Standalone observation uses mode, mutation output uses observe. Selectors copy label/name/value/type from fresh nodes; use label_contains for long or changing labels. Matches nested at one place, or with only one on screen, resolve by themselves. Screenshot inspection is the fallback for abnormal UI state: selector/focus failure, unresolved scroll search, no scroll progress, changed/blocked scroll context, input mismatch or a failed page expectation. Inspect the attached screenshot FIRST before any further mutation; if no usable image is attached take one pua_observe(mode=screenshot). Decide from visible state whether to stop, handle a popup, change the region/direction, tap by x/y or continue missing work. scroll_find never chains another swipe after an unresolved post-scroll query. tap_point/candidates locate elements but do not prove they are unobstructed; close a visible popup before tapping a covered background target. For input tap the visible editable field, then type_text with text and no selector. If a coordinate tap or focus failed, choose a new target from a fresh screenshot rather than repeat the same point or hand routine UI trouble to the user. Do not try other selector spellings or read the tree again first. Correct schema/channel/authentication errors by their own recovery; never blindly replay uncertain actions. Resolve unknown bundle IDs with pua_apps. Execute routine actions optimistically: observe=none and verify=false are defaults, verified=false/verification_deferred=true is normal and does not require a separate verification call. If the next decision needs the resulting page, request observe=tree/both in the action and inspect previous success while planning that next step. Chain known steps in batch; do not batch speculative repeated swipes toward an unknown target. Inspect the next page first, using a screenshot when tree truncation hides the boundary. explicit expect/verify opts into checking key outcomes. Send long text whole: when type_text returns input_complete=false, call it again with only continue_token; a batch stopped by input_continues or time_budget continues from stopped_at. Verify final critical results before reporting completion. Retry or replan only after observing a definite failure; never replay uncertain input/submission or an already executed multi-step operation wholesale. No_scroll_progress from explicit verification does not prove empty/complete data. For App passwords or Face ID call pua_screen(action=pause); phone_locked already auto-pauses the preview for device unlock, so do not overwrite that reason with an extra pause. Pause phone calls and use the available host question tool (request_user_input_async in Default), first option exactly 已完成继续. Wait for the actual user answer; async return or preselection is not confirmation. After the actual user completion answer, explicitly pua_screen(action=resume) for App authentication or legacy/unknown pause, then read fresh state. For device unlock run READY once; successful READY clears only its matching device_locked pause. READY/open never clear App authentication or unknown pause. Continue remaining work from that fresh state. Operation action_complete/verified fields do not mean the user&#039;s entire task is complete. Track all deliverables, give commentary progress and continue tools while work remains; final only after completion or a concrete blocker. For an unavailable MCP binding use the skill&#039;s direct Runtime fallback with the same operation lock.
+
+### `mcp__iphone_use__pua_observe`
+Fresh phone controls and/or a screenshot, with the iPhone point viewport and an observation_id. Nodes: type without the XCUIElementType prefix; rect=[x,y,width,height] in points; an omitted name equals label, an omitted value repeats the text, omitted enabled/visible/in_viewport are true. A listed node is not proven hittable: fixed headers and overlays can cover it. The screenshot is scaled for reading: image pixels x image.pixel_to_point [x,y] = points.
+
+codemode tool declaration:
+```php
+$tools-&gt;mcp__iphone_use__pua_observe(array{
+  expensive_visibility?: bool,
+  include_invisible?: bool,
+  // @minimum 1 @maximum 500
+  max_nodes?: int,
+  // Standalone observation output, default tree. Use mode here; observe is a post-action option on mutation tools. none is not a standalone observation mode.
+  // @minLength 1 @maxLength 1000
+  mode?: &#039;tree&#039;|&#039;screenshot&#039;|&#039;both&#039;,
+} $input): array{content: list&lt;array{data?: string, mimeType?: string, text?: string, type: &#039;text&#039;|&#039;image&#039;|&#039;audio&#039;|&#039;resource_link&#039;|&#039;resource&#039;, ...&lt;string, mixed&gt;}&gt;, isError?: bool, structuredContent?: mixed, ...&lt;string, mixed&gt;}
+```
+
+### `mcp__iphone_use__pua_wait`
+Bounded semantic presence polling for expected target. Presence is a UI postcondition, not proof of business correctness.
+
+codemode tool declaration:
+```php
+$tools-&gt;mcp__iphone_use__pua_wait(array{
+  // Selector; fields as documented on pua_find.selector.
+  selector: array{
+    enabled?: bool|&#039;true&#039;|&#039;false&#039;,
+    // @minimum 0 @maximum 199
+    index?: int,
+    // @minLength 1 @maxLength 1000
+    label?: string,
+    // @minLength 1 @maxLength 1000
+    label_contains?: string,
+    // @minLength 1 @maxLength 1000
+    name?: string,
+    // @minLength 1 @maxLength 2000
+    predicate?: string,
+    // @minLength 1 @maxLength 1000
+    type?: string,
+    // @minLength 1 @maxLength 1000
+    value?: string,
+  },
+  // @minimum 0 @maximum 20
+  timeout_seconds?: float,
+} $input): array{content: list&lt;array{data?: string, mimeType?: string, text?: string, type: &#039;text&#039;|&#039;image&#039;|&#039;audio&#039;|&#039;resource_link&#039;|&#039;resource&#039;, ...&lt;string, mixed&gt;}&gt;, isError?: bool, structuredContent?: mixed, ...&lt;string, mixed&gt;}
+```
+
+### `mcp__iphone_use__pua_scroll_find`
+Find a hittable target with at most one swipe. Ambiguity/occlusion stops immediately; an unresolved post-scroll query returns a screenshot. Inspect the end, region and overlays before deciding whether to swipe again; do not blindly repeat or raise the budget.
+
+codemode tool declaration:
+```php
+$tools-&gt;mcp__iphone_use__pua_scroll_find(array{
+  // Finger movement; up usually reveals later rows.
+  // @minLength 1 @maxLength 1000
+  direction?: &#039;up&#039;|&#039;down&#039;|&#039;left&#039;|&#039;right&#039;,
+  // 0 only queries; positive legacy limits allow at most one swipe, then an unresolved target returns a screenshot for the next decision.
+  // @minimum 0 @maximum 10 @default 1
+  max_swipes?: int,
+  // Selector; fields as documented on pua_find.selector.
+  selector: array{
+    enabled?: bool|&#039;true&#039;|&#039;false&#039;,
+    // @minimum 0 @maximum 199
+    index?: int,
+    // @minLength 1 @maxLength 1000
+    label?: string,
+    // @minLength 1 @maxLength 1000
+    label_contains?: string,
+    // @minLength 1 @maxLength 1000
+    name?: string,
+    // @minLength 1 @maxLength 2000
+    predicate?: string,
+    // @minLength 1 @maxLength 1000
+    type?: string,
+    // @minLength 1 @maxLength 1000
+    value?: string,
+  },
+} $input): array{content: list&lt;array{data?: string, mimeType?: string, text?: string, type: &#039;text&#039;|&#039;image&#039;|&#039;audio&#039;|&#039;resource_link&#039;|&#039;resource&#039;, ...&lt;string, mixed&gt;}&gt;, isError?: bool, structuredContent?: mixed, ...&lt;string, mixed&gt;}
+```
+
+### `mcp__iphone_use__pua_collect_list`
+Collect/deduplicate accessibility rows over bounded pages. Returns evidence and explicit coverage limits; always requires reconciliation before declaring business completeness.
+
+codemode tool declaration:
+```php
+$tools-&gt;mcp__iphone_use__pua_collect_list(array{
+  // Selector; fields as documented on pua_find.selector.
+  end_selector?: array{
+    enabled?: bool|&#039;true&#039;|&#039;false&#039;,
+    // @minimum 0 @maximum 199
+    index?: int,
+    // @minLength 1 @maxLength 1000
+    label?: string,
+    // @minLength 1 @maxLength 1000
+    label_contains?: string,
+    // @minLength 1 @maxLength 1000
+    name?: string,
+    // @minLength 1 @maxLength 2000
+    predicate?: string,
+    // @minLength 1 @maxLength 1000
+    type?: string,
+    // @minLength 1 @maxLength 1000
+    value?: string,
+  },
+  // @minimum 1 @maximum 10
+  max_pages?: int,
+  // @minLength 1 @maxLength 1000
+  row_type?: string,
+} $input): array{content: list&lt;array{data?: string, mimeType?: string, text?: string, type: &#039;text&#039;|&#039;image&#039;|&#039;audio&#039;|&#039;resource_link&#039;|&#039;resource&#039;, ...&lt;string, mixed&gt;}&gt;, isError?: bool, structuredContent?: mixed, ...&lt;string, mixed&gt;}
+```
+
+### `mcp__iphone_use__pua_apps`
+Resolve a real bundle ID by installed-device inventory, bundled verified aliases, or Apple&#039;s Search API. Query app name before launch instead of guessing. Store metadata does not prove installation; check installed_verified and publisher/country.
+
+codemode tool declaration:
+```php
+$tools-&gt;mcp__iphone_use__pua_apps(array{
+  // @minLength 1 @maxLength 2
+  country?: string,
+  // @minimum 1 @maximum 30
+  limit?: int,
+  // @minLength 1 @maxLength 100
+  query: string,
+  // @minLength 1 @maxLength 1000
+  source?: &#039;auto&#039;|&#039;catalog&#039;|&#039;installed&#039;|&#039;apple&#039;,
+} $input): array{content: list&lt;array{data?: string, mimeType?: string, text?: string, type: &#039;text&#039;|&#039;image&#039;|&#039;audio&#039;|&#039;resource_link&#039;|&#039;resource&#039;, ...&lt;string, mixed&gt;}&gt;, isError?: bool, structuredContent?: mixed, ...&lt;string, mixed&gt;}
+```
+
+### `mcp__iphone_use__pua_doctor`
+Diagnose local Xcode, USB devices, signing prerequisites and PUA health without changing the phone. Start here for setup.
+
+codemode tool declaration:
+```php
+$tools-&gt;mcp__iphone_use__pua_doctor(array{} $input): array{content: list&lt;array{data?: string, mimeType?: string, text?: string, type: &#039;text&#039;|&#039;image&#039;|&#039;audio&#039;|&#039;resource_link&#039;|&#039;resource&#039;, ...&lt;string, mixed&gt;}&gt;, isError?: bool, structuredContent?: mixed, ...&lt;string, mixed&gt;}
+```
+
+### `mcp__iphone_use__pua_ready`
+First phone task in a new chat: initialize with READY (recover=true or omitted); only ready=true permits phone tasks. Reuse this chat&#039;s healthy channel afterward. pua_unreachable/not_ready is a setup branch, not final task failure: setup(status), reuse an active job or start once, then READY again. recover=true handles owned runtime faults; it does not cold-start a stopped service. For state=recovering/recovery_required follow guidance. Never replay phone actions.
+
+codemode tool declaration:
+```php
+$tools-&gt;mcp__iphone_use__pua_ready(array{
+  // Normal task startup: omit or set true, so a persistent local.pid/XCTest fault can queue one bounded restart of a proven owned PUA. Use false only for an explicitly requested diagnostic/no-restart check, not a routine precheck. False is respected and returns ready=false, state=recovery_required when restart is needed; queued recovery returns state=recovering. Neither state proves readiness.
+  // @default true
+  recover?: bool,
+  // Also verify screenshot; false retains status/session/source/viewport/unlock checks.
+  // @default true
+  screenshot?: bool,
+} $input): array{content: list&lt;array{data?: string, mimeType?: string, text?: string, type: &#039;text&#039;|&#039;image&#039;|&#039;audio&#039;|&#039;resource_link&#039;|&#039;resource&#039;, ...&lt;string, mixed&gt;}&gt;, isError?: bool, structuredContent?: mixed, ...&lt;string, mixed&gt;}
+```
+
+### `mcp__iphone_use__pua_metrics`
+In-process totals without text, app data or images: PUA HTTP time and bytes, tool time, response bytes per tool, and the wait between each response and the next tool request (host, model and user time). reset=true starts a new window.
+
+codemode tool declaration:
+```php
+$tools-&gt;mcp__iphone_use__pua_metrics(array{
+  // Return the totals, then start a new measurement window.
+  // @default false
+  reset?: bool,
+} $input): array{content: list&lt;array{data?: string, mimeType?: string, text?: string, type: &#039;text&#039;|&#039;image&#039;|&#039;audio&#039;|&#039;resource_link&#039;|&#039;resource&#039;, ...&lt;string, mixed&gt;}&gt;, isError?: bool, structuredContent?: mixed, ...&lt;string, mixed&gt;}
+```
+
+### `mcp__iphone_use__pua_setup`
+Initialize/start PUA when READY is unreachable or not_ready: status first, reuse an active start/recovery job, or start once with the existing config/build. Poll its job until service.ready=true, then READY again. Missing config/source/build uses iphone-use-setup. No blanket reinstall or extra approval for authorized startup; honor no-restart instructions. Never uninstalls apps.
+
+codemode tool declaration:
+```php
+$tools-&gt;mcp__iphone_use__pua_setup(array{
+  // @minLength 1 @maxLength 1000
+  action: &#039;discover&#039;|&#039;fetch&#039;|&#039;configure&#039;|&#039;build&#039;|&#039;start&#039;|&#039;stop&#039;|&#039;status&#039;,
+  // @minLength 1 @maxLength 1000
+  bundle_id?: string,
+  // @minimum 1024 @maximum 65535
+  device_port?: int,
+  // @minLength 1 @maxLength 1000
+  job_id?: string,
+  // @minimum 1024 @maximum 65535
+  local_port?: int,
+  // @minLength 1 @maxLength 4096
+  source_dir?: string,
+  // @minLength 1 @maxLength 1000
+  team_id?: string,
+  // @minLength 1 @maxLength 1000
+  udid?: string,
+} $input): array{content: list&lt;array{data?: string, mimeType?: string, text?: string, type: &#039;text&#039;|&#039;image&#039;|&#039;audio&#039;|&#039;resource_link&#039;|&#039;resource&#039;, ...&lt;string, mixed&gt;}&gt;, isError?: bool, structuredContent?: mixed, ...&lt;string, mixed&gt;}
+```
+
+### `mcp__iphone_use__pua_screen`
+Open or reuse the live iPhone screen in the Codex side panel. No phone actions or UI controls. Pause the preview before password/Face ID user takeover; resume after explicit completion. READY also opens or reuses this view by default.
+
+codemode tool declaration:
+```php
+$tools-&gt;mcp__iphone_use__pua_screen(array{
+  // Default open displays the live iPhone sidebar. Pause before password/Face ID takeover; resume only after the user confirms completion.
+  // @minLength 1 @maxLength 1000
+  action?: &#039;open&#039;|&#039;pause&#039;|&#039;resume&#039;,
+} $input): array{content: list&lt;array{data?: string, mimeType?: string, text?: string, type: &#039;text&#039;|&#039;image&#039;|&#039;audio&#039;|&#039;resource_link&#039;|&#039;resource&#039;, ...&lt;string, mixed&gt;}&gt;, isError?: bool, structuredContent?: mixed, ...&lt;string, mixed&gt;}
+```
+
+### `mcp__iphone_use__pua_screen_frame`
+App-only cached live preview and action cursor events. Never reads XML, starts sessions or occupies the phone operation lock.
+
+codemode tool declaration:
+```php
+$tools-&gt;mcp__iphone_use__pua_screen_frame(array{
+  // @minimum 0 @maximum 9007199254740991
+  after_seq?: int,
+  // @minimum 0 @maximum 9007199254740991
+  last_event_id?: int,
+} $input): array{content: list&lt;array{data?: string, mimeType?: string, text?: string, type: &#039;text&#039;|&#039;image&#039;|&#039;audio&#039;|&#039;resource_link&#039;|&#039;resource&#039;, ...&lt;string, mixed&gt;}&gt;, isError?: bool, structuredContent?: mixed, ...&lt;string, mixed&gt;}
+```
+
+### `mcp__iphone_use__pua_screen_action`
+App-only toolbar of the live preview, pressed by the user: refresh the preview stream, send the iPhone Home, or copy a screenshot to the Mac clipboard. Refused while the preview is paused for authentication.
+
+codemode tool declaration:
+```php
+$tools-&gt;mcp__iphone_use__pua_screen_action(array{
+  // refresh reconnects the preview stream, home returns the iPhone to its Home screen, screenshot copies a native capture to the Mac clipboard.
+  // @minLength 1 @maxLength 1000
+  action: &#039;refresh&#039;|&#039;home&#039;|&#039;screenshot&#039;,
+} $input): array{content: list&lt;array{data?: string, mimeType?: string, text?: string, type: &#039;text&#039;|&#039;image&#039;|&#039;audio&#039;|&#039;resource_link&#039;|&#039;resource&#039;, ...&lt;string, mixed&gt;}&gt;, isError?: bool, structuredContent?: mixed, ...&lt;string, mixed&gt;}
+```
+<ul>
+<li><code>code</code> <span class="where">string · required</span> — Raw PHP source. Top-level return works. May start with a `// @options: {&quot;max_output_tokens&quot;: 1000}` line.</li>
+</ul>
+</li>
+</ul>
+</details>
+</section>
+<section class="turn user">
+<h2>You</h2>
+<p>你好</p>
+</section>
+<section class="turn assistant">
+<h2>gemini-4-argon</h2>
+<p>你好！请问今天需要处理什么任务？</p>
+</section>
+</main>
+</body>
+</html>

@@ -282,7 +282,7 @@ All extensions in `pig` are **100% pure native PHP** with zero external npm or c
 | :--- | :--- | :--- |
 | **`pig-llama`** · `builtin:llama.cpp` | `extensions/pig-llama/` | The `llama.cpp` provider: models from a running `llama-server` router, `/login llama.cpp` for its URL and key, `/llama` to load, unload and download (Hugging Face search) models. |
 | **`pig-codemode`** · `builtin:codemode` | `extensions/pig-codemode/` | Fast multi-tool execution in a sandboxed child PHP process (`open_basedir`, `disable_functions`). |
-| **`pig-tool-search`** · `builtin:tool-search` | `extensions/pig-tool-search/` | `tool_search`: BM25 over the tools an extension deferred (MCP's `deferred` exposure), loading the matches. |
+| **`pig-tool-search`** · `builtin:tool-search` | `extensions/pig-tool-search/` | `tool_search`: BM25 over the registered tools with `codemode` or `deferred` exposure that are not active (such as MCP tools), activating the matches. The `toolExposure` setting can defer any tool. |
 | **`pig-mcp`** · `builtin:mcp` | `extensions/pig-mcp/` | Model Context Protocol client for stdio & streamable HTTP servers with dynamic OAuth (`mcp.json`). |
 | **`pig-schedule`** · `builtin:schedule` | `extensions/pig-schedule/` | The `schedule` tool: scheduled tasks set up by asking, each change confirmed first, saved by the running `pig web`. pig's own. |
 

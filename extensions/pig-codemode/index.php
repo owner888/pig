@@ -28,7 +28,6 @@ use Pig\Async\AbortSignal;
 use Pig\Async\Deferred;
 use Pig\Codemode\Declarations;
 use Pig\Codemode\Identifier;
-use Pig\Codemode\Registry;
 use Pig\Codemode\CodemodeSandbox;
 use Pig\Codemode\Source;
 use Pig\Codemode\SourceError;
@@ -50,16 +49,16 @@ require_once __DIR__ . '/CodemodeDescription.php';
  * what the isolation is and is not.
  *
  * The model writes a script; the script calls nested tools as `$tools->name([...])`, fans out
- * with `parallel()`, filters what came back, and returns only what the model needs. Nested
- * calls go through the agent's own tools — the hooked ones, so the permission gate reaches
- * them — or, for a `codemode`-exposed MCP tool that is deliberately not on the model, through
- * `Pig\Codemode\Registry`, where the MCP extension puts them.
+ * with `parallel()`, filters what came back, and returns only what the model needs. Scripts call
+ * the loadout's callable tools (`ToolLoadout::callable()`): the active `direct` ones and every
+ * `codemode` or `deferred` one, active or not — upstream's `ctx.getCallableTools()`. Every call
+ * goes through the session's nested-call pipeline, with the hooked tool, so the permission gate
+ * reaches it.
  *
- * Registered **inactive** (`defaultActive: false`), as upstream's `createCodemodeExtension()`
- * registers it: naming it in `--tools` or the `defaultTools` setting, or `setActiveTools()`,
- * activates it, and so does a server with `codemode` exposure connecting — upstream's MCP
- * `ensureDiscoveryActive()`, here watching `Pig\Codemode\Registry`, where the MCP extension puts
- * those tools. Like upstream's, that only ever activates; nothing here takes it off again.
+ * Registered **inactive** (`defaultActive: false`) and `model-only`, as upstream's
+ * `createCodemodeExtension()` registers it: naming it in `--tools` or the `defaultTools` setting,
+ * or `setActiveTools()`, activates it; the MCP extension does when MCP tools are only reachable
+ * from scripts.
  * `store()`/`load()` persist across scripts as a `codemode-store` entry in the session file,
  * upstream's name, so a conversation moved to pi keeps its store.
  */
@@ -77,105 +76,99 @@ return static function (ExtensionApi $pig): void {
     $maxConcurrentModelCalls = 4;
 
     /**
-     * The active tools as the loadout last offered them, codemode left out — upstream's
-     * `loadout.callable`, captured by `prepareLoadout`. In `only` mode they are not on the agent
-     * at all, so this is the only way a script still reaches them.
-     *
-     * @var list<AgentTool>|null
+     * The loadout `prepareLoadout` was last asked with — upstream's `ToolLoadout` there. Its
+     * `callable` tools are what scripts reach: the active `direct` ones and every `codemode` or
+     * `deferred` one, active or not. In `only` mode the direct ones are not on the agent at all,
+     * so this is how a script still reaches them.
      */
-    $callable = null;
+    $view = null;
 
     /** `codemode.mode`: `on` (the default) or `only` — upstream's `CodemodeMode`. */
     $mode = static function () use (&$settings): string {
         return $settings?->get('codemode.mode') === 'only' ? 'only' : 'on';
     };
 
-    /** @var array<string, array{name: string, description: string, parameters: array, outputSchema?: mixed, execute: Closure, namespace: ?array, exposure: string}> what scripts can call that the model cannot see */
-    $nested = static fn (): array => Registry::all();
+    /**
+     * The loadout's callable tools, codemode itself left out — upstream's `getCodemodeCallableTools()`
+     * — with their exposure and namespace. Before `prepareLoadout` has been asked (codemode not
+     * active yet), the session's loadout answers; with neither, there is nothing to call.
+     *
+     * @return array<string, array{definition: \Pig\Ai\Tool, tool: AgentTool, exposure: string, namespace: ?array<string, mixed>}>
+     */
+    $agentTools = static function (?ExtensionContext $ctx) use (&$view): array {
+        $loadout = $ctx?->session?->loadout();
+        $tools = $view?->callable ?? $loadout?->callable() ?? [];
+        $namespaces = [];
 
-    /** The agent's own tools (the hooked ones), which scripts can call too, minus codemode itself. */
-    $agentTools = static function (ExtensionContext $ctx) use (&$callable): array {
+        if ($view === null) {
+            foreach ($ctx?->session?->allTools() ?? [] as $tool) {
+                $namespaces[$tool['name']] = $tool['namespace'] ?? null;
+            }
+        }
+
         $out = [];
 
-        foreach ($callable ?? $ctx->session?->agent->tools() ?? [] as $tool) {
+        foreach ($tools as $tool) {
             $definition = $tool->definition();
 
             if ($definition->name === CodemodeDescription::TOOL_NAME) {
                 continue;
             }
 
-            $out[$definition->name] = ['definition' => $definition, 'tool' => $tool];
+            $out[$definition->name] = [
+                'definition' => $definition,
+                'tool' => $tool,
+                'exposure' => $view?->exposure($definition->name) ?? $loadout?->exposure($definition->name) ?? 'direct',
+                'namespace' => $view !== null ? $view->namespace($definition->name) : ($namespaces[$definition->name] ?? null),
+            ];
         }
 
         return $out;
     };
 
-    /** Every callable tool as a declaration, agent's first, for the description and `ALL_TOOLS`. */
-    $declarations = static function (?ExtensionContext $ctx) use ($agentTools, $nested): array {
-        $all = [];
+    $declarationOf = static fn (\Pig\Ai\Tool $definition): array => ['name' => $definition->name, 'description' => $definition->description, 'inputSchema' => $definition->parameters, ...($definition->outputSchema !== null ? ['outputSchema' => $definition->outputSchema] : [])];
 
-        if ($ctx !== null) {
-            foreach ($agentTools($ctx) as $name => $one) {
-                $all[$name] = ['name' => $name, 'description' => $one['definition']->description, 'inputSchema' => $one['definition']->parameters, ...($one['definition']->outputSchema !== null ? ['outputSchema' => $one['definition']->outputSchema] : [])];
-            }
-        }
-
-        foreach ($nested() as $name => $tool) {
-            $all[$name] ??= ['name' => $name, 'description' => $tool['description'], 'inputSchema' => $tool['parameters'], ...(isset($tool['outputSchema']) ? ['outputSchema' => $tool['outputSchema']] : [])];
-        }
-
-        return array_values($all);
+    /** Every callable tool as a declaration, for `ALL_TOOLS` and the samples. */
+    $declarations = static function (?ExtensionContext $ctx) use ($agentTools, $declarationOf): array {
+        return array_values(array_map(static fn (array $one): array => $declarationOf($one['definition']), $agentTools($ctx)));
     };
 
-    $namespaces = static function () use ($nested): array {
-        $out = [];
-
-        foreach ($nested() as $name => $tool) {
-            if ($tool['namespace'] !== null) {
-                $out[$name] = $tool['namespace'];
-            }
-        }
-
-        return $out;
-    };
-
-    $deferredNames = static function () use ($nested): array {
-        $out = [];
-
-        foreach ($nested() as $name => $tool) {
-            if ($tool['exposure'] === 'codemode-deferred') {
-                $out[$name] = true;
-            }
-        }
-
-        return $out;
+    /** @return array<string, array<string, mixed>> tool name => its namespace, for the ones with one */
+    $namespaces = static function (?ExtensionContext $ctx = null) use ($agentTools): array {
+        return array_filter(array_map(static fn (array $one): ?array => $one['namespace'], $agentTools($ctx)), static fn (?array $namespace): bool => $namespace !== null);
     };
 
     /**
-     * The description lists what the model cannot otherwise see — upstream's `on` mode: the
-     * nested tools, which have no `direct` exposure; the agent's own tools are callable but not
-     * listed, since the model has their schemas already. In `only` mode every callable tool is
-     * listed, because their declarations are hidden from the request.
-     *
-     * @param list<AgentTool> $callableTools
+     * Upstream's `prepareCodemodeLoadout()` listing: in `on` mode the callable tools without
+     * `direct` exposure — the model has the direct ones' schemas already — and in `only` mode
+     * every callable tool, because their declarations are hidden from the request. "Listing by
+     * exposure, not by the active set, keeps the codemode description unchanged when
+     * `tool_search` loads a tool." A `deferred` tool is listed by its namespace only.
      */
-    $describe = static function (string $mode, array $callableTools) use ($nested, $namespaces, $deferredNames, &$settings): string {
+    $describe = static function (string $mode, ?ExtensionContext $ctx = null) use ($agentTools, $declarationOf, &$settings): string {
         $listed = [];
+        $namespaces = [];
+        $deferred = [];
 
-        if ($mode === 'only') {
-            foreach ($callableTools as $tool) {
-                $definition = $tool->definition();
-                $listed[$definition->name] = ['name' => $definition->name, 'description' => $definition->description, 'inputSchema' => $definition->parameters, ...($definition->outputSchema !== null ? ['outputSchema' => $definition->outputSchema] : [])];
+        foreach ($agentTools($ctx) as $name => $one) {
+            if ($mode === 'on' && $one['exposure'] === 'direct') {
+                continue;
             }
-        }
 
-        foreach ($nested() as $name => $tool) {
-            $listed[$name] ??= ['name' => $name, 'description' => $tool['description'], 'inputSchema' => $tool['parameters'], ...(isset($tool['outputSchema']) ? ['outputSchema' => $tool['outputSchema']] : [])];
+            $listed[] = $declarationOf($one['definition']);
+
+            if ($one['namespace'] !== null) {
+                $namespaces[$name] = $one['namespace'];
+            }
+
+            if ($one['exposure'] === 'deferred') {
+                $deferred[$name] = true;
+            }
         }
 
         $budget = $settings?->get('codemode.inlineBudget');
 
-        return CodemodeDescription::build(array_values($listed), $namespaces(), $deferredNames(), is_int($budget) && $budget >= 0 ? $budget : CodemodeDescription::DEFAULT_INLINE_BUDGET);
+        return CodemodeDescription::build($listed, $namespaces, $deferred, is_int($budget) && $budget >= 0 ? $budget : CodemodeDescription::DEFAULT_INLINE_BUDGET);
     };
 
     /**
@@ -295,7 +288,6 @@ return static function (ExtensionApi $pig): void {
 
     $execute = static function (string $toolCallId, array $params, ?Closure $onUpdate, ExtensionContext $ctx, ?AbortSignal $signal) use (
         $agentTools,
-        $nested,
         $declarations,
         $namespaces,
         $isNamespaceName,
@@ -439,35 +431,6 @@ return static function (ExtensionApi $pig): void {
                 $publish();
 
                 return $scriptValue($name, $result, $isError);
-            }];
-        }
-
-        // The nested-only tools: MCP tools the model is not shown.
-        foreach ($nested() as $name => $tool) {
-            if (isset($agentTools($ctx)[$name])) {
-                continue;
-            }
-
-            $sandboxTools[] = ['name' => $name, 'description' => $samples[$name] ?? '', 'execute' => static function (array $args, AbortSignal $callSignal) use ($name, $tool, $ctx, &$calls, $record, $publish, $truncate, $errorPreviewChars): mixed {
-                $index = $record($name, $args);
-                $at = microtime(true);
-
-                try {
-                    $value = ($tool['execute'])($args, $callSignal, $ctx);
-                    $calls[$index]['status'] = 'ok';
-                } catch (\Throwable $error) {
-                    $calls[$index]['status'] = $callSignal->aborted() ? 'cancelled' : 'error';
-                    $calls[$index]['error'] = $truncate($error->getMessage(), $errorPreviewChars);
-                    $calls[$index]['durationMs'] = (microtime(true) - $at) * 1000;
-                    $publish();
-
-                    throw $error;
-                }
-
-                $calls[$index]['durationMs'] = (microtime(true) - $at) * 1000;
-                $publish();
-
-                return $value;
             }];
         }
 
@@ -781,7 +744,7 @@ return static function (ExtensionApi $pig): void {
                     throw new RuntimeException('search_tools() namespace must be a string');
                 }
 
-                $spaces = $namespaces();
+                $spaces = $namespaces($ctx);
                 $documents = [];
 
                 foreach ($declarations($ctx) as $declaration) {
@@ -813,14 +776,14 @@ return static function (ExtensionApi $pig): void {
             },
             // Upstream's `describeNamespace()`: the namespace, its description and instructions,
             // and the identifiers of its tools.
-            'describe_namespace' => static function (array $args) use ($allNames, $namespaces, $isNamespaceName): ?array {
+            'describe_namespace' => static function (array $args) use ($allNames, $namespaces, $isNamespaceName, $ctx): ?array {
                 $name = $args[0] ?? null;
 
                 if (!is_string($name)) {
                     throw new RuntimeException('describe_namespace() expects a namespace name');
                 }
 
-                $spaces = $namespaces();
+                $spaces = $namespaces($ctx);
                 $found = null;
                 $names = [];
 
@@ -1266,28 +1229,40 @@ return static function (ExtensionApi $pig): void {
     // ---- registering ----------------------------------------------------------------------------
 
     /**
-     * Upstream's `prepareCodemodeLoadout()`, asked by the loadout with every active tool: in `on`
-     * mode the declared tools' descriptions say how a script calls them and codemode lists the
-     * nested tools; in `only` mode codemode lists every callable tool and their own declarations
-     * are hidden, so the model reaches them through scripts alone. Either way the callable list is
-     * kept here, which is the only way a hidden tool is still reachable.
-     *
-     * @param list<AgentTool> $tools
+     * Upstream's `prepareCodemodeLoadout()`: in `on` mode the declared tools that are callable say
+     * how a script calls them, and codemode lists the callable tools that are not `direct`; in
+     * `only` mode codemode lists every callable tool and the declarations of the active `direct`
+     * ones are hidden, so the model reaches them through scripts alone. The loadout is kept
+     * here, which is how a hidden tool is still reachable.
      */
-    $prepareLoadout = static function (array $tools) use (&$callable, $mode, $describe, $describeScriptCall): array {
-        $callable = array_values(array_filter($tools, static fn (AgentTool $t): bool => $t->definition()->name !== CodemodeDescription::TOOL_NAME));
-        $descriptions = [];
-        $hidden = [];
+    $prepareLoadout = static function (\Pig\CodingAgent\Tools\LoadoutView $loadout) use (&$view, $mode, $describe, $describeScriptCall): array {
+        $view = $loadout;
+        $callable = [];
 
-        foreach ($callable as $tool) {
-            if ($mode() === 'on') {
-                $descriptions[$tool->definition()->name] = $describeScriptCall($tool);
-            } else {
-                $hidden[] = $tool->definition()->name;
+        foreach ($loadout->callable as $tool) {
+            if ($tool->definition()->name !== CodemodeDescription::TOOL_NAME) {
+                $callable[$tool->definition()->name] = true;
             }
         }
 
-        $descriptions[CodemodeDescription::TOOL_NAME] = $describe($mode(), $callable);
+        $descriptions = [];
+        $hidden = [];
+
+        foreach ($loadout->declared as $tool) {
+            $name = $tool->definition()->name;
+
+            if (!isset($callable[$name])) {
+                continue;
+            }
+
+            if ($mode() === 'on') {
+                $descriptions[$name] = $describeScriptCall($tool);
+            } elseif ($loadout->exposure($name) === 'direct') {
+                $hidden[] = $name;
+            }
+        }
+
+        $descriptions[CodemodeDescription::TOOL_NAME] = $describe($mode());
 
         return ['descriptions' => $descriptions, 'hiddenDeclarations' => $hidden];
     };
@@ -1296,7 +1271,7 @@ return static function (ExtensionApi $pig): void {
         name: CodemodeDescription::TOOL_NAME,
         label: 'codemode',
         // Replaced through `prepareLoadout` with the declarations of the callable tools.
-        description: $describe($mode(), []),
+        description: CodemodeDescription::build([]),
         parameters: [
             'type' => 'object',
             'properties' => ['code' => ['type' => 'string', 'description' => 'Raw PHP source. Top-level return works. May start with a `// @options: {"max_output_tokens": 1000}` line.']],
@@ -1312,43 +1287,20 @@ return static function (ExtensionApi $pig): void {
         prepareLoadout: $prepareLoadout,
         defaultActive: false,
         reachesTools: static fn (array $input): string|array => CodemodeDescription::scriptReach($input['code'] ?? null),
+        // Scripts must not start other scripts.
+        exposure: 'model-only',
     );
     $pig->registerTool($tool);
 
-    $inSession = false;
-
-    // A `codemode`-exposed MCP server put tools in the registry, or took them out. Registering
-    // the tool again has the loadout applied again, so the description (`prepareLoadout`) follows
-    // the registry; and tools that only a script can reach activate codemode — upstream's
-    // `ensureDiscoveryActive()`, the half of it that is about codemode. When `--tools` or an
-    // `--exclude-tools` left codemode out, it is not registered and `setActiveTools()` ignores it.
-    $ensureActive = static function () use ($pig, $tool, &$inSession): void {
-        if (!$inSession) {
-            return;
-        }
-
-        $pig->registerTool($tool);
-
-        if (Registry::isEmpty()) {
-            return;
-        }
-
-        $active = $pig->getActiveTools();
-
-        if (!in_array(CodemodeDescription::TOOL_NAME, $active, true)) {
-            $pig->setActiveTools([...$active, CodemodeDescription::TOOL_NAME]);
-        }
-    };
-
-    Registry::onChange($ensureActive);
-
-    $pig->on('session_start', static function ($event, ExtensionContext $ctx) use (&$inSession, &$settings, $ensureActive): void {
+    // The settings (`codemode.mode`, `codemode.inlineBudget`) are the session's: registering the
+    // tool again has the loadout applied again, so `prepareLoadout` answers with them. Codemode
+    // does not activate itself; the MCP extension activates it when MCP tools are only reachable
+    // from scripts, as upstream's does.
+    $pig->on('session_start', static function ($event, ExtensionContext $ctx) use ($pig, $tool, &$settings): void {
         $settings = $ctx->session?->settings();
-        $inSession = $ctx->session !== null;
-        $ensureActive();
-    });
 
-    $pig->on('session_shutdown', static function () use (&$inSession): void {
-        $inSession = false;
+        if ($ctx->session !== null) {
+            $pig->registerTool($tool);
+        }
     });
 };

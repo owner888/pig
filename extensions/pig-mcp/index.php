@@ -27,7 +27,6 @@ use PigMcp\McpSignInCancelledError;
 use PigMcp\McpTools;
 use PigMcp\ServerConnection;
 use PigMcp\ServerEntry;
-use Pig\Codemode\DeferredTools;
 
 // Class files beside the entry. Loading them twice, or beside another copy, is the loader's
 // business — `DeclaredSymbols` — not this file's.
@@ -47,13 +46,14 @@ foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'McpResour
  * Every call runs through pig's tool pipeline, so `tool_call` and `tool_result` hooks — the
  * permission gate among them — apply to MCP tools exactly as they apply to `bash`.
  *
- * A `deferred` tool is not declared to the model until `tool_search` loads it. `tool_search` is
- * not this extension's — it is `pig-tool-search`'s, as upstream's is the `tool-search`
- * extension's: this one lists each deferred tool in `DeferredTools` with how to register it, and
- * `tool_search` loads the matches, which reach the model from the next call. A deferred tool a
- * resumed session's transcript declared is registered as soon as its server connects
- * (`ExtensionApi::isToolPending()`), as upstream's session restores it. `codemode` and
- * `codemode-deferred` tools go to the codemode registry.
+ * Each tool is registered with its exposure (upstream's `registerTools()`): `direct` ones are
+ * declared; `codemode` and `deferred` ones are registered with the tool exposure `deferred`
+ * (`McpTools::toToolExposure()`) — not declared, callable from codemode scripts, and found by
+ * `tool_search`, which declares the matches from the next call; `hidden` ones are unreachable.
+ * Which of the two discovery tools a server needs is all that tells `codemode` and `deferred`
+ * apart: the session start activates codemode for the one and `tool_search` for the other
+ * (upstream's `ensureDiscoveryActive()`). A tool a resumed session's transcript declared is active
+ * again once its server connects, as upstream's session restores it.
  *
  * Every prompt lists the servers with codemode or deferred tools in the `mcp_servers` prompt
  * section (`McpServersSection`), as they are when it starts.
@@ -68,8 +68,8 @@ foreach (['ServerEntry', 'McpConfig', 'ServerConnection', 'McpTools', 'McpResour
  *
  * A server that offers resources brings the three resource tools Codex and opencode use —
  * `list_mcp_resources`, `list_mcp_resource_templates`, `read_mcp_resource` — registered with the
- * widest exposure among the servers that have resources: declared when one of them is `direct`,
- * behind `tool_search` otherwise, gone when none has any.
+ * widest exposure among the servers that have resources (`direct`, then `codemode`, then
+ * `deferred`), hidden when none has any.
  *
  * What a server says with `notifications/message` goes to `~/.pig/agent/mcp.log`, rotated at 5MB.
  */
@@ -114,8 +114,10 @@ return static function (ExtensionApi $pig): void {
     $toolOwners = [];
     /** @var array<string, list<string>> server => the pig tool names it currently offers */
     $serverTools = [];
-    /** @var 'direct'|'deferred'|'hidden'|null the exposure the resource tools were last registered with */
+    /** @var 'direct'|'codemode'|'deferred'|'hidden'|null the exposure the resource tools were last registered with */
     $resourceToolsExposure = null;
+    /** Whether the user was told that non-direct tools cannot be reached — upstream's `warnedUnreachable`. */
+    $warnedUnreachable = false;
 
     $describeState = static function (ServerEntry $entry, ?ServerConnection $connection, bool $withError = true): string {
         if (!$entry->isEnabled()) {
@@ -156,66 +158,69 @@ return static function (ExtensionApi $pig): void {
 
     /**
      * Register the resource tools with the widest exposure of the servers they reach: `direct` when
-     * one of them is direct, `deferred` otherwise; gone when no server has resources.
+     * one of them is direct, and so on; hidden when no server has resources. Upstream's
+     * `syncResourceTools()`.
      */
-    $syncResourceTools = static function () use ($pig, &$entries, &$connections, &$resourceToolsExposure, $resourceServers): void {
+    $syncResourceTools = static function () use ($pig, &$resourceToolsExposure, $resourceServers): void {
         $exposures = [];
 
         foreach ($resourceServers() as $connection) {
             $exposures[McpConfig::here($connection->entry->exposure())] = true;
         }
 
-        $next = isset($exposures['direct']) ? 'direct' : (isset($exposures['deferred']) ? 'deferred' : 'hidden');
+        $next = 'hidden';
+
+        foreach (['direct', 'codemode', 'deferred'] as $candidate) {
+            if (isset($exposures[$candidate])) {
+                $next = $candidate;
+                break;
+            }
+        }
 
         if ($next === $resourceToolsExposure || ($resourceToolsExposure === null && $next === 'hidden')) {
             return;
         }
 
+        $wasDirect = $resourceToolsExposure === 'direct';
         $resourceToolsExposure = $next;
-        $tools = McpResources::define($resourceServers);
 
-        // Whatever they were before comes off; what they are now goes on by the exposure's door.
-        $pig->removeTools(static fn ($tool): bool => in_array($tool->name, McpResources::NAMES, true));
-        DeferredTools::remove(static fn (array $one): bool => in_array($one['name'], McpResources::NAMES, true));
+        foreach (McpResources::define($resourceServers, $next) as $tool) {
+            $pig->registerTool($tool);
+        }
 
-        foreach ($tools as $tool) {
-            if ($next === 'direct') {
-                $pig->registerTool($tool);
-            } elseif ($next === 'deferred') {
-                DeferredTools::register($tool->name, $tool->description, $tool->parameters, ['name' => 'mcp resources', 'description' => null], static function () use ($pig, $tool): \Pig\CodingAgent\Extensions\ToolDefinition {
-                    $pig->registerTool($tool);
-
-                    return $tool;
-                });
-            }
+        // An active tool stays active when its exposure changes, so the ones that were direct come off.
+        if ($wasDirect) {
+            $pig->setActiveTools(array_values(array_diff($pig->getActiveTools(), McpResources::NAMES)));
         }
     };
 
-    // Whether a resource link in a result should name `read_mcp_resource`: only while the resource tools are on the model.
-    $resourcesReadable = static function () use (&$resourceToolsExposure): bool {
-        return $resourceToolsExposure === 'direct' || DeferredTools::isLoaded(McpResources::READ);
+    // Upstream's `readableResources`: whether `read_mcp_resource` reaches the server's resources,
+    // which a resource link in its results then names.
+    $resourcesReadable = static function (string $server) use ($resourceServers): bool {
+        foreach ($resourceServers() as $connection) {
+            if ($connection->name() === $server) {
+                return true;
+            }
+        }
+
+        return false;
     };
 
+    /**
+     * Register a server's tools, replacing what it offered before — upstream's `registerTools()`:
+     * each with its configured exposure (`McpTools::toToolExposure()`), so a `codemode` or
+     * `deferred` one is registered but not declared, callable from scripts and found by
+     * `tool_search`. Tools the server dropped are taken away.
+     */
     $registerTools = static function (ServerConnection $connection) use ($pig, &$toolOwners, &$serverTools, &$syncResourceTools, $resourcesReadable): void {
         $server = $connection->name();
+        $namespace = ['name' => $server, 'aliases' => [\Pig\CodingAgent\McpServers::namespace($server)], 'description' => $connection->instructions];
         $current = [];
-        /** @var array<string, true> the names that went to the codemode registry this pass */
-        $codemodeTools = [];
-        /** @var list<string> the names actually declared this pass — a deferred one is owned and not declared */
-        $declared = [];
-
-        // Whatever this server deferred last time is re-read from its new list below.
-        DeferredTools::remove(static fn (array $one): bool => !$one['loaded'] && $one['namespace']['name'] === $server);
 
         foreach ($connection->tools as $tool) {
             $toolName = (string) $tool['name'];
             $owner = "{$server}\0{$toolName}";
             $exposure = McpConfig::here(McpConfig::toolExposure($connection->entry->config, $toolName));
-
-            if ($exposure === 'hidden') {
-                continue;
-            }
-
             $name = McpTools::name($server, $toolName, static function (string $candidate) use (&$toolOwners, $owner, $current): bool {
                 $existing = $toolOwners[$candidate] ?? null;
 
@@ -223,76 +228,14 @@ return static function (ExtensionApi $pig): void {
             });
             $toolOwners[$name] = $owner;
             $current[] = $name;
-
-            // A deferred tool waits for `tool_search` — unless it was loaded before this server
-            // reconnected, in which case the model already knows it and it stays declared.
-            $define = static fn (): \Pig\CodingAgent\Extensions\ToolDefinition => McpTools::define($server, $tool, $name, $connection, $resourcesReadable);
-
-            // A codemode tool is never on the model: scripts reach it through the registry the
-            // codemode extension reads, and registering it there is what activates codemode.
-            if ($exposure === 'codemode' || $exposure === 'codemode-deferred') {
-                $defined = $define();
-                \Pig\Codemode\Registry::register(
-                    $name,
-                    $defined->description,
-                    $defined->parameters,
-                    static fn (array $args, \Pig\Async\AbortSignal $signal, ExtensionContext $ctx): mixed => McpTools::scriptValue($connection->callTool($toolName, $args, ['signal' => $signal, 'timeout' => $connection->timeout()])),
-                    ['name' => $server, 'aliases' => [\Pig\CodingAgent\McpServers::namespace($server)], 'description' => $connection->instructions],
-                    $exposure,
-                    McpTools::callToolResultSchema($tool),
-                );
-                $codemodeTools[$name] = true;
-                continue;
-            }
-
-            // Upstream registers a deferred tool inactive, `tool_search` activates it, and so does
-            // the session's restored loadout; pig lists one in `DeferredTools` for `tool_search`
-            // and registers it once it is asked for — and a session waiting for it is asking.
-            // A loaded one is registered first and listed after, so `tool_search` goes after it.
-            $list = null;
-
-            if ($exposure === 'deferred') {
-                $loaded = DeferredTools::isLoaded($name) || $pig->isToolPending($name);
-                $list = static fn () => DeferredTools::register(
-                    $name,
-                    (string) ($tool['description'] ?? ''),
-                    $tool['inputSchema'] ?? null,
-                    ['name' => $server, 'aliases' => [\Pig\CodingAgent\McpServers::namespace($server)], 'description' => $connection->instructions],
-                    static function () use ($pig, $define): \Pig\CodingAgent\Extensions\ToolDefinition {
-                        $defined = $define();
-                        $pig->registerTool($defined);
-
-                        return $defined;
-                    },
-                    $loaded,
-                );
-
-                if (!$loaded) {
-                    $list();
-                    continue;
-                }
-            }
-
-            $declared[] = $name;
-            $pig->registerTool($define());
-
-            if ($list !== null) {
-                $list();
-            }
+            $pig->registerTool(McpTools::define($server, $tool, $name, $connection, static fn (): bool => $resourcesReadable($server), $exposure, $namespace));
         }
 
-        // Tools the server dropped are taken away, and so is one that was declared last time and
-        // is deferred now (the exposure changed under it); when it is offered again it comes back above.
-        $gone = array_diff($serverTools[$server] ?? [], $declared);
+        $gone = array_values(array_diff($serverTools[$server] ?? [], $current));
 
         if ($gone !== []) {
             $pig->removeTools(static fn ($tool): bool => in_array($tool->name, $gone, true));
-
-            DeferredTools::remove(static fn (array $one): bool => $one['loaded'] && in_array($one['name'], $gone, true));
         }
-
-        // And the ones that left the codemode registry: not codemode any more, or dropped.
-        \Pig\Codemode\Registry::remove(static fn (string $n): bool => in_array($n, $serverTools[$server] ?? [], true) && !isset($codemodeTools[$n]));
 
         $serverTools[$server] = $current;
         $syncResourceTools();
@@ -303,10 +246,7 @@ return static function (ExtensionApi $pig): void {
 
         if ($names !== []) {
             $pig->removeTools(static fn ($tool): bool => in_array($tool->name, $names, true));
-            \Pig\Codemode\Registry::remove(static fn (string $n): bool => in_array($n, $names, true));
         }
-
-        DeferredTools::remove(static fn (array $one): bool => in_array($one['name'], $names, true));
 
         $serverTools[$server] = [];
         $syncResourceTools();
@@ -452,7 +392,7 @@ return static function (ExtensionApi $pig): void {
         return null;
     };
 
-    $setExposure = static function (ServerEntry $entry, string $exposure) use ($saveConfig, &$connections, $registerTools, $emitChange): ?string {
+    $setExposure = static function (ServerEntry $entry, string $exposure) use ($pig, $saveConfig, &$connections, &$serverTools, $registerTools, &$syncResourceTools, $emitChange): ?string {
         $failed = $saveConfig($entry, ['exposure' => $exposure]);
 
         if ($failed !== null) {
@@ -465,12 +405,19 @@ return static function (ExtensionApi $pig): void {
             $registerTools($connection);
         }
 
+        $syncResourceTools();
+
+        // Upstream's: "Tools no longer exposed directly leave the declared set; direct tools are
+        // activated on registration."
+        $indirect = array_column(array_filter($pig->getAllTools(), static fn (array $tool): bool => $tool['exposure'] !== 'direct'), 'name');
+        $tools = $serverTools[$entry->name] ?? [];
+        $pig->setActiveTools(array_values(array_filter($pig->getActiveTools(), static fn (string $name): bool => !in_array($name, $tools, true) || !in_array($name, $indirect, true))));
         $emitChange();
 
         return null;
     };
 
-    $formatStatus = static function () use (&$entries, &$connections, &$configErrors, &$overridden, $describeState): string {
+    $formatStatus = static function () use ($pig, &$entries, &$connections, &$configErrors, &$overridden, &$serverTools, $describeState): string {
         if ($entries === [] && $configErrors === [] && $overridden === []) {
             return 'No MCP servers configured. Add them to ' . Config::home() . '/mcp.json or .pig/mcp.json.';
         }
@@ -492,7 +439,7 @@ return static function (ExtensionApi $pig): void {
             $tools = $connection?->state === 'connected' ? ', ' . count($connection->tools) . ' tools' : '';
 
             if ($connection?->state === 'connected' && $exposure === 'deferred') {
-                $hidden = count(array_filter(DeferredTools::all(), static fn (array $one): bool => !$one['loaded'] && $one['namespace']['name'] === $entry->name));
+                $hidden = count(array_diff($serverTools[$entry->name] ?? [], $pig->getActiveTools()));
                 $tools .= " ({$hidden} waiting for tool_search)";
             }
             $error = $connection !== null && $connection->error !== null && $connection->state !== 'connected'
@@ -524,6 +471,7 @@ return static function (ExtensionApi $pig): void {
         &$serverReady,
         &$waitedForStartup,
         &$generation,
+        &$warnedUnreachable,
         $cwd,
         $createConnection,
         $registeredServers,
@@ -574,6 +522,15 @@ return static function (ExtensionApi $pig): void {
 
             if ($activate !== []) {
                 $pig->setActiveTools([...$active, ...$activate]);
+            }
+
+            // Upstream's warning, once: tools that are not direct with neither tool to reach them.
+            $reachable = [...$active, ...$activate];
+            $needed = isset($exposures['codemode']) || isset($exposures['deferred']);
+
+            if ($needed && !$warnedUnreachable && !($reaching('codemode') && in_array('codemode', $reachable, true)) && !($reaching('tool_search') && in_array('tool_search', $reachable, true))) {
+                $warnedUnreachable = true;
+                $ctx->ui->notify('MCP tools are only reachable from the codemode or tool_search tool, but neither is active; they cannot be called.', 'warning');
             }
         }
 
@@ -809,7 +766,7 @@ return static function (ExtensionApi $pig): void {
         $overridden = [];
         $registeredConfigs = [];
 
-        // Every server's tools come off the model and out of the codemode registry first.
+        // Every server's tools come off first.
         foreach (array_keys($serverTools) as $server) {
             $hideTools($server);
         }
@@ -951,8 +908,7 @@ return static function (ExtensionApi $pig): void {
     // ---- the manager (`/mcp` in the terminal) ------------------------------------------------
 
     $exposureDescriptions = [
-        'codemode' => 'called from codemode scripts, listed in the codemode description',
-        'codemode-deferred' => 'called from codemode scripts, not listed; scripts find them with search_tools()',
+        'codemode' => 'called from codemode scripts, which find them with search_tools()',
         'deferred' => 'not declared until tool_search loads them, then called directly; no codemode needed',
         'direct' => 'declared to the model like built-in tools',
     ];

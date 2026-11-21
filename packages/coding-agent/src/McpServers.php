@@ -12,7 +12,7 @@ namespace Pig\CodingAgent;
  */
 final class McpServers
 {
-    /** Upstream's five, accepted as written. */
+    /** Upstream's four, and `codemode-deferred`, its older name for `codemode` (`MCP_EXPOSURE_ALIASES`). */
     public const array EXPOSURES = ['codemode', 'codemode-deferred', 'deferred', 'direct', 'hidden'];
 
     private const string SERVER_NAME = '/^[A-Za-z0-9_-]+$/';

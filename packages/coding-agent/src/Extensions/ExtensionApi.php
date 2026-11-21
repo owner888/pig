@@ -542,10 +542,10 @@ final class ExtensionApi
     }
 
     /**
-     * Every registered tool, active or not, with its description and schema — and `reachesTools`
-     * for one that declares it (`ToolDefinition::$reachesTools`). Upstream's `getAllTools()`.
+     * Every registered tool, active or not, with its description, schema and exposure — and
+     * `namespace` and `reachesTools` for one that declares them. Upstream's `getAllTools()`.
      *
-     * @return list<array{name: string, description: string, parameters: array<string, mixed>, active: bool, reachesTools?: \Closure(array<string, mixed>): ('all'|list<string>)}>
+     * @return list<array{name: string, description: string, parameters: array<string, mixed>, active: bool, exposure: string, namespace?: array<string, mixed>, reachesTools?: \Closure(array<string, mixed>): ('all'|list<string>)}>
      */
     public function getAllTools(): array
     {

@@ -53,11 +53,14 @@ final class McpTools
     }
 
     /**
-     * The pig tool for one MCP tool of one server.
+     * The pig tool for one MCP tool of one server — upstream's `createMcpToolDefinition()`: the
+     * tool's exposure (`toToolExposure()` of the server's), its server as its namespace, and the
+     * `CallToolResult` as its output schema, so a codemode script receives the whole result.
      *
      * @param array<string, mixed> $tool as the server listed it
+     * @param array<string, mixed>|null $namespace
      */
-    public static function define(string $server, array $tool, string $name, ServerConnection $connection, ?Closure $readableResources = null): ToolDefinition
+    public static function define(string $server, array $tool, string $name, ServerConnection $connection, ?Closure $readableResources = null, string $exposure = 'direct', ?array $namespace = null): ToolDefinition
     {
         $toolName = (string) $tool['name'];
         $title = $tool['title'] ?? ($tool['annotations']['title'] ?? null);
@@ -85,7 +88,20 @@ final class McpTools
 
                 return self::convert($server, $toolName, $result, $readableResources !== null && $readableResources());
             },
+            exposure: self::toToolExposure($exposure),
+            namespace: $namespace,
+            outputSchema: self::callToolResultSchema($tool),
         );
+    }
+
+    /**
+     * Upstream's `toToolExposure()`: an MCP `codemode` tool is a `deferred` one — callable from
+     * scripts and found by `tool_search` alike; which of the two the server is for decides only
+     * which one the extension activates.
+     */
+    public static function toToolExposure(string $exposure): string
+    {
+        return $exposure === 'codemode' ? 'deferred' : $exposure;
     }
 
     /**
@@ -235,11 +251,12 @@ final class McpTools
             $details['fullOutputPath'] = $fullOutputPath;
         }
 
+        // Upstream's `structuredContent: scriptResult`: what a codemode script receives.
         if (($result['isError'] ?? false) === true) {
-            throw new AgentError(self::textOf($content));
+            throw new AgentError(self::textOf($content), $details, structuredContent: self::scriptValue($result));
         }
 
-        return new AgentToolResult($content, $details);
+        return new AgentToolResult($content, $details, structuredContent: self::scriptValue($result));
     }
 
     /**

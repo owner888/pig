@@ -56,12 +56,13 @@ final class McpResources
     }
 
     /**
-     * The three tools. `$servers` answers the connections whose resources they reach, at call time.
+     * The three tools. `$servers` answers the connections whose resources they reach, at call time;
+     * `$exposure` is the MCP exposure they take (`McpTools::toToolExposure()`).
      *
      * @param Closure(): list<ServerConnection> $servers
      * @return list<ToolDefinition>
      */
-    public static function define(Closure $servers): array
+    public static function define(Closure $servers, string $exposure = 'direct'): array
     {
         $string = static fn (string $description): array => ['type' => 'string', 'description' => $description];
         $listParameters = [
@@ -173,6 +174,7 @@ final class McpResources
 
                     return $jsonResult(self::LIST, self::stringArgument($params, 'server'), $payload);
                 },
+                exposure: McpTools::toToolExposure($exposure),
             ),
             new ToolDefinition(
                 name: self::LIST_TEMPLATES,
@@ -194,6 +196,7 @@ final class McpResources
 
                     return $jsonResult(self::LIST_TEMPLATES, self::stringArgument($params, 'server'), $payload);
                 },
+                exposure: McpTools::toToolExposure($exposure),
             ),
             new ToolDefinition(
                 name: self::READ,
@@ -235,6 +238,7 @@ final class McpResources
 
                     return new AgentToolResult($content, $details);
                 },
+                exposure: McpTools::toToolExposure($exposure),
             ),
         ];
     }

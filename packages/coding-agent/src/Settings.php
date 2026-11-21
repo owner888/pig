@@ -84,6 +84,8 @@ final class Settings
             ...array_values(array_filter([$globalProblem, $projectProblem])),
             ...self::resourceListProblems($path, $global),
             ...self::resourceListProblems($projectPath, $project),
+            ...self::toolExposureProblems($path, $global),
+            ...self::toolExposureProblems($projectPath, $project),
         ];
 
         return $settings;
@@ -1603,6 +1605,64 @@ final class Settings
             $problems[] = $key === 'skills' && is_array($values[$key]) && !array_is_list($values[$key])
                 ? "{$path}: \"skills\" is an array of skill paths; the old object form is not read (use the top-level \"enableSkillCommands\"), so it was ignored"
                 : "{$path}: \"{$key}\" must be an array of paths, so it was ignored";
+        }
+
+        return $problems;
+    }
+
+    /**
+     * pig's `toolExposure`, not upstream's: the exposure of tools by name, over the one their
+     * definition gives (`ToolDefinition::EXPOSURES`) — so a tool an extension registers `direct` can
+     * be `deferred`, declared to the model only once `tool_search` loads it, without changing the
+     * extension. Keys are names or `*` patterns, values exposures — as the MCP `toolExposure`, a key
+     * naming the tool wins, then the first pattern that matches (`ToolLoadout::exposure()`). The
+     * project's keys come first and win a key both files give. An entry that is not a string
+     * pattern with an exposure is left out, and `problems()` names it.
+     *
+     * @return array<string, string>
+     */
+    public function toolExposure(): array
+    {
+        $merged = [];
+
+        foreach ([$this->project['toolExposure'] ?? null, $this->global['toolExposure'] ?? null] as $value) {
+            if (is_array($value) && !array_is_list($value)) {
+                foreach ($value as $pattern => $exposure) {
+                    if (is_string($exposure) && in_array($exposure, \Pig\CodingAgent\Extensions\ToolDefinition::EXPOSURES, true)) {
+                        $merged[(string) $pattern] ??= $exposure;
+                    }
+                }
+            }
+        }
+
+        return $merged;
+    }
+
+    /**
+     * What is wrong with one file's `toolExposure`, for `problems()`.
+     *
+     * @param array<string, mixed> $values
+     * @return list<string>
+     */
+    private static function toolExposureProblems(string $path, array $values): array
+    {
+        if (!array_key_exists('toolExposure', $values)) {
+            return [];
+        }
+
+        $value = $values['toolExposure'];
+
+        if (!is_array($value) || ($value !== [] && array_is_list($value))) {
+            return ["{$path}: \"toolExposure\" must be an object of tool names or patterns to exposures, so it was ignored"];
+        }
+
+        $problems = [];
+
+        foreach ($value as $pattern => $exposure) {
+            if (!is_string($exposure) || !in_array($exposure, \Pig\CodingAgent\Extensions\ToolDefinition::EXPOSURES, true)) {
+                $problems[] = "{$path}: \"toolExposure\" gives \"{$pattern}\" an exposure that is not one of "
+                    . implode(', ', \Pig\CodingAgent\Extensions\ToolDefinition::EXPOSURES) . ', so that entry was ignored';
+            }
         }
 
         return $problems;

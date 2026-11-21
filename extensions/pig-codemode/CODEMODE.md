@@ -86,8 +86,10 @@ Calling a tool that does not exist throws an error naming the close matches.
 return strlen($a) + strlen($b);
 ```
 
+Scripts call the tools other tools can call: the active `direct` ones and every `codemode` or
+`deferred` one, active or not (an MCP server's `codemode` and `deferred` tools are both).
 The `codemode` description lists tools with their PHP declarations, grouped by namespace (for
-example one MCP server). Tools with `codemode-deferred` exposure are not listed, so the
+example one MCP server). Tools with `deferred` exposure are listed by their namespace only, so the
 description stays the same while MCP servers connect. Listed declarations share a budget of
 3000 estimated tokens (`codemode.inlineBudget` in the settings). Scripts find the other tools
 with `search_tools()`, `describe_tool()`, `describe_namespace()`, or by filtering `ALL_TOOLS`.

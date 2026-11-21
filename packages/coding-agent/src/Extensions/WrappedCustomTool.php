@@ -65,6 +65,7 @@ final readonly class WrappedCustomTool implements AgentTool, ReplayableTool
             $this->tool->description,
             $this->tool->parameters,
             $this->tool->constrainedSampling,
+            $this->tool->outputSchema,
         );
     }
 

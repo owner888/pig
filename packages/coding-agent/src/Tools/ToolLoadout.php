@@ -74,6 +74,13 @@ final class ToolLoadout
     /** @var list<string>|null every tool registered as of the last `apply()`; null before the first */
     private ?array $registered = null;
 
+    /**
+     * @var list<string> the tools that were activated on registration as of the last `apply()` —
+     *      upstream's `previousActivatedOnRegistration`, so one whose exposure changes to `direct` or
+     *      `model-only` is activated like a new tool
+     */
+    private array $activatedOnRegistration = [];
+
     /** @var (Closure(): array<string, array<string, mixed>>)|null upstream's tool options, asked at each `apply()` */
     private ?Closure $toolOptions = null;
 
@@ -88,6 +95,14 @@ final class ToolLoadout
      * @var (Closure(string): bool)|null
      */
     private ?Closure $named = null;
+
+    /**
+     * pig's `toolExposure` setting (`Settings::toolExposure()`): names or `*` patterns to
+     * exposures, over the ones the tools' definitions give. See `exposure()`.
+     *
+     * @var array<string, string>
+     */
+    private array $exposureOverrides = [];
 
     /**
      * @param list<string>            $builtIn      built-in tool names, as `ToolSet` knows them
@@ -116,6 +131,45 @@ final class ToolLoadout
     {
         $this->named = $named;
         $this->reapply();
+    }
+
+    /**
+     * The `toolExposure` setting — see `$exposureOverrides`. A loadout already applied is applied again.
+     *
+     * @param array<string, string> $overrides
+     */
+    public function useToolExposure(array $overrides): void
+    {
+        $this->exposureOverrides = $overrides;
+        $this->reapply();
+    }
+
+    /**
+     * Upstream's `_getToolExposure()` — the definition's `exposure`, `direct` for a built-in or a
+     * tool that gives none — under pig's `toolExposure` setting: the key naming the tool, else the
+     * first `*` pattern that matches it, as the MCP `toolExposure` reads.
+     *
+     * @return 'direct'|'model-only'|'codemode'|'deferred'|'hidden'
+     */
+    public function exposure(string $name): string
+    {
+        if (isset($this->exposureOverrides[$name])) {
+            return $this->exposureOverrides[$name];
+        }
+
+        foreach ($this->exposureOverrides as $pattern => $exposure) {
+            if (str_contains((string) $pattern, '*') && fnmatch((string) $pattern, $name, FNM_NOESCAPE)) {
+                return $exposure;
+            }
+        }
+
+        return $this->customTools->find($name)?->exposure ?? 'direct';
+    }
+
+    /** Upstream's `_isDeclarable()`: "whether activating the tool declares it to the model". */
+    private function isDeclarable(string $name): bool
+    {
+        return in_array($this->exposure($name), ['direct', 'model-only'], true);
     }
 
     /**
@@ -213,24 +267,7 @@ final class ToolLoadout
     public function apply(): void
     {
         $active = $this->activeNames();
-        $builtIn = array_values(array_filter($this->builtIn, static fn (string $name): bool => in_array($name, $active, true)));
-
-        $custom = array_values(array_filter(
-            $this->customTools->agentTools(),
-            static fn (AgentTool $tool): bool => in_array($tool->definition()->name, $active, true),
-        ));
-
-        // A registered tool with a built-in's name replaces the built-in, as upstream's does: an
-        // extension that registers `bash` is offering its own `bash`, and the model is told one.
-        $customNames = array_map(static fn (AgentTool $tool): string => $tool->definition()->name, $custom);
-        $builtIn = array_values(array_filter($builtIn, static fn (string $name): bool => !in_array($name, $customNames, true)));
-
-        $tools = ExtensionGuardedTool::wrap([...ToolSet::create($this->cwd, $builtIn, $this->toolOptions !== null ? ($this->toolOptions)() : []), ...$custom], $this->extensionRunner);
-
-        if ($this->resultImages !== null) {
-            $tools = array_map(fn (AgentTool $tool): AgentTool => new ResultImagesTool($tool, $this->resultImages), $tools);
-        }
-
+        [$tools, $builtIn] = $this->built($active);
         $declared = $this->prepared($tools, $active);
         $this->agent->setTools($declared);
         $declaredNames = array_map(static fn (AgentTool $tool): string => $tool->definition()->name, $declared);
@@ -246,6 +283,7 @@ final class ToolLoadout
         }
 
         $this->registered = $this->names();
+        $this->activatedOnRegistration = array_values(array_filter($this->registered, $this->isActivatedOnRefresh(...)));
 
         [$snippets, $guidelines] = $this->customTools->promptContributions($active);
         $this->sections = SystemPrompt::sections(
@@ -262,8 +300,57 @@ final class ToolLoadout
     }
 
     /**
+     * The tools of these names as the agent is handed them — the built-ins made, the custom ones
+     * beside them, all wrapped with the hooks — and the built-ins' names among them.
+     *
+     * @param list<string> $names
+     * @return array{0: list<AgentTool>, 1: list<string>}
+     */
+    private function built(array $names): array
+    {
+        $builtIn = array_values(array_filter($this->builtIn, static fn (string $name): bool => in_array($name, $names, true)));
+
+        $custom = array_values(array_filter(
+            $this->customTools->agentTools(),
+            static fn (AgentTool $tool): bool => in_array($tool->definition()->name, $names, true),
+        ));
+
+        // A registered tool with a built-in's name replaces the built-in, as upstream's does: an
+        // extension that registers `bash` is offering its own `bash`, and the model is told one.
+        $customNames = array_map(static fn (AgentTool $tool): string => $tool->definition()->name, $custom);
+        $builtIn = array_values(array_filter($builtIn, static fn (string $name): bool => !in_array($name, $customNames, true)));
+
+        $tools = ExtensionGuardedTool::wrap([...ToolSet::create($this->cwd, $builtIn, $this->toolOptions !== null ? ($this->toolOptions)() : []), ...$custom], $this->extensionRunner);
+
+        if ($this->resultImages !== null) {
+            $tools = array_map(fn (AgentTool $tool): AgentTool => new ResultImagesTool($tool, $this->resultImages), $tools);
+        }
+
+        return [$tools, $builtIn];
+    }
+
+    /**
+     * Upstream's `_getCallableTools()`: "tools callable through `ctx.executeTool()`: the active
+     * `direct` tools and every registered `codemode` or `deferred` tool" — a `model-only` tool is
+     * the model's alone, and a `hidden` one nobody's.
+     *
+     * @param list<string>|null $active the active tools' names, the current ones by default
+     * @return list<AgentTool>
+     */
+    public function callable(?array $active = null): array
+    {
+        $active ??= $this->activeNames();
+
+        return $this->built(array_values(array_filter($this->names(), function (string $name) use ($active): bool {
+            $exposure = $this->exposure($name);
+
+            return $exposure === 'codemode' || $exposure === 'deferred' || ($exposure === 'direct' && in_array($name, $active, true));
+        })))[0];
+    }
+
+    /**
      * Upstream's `prepareLoadout` step of `_applyToolLoadout()`: each active custom tool with a
-     * `prepareLoadout` is asked, with the whole active list, what to change — descriptions to
+     * `prepareLoadout` is asked, with the loadout (`LoadoutView`), what to change — descriptions to
      * show in place of the tools' own (`DescribedTool`), and tools to keep callable but not
      * declare (left off what the agent is handed; the asker keeps its own reference). A later
      * answer wins where two name one tool, which is upstream's `Object.assign` order.
@@ -276,13 +363,21 @@ final class ToolLoadout
     {
         $descriptions = [];
         $hidden = [];
+        $view = null;
 
         foreach ($this->customTools->loaded() as $one) {
             if ($one->tool->prepareLoadout === null || !in_array($one->tool->name, $active, true)) {
                 continue;
             }
 
-            $changes = ($one->tool->prepareLoadout)($tools);
+            $view ??= new LoadoutView(
+                $tools,
+                $this->callable($active),
+                $this->built($this->names())[0],
+                $this->exposure(...),
+                fn (string $name): ?array => $this->customTools->find($name)?->namespace,
+            );
+            $changes = ($one->tool->prepareLoadout)($view);
 
             foreach ($changes['descriptions'] ?? [] as $name => $description) {
                 $descriptions[$name] = $description;
@@ -317,11 +412,10 @@ final class ToolLoadout
     /**
      * The registry changed after startup — an extension registered or removed a tool, an MCP
      * server connected. Upstream's `_refreshToolRegistry()` without a new loadout: the tools that
-     * were active stay active, a tool that was not registered before is activated when it is
-     * activated on registration (`_isActivatedOnRegistration()`: not `defaultActive: false`) or
-     * the run named it (upstream's `allowedTools(toolName)`), and so is a pending tool that is
-     * registered now. pig has no exposure on a registered tool, so `defaultActive` is the only
-     * thing that keeps a new one off.
+     * were active stay active; a tool that was not activated on registration before and is now —
+     * a new one, or one whose exposure changed to `direct` or `model-only` — is activated when it
+     * is `direct` or `model-only` and is not `defaultActive: false` or the run named it (upstream's
+     * `allowedTools(toolName) && _isDeclarable()`); and so is a pending tool that is registered now.
      *
      * With no narrowed set, `activeNames()` already works that out from what is registered. The
      * set is kept by name rather than narrowed to what is registered, so a tool that goes away and
@@ -333,7 +427,7 @@ final class ToolLoadout
             $names = $this->names();
             $this->active = array_values(array_unique([
                 ...$this->active,
-                ...array_filter(array_diff($names, $this->registered ?? []), $this->isActivatedByDefault(...)),
+                ...array_filter(array_diff($names, $this->activatedOnRegistration), $this->isActivatedOnRefresh(...)),
                 ...array_intersect($names, array_keys($this->pending)),
             ]));
         }
@@ -381,14 +475,14 @@ final class ToolLoadout
     }
 
     /**
-     * Upstream's `_isActivatedOnRegistration()`: a registered custom tool that was not registered
-     * with `defaultActive: false`. pig has no undeclarable tools, so that is the whole test.
+     * Upstream's `_isActivatedOnRegistration()`: a registered custom tool that is declarable
+     * (`direct` or `model-only`) and was not registered with `defaultActive: false`.
      */
     public function isActivatedOnRegistration(string $name): bool
     {
         $tool = $this->customTools->find($name);
 
-        return $tool !== null && $tool->defaultActive !== false;
+        return $tool !== null && $this->isDeclarable($name) && $tool->defaultActive !== false;
     }
 
     /** Forget the pending tools. Upstream's `_pendingToolNames.clear()`. */
@@ -433,9 +527,12 @@ final class ToolLoadout
      */
     public function activeNames(): array
     {
+        // Upstream's `_applyToolLoadout()`: a `hidden` tool is never active, whoever names it.
+        $visible = array_values(array_filter($this->names(), fn (string $name): bool => $this->exposure($name) !== 'hidden'));
+
         return $this->active === null
-            ? array_values(array_filter($this->names(), $this->isActivatedByDefault(...)))
-            : array_values(array_filter($this->names(), fn (string $name): bool => in_array($name, $this->active, true)));
+            ? array_values(array_filter($visible, $this->isActivatedByDefault(...)))
+            : array_values(array_filter($visible, fn (string $name): bool => in_array($name, $this->active, true)));
     }
 
     /**
@@ -444,9 +541,15 @@ final class ToolLoadout
      * with `defaultActive: false`, and such a tool too when `--tools` or `defaultTools` named it.
      * Upstream's `_isActivatedOnRegistration()` or `allowedTools(toolName)` / `initialActiveToolNames`.
      */
+    /** What `refresh()` activates: a declarable tool that registering activates, or that the run named. */
+    private function isActivatedOnRefresh(string $name): bool
+    {
+        return $this->isDeclarable($name) && $this->isActivatedByDefault($name);
+    }
+
     private function isActivatedByDefault(string $name): bool
     {
-        if ($this->customTools->find($name)?->defaultActive !== false) {
+        if ($this->isDeclarable($name) && $this->customTools->find($name)?->defaultActive !== false) {
             return true;
         }
 
@@ -469,22 +572,25 @@ final class ToolLoadout
     /**
      * Name, description and schema of every registered tool. Upstream's `getAllTools()`.
      *
-     * @return list<array{name: string, description: string, parameters: array<string, mixed>, active: bool}>
+     * @return list<array{name: string, description: string, parameters: array<string, mixed>, active: bool, exposure: string, namespace?: array<string, mixed>}>
      */
     public function describe(): array
     {
         $active = $this->activeNames();
         $tools = [...ToolSet::create($this->cwd, $this->builtIn), ...$this->customTools->agentTools()];
 
-        return array_map(static function (AgentTool $tool) use ($active): array {
+        return array_map(function (AgentTool $tool) use ($active): array {
             $reaches = $tool instanceof WrappedCustomTool ? $tool->inner()->reachesTools : null;
+            $namespace = $tool instanceof WrappedCustomTool ? $tool->inner()->namespace : null;
 
             return [
                 'name' => $tool->definition()->name,
                 'description' => $tool->definition()->description,
                 'parameters' => $tool->definition()->parameters,
                 'active' => in_array($tool->definition()->name, $active, true),
-                // Upstream's `...(definition.reachesTools ? { reachesTools } : {})`.
+                'exposure' => $this->exposure($tool->definition()->name),
+                // Upstream's `...(definition.namespace ? { namespace } : {})` and the same for `reachesTools`.
+                ...($namespace === null ? [] : ['namespace' => $namespace]),
                 ...($reaches === null ? [] : ['reachesTools' => $reaches]),
             ];
         }, $tools);

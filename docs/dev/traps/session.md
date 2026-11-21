@@ -913,7 +913,7 @@ Profiling found four (then five) heavy hitters:
 **Trap rules**:
 - Restoring goes only through `AgentSession::restore()` → `restoreToolsFromTranscript()`; pending lives only in `ToolLoadout` (`restore()`/`refresh()`/`clearPending()`/`isPending()`), and every `apply()` moves the activated ones out of pending.
 - Registry changes go only through `ToolLoadout::refresh()` (`onChange` is wired to it, not `apply()`): in a narrowed set, a newly registered tool is activated (upstream's `_isActivatedOnRegistration()`), and so is a pending one.
-- pig's deferred MCP tools are not registered before `tool_search`, so pig-mcp registers one directly (and lists it in `DeferredTools` as `loaded`) when `ExtensionApi::isToolPending()` is true — that is what upstream's "register but do not activate, then pending activates" looks like in pig.
+- MCP tools are registered with their exposure before `tool_search` loads them (`deferred` ones inactive), so a pending one is activated by `refresh()` like any other — upstream's "register but do not activate, then pending activates".
 - Extra sections go only through `SystemPrompt::withSections()`: the name matches `/^[a-z][a-z0-9_-]*$/` and is not `preamble`, the content is wrapped as `<name>\n…\n</name>`, and empty content does not appear; pig's own sections are not tagged.
 - The turn's options live in `AgentSession::$runSystemPromptOptions`, cleared when `runAgentPrompt()` ends; the projection is installed on `Agent::$transformContext` (now public, as upstream).
 - Tests: `SystemMessageTranscriptTest::testAForcedPromptIsSentAsTheLeadingPromptForTheRunAndNeverRecorded`, `testAHandlersSectionStaysForTheRunAndTheEventRendersThePromptWithIt`, `testAResumedSessionRestoresTheLoadoutItsTranscriptDeclared`, `testGoingBackRestoresTheLoadoutDeclaredAtThatPoint`, `testARestoredToolThatRegistersLaterIsActivatedAndTheNextRunDropsTheRest`, `testALoadoutSetBeforeARestoredToolRegistersDropsItOnlyWhenItDeactivatesSomething`, `SystemPromptTest::testAHandlersSectionsAreTaggedAfterTheRestAndDiffIntoAPatch`, `ExtensionRunnerTest::testASystemPromptAnswerIsForcedAndLaterHandlersSeeItAndTheSections`, `McpExtensionTest::testADeferredToolAResumedTranscriptDeclaredIsRegisteredWhenItsServerConnects`, `testEveryPromptListsTheServersWhoseToolsAreNotDeclared` and the three `testTheSection…`.
@@ -964,3 +964,14 @@ text. `dequeue()` matched the delivered message's text against the queue, and th
 - **The source is a store's location, not always a path**: a database's is `sql:…`, and a location with a scheme of the store's own is left as named. Upstream has only files and no such case; resolving it looks for a file called `sql:…` in the working directory.
 - A test that compares a recorded folder with `$this->cwd` is a test of exactly this on macOS; `realpath()` in the expectation hides it.
 - Tests: `SessionManagerTest::testForkFromCopiesEveryEntryUnderANewHeaderForThisProject` (a folder reached through a link), `SqliteSessionStoreTest::testAForkOfASessionKeptHereIsFoundByTheStoresOwnNameForIt`, `InteractiveModeTest::testImportingASessionWhoseFolderHasGoneCanForkItHereAndLeavesNoOtherCopy`.
+
+## A tool whose exposure became `direct` stayed off, and MCP tests read the wrong list
+
+**Symptom**: with the exposure port, changing an MCP server's exposure from `deferred` (or `hidden`) to `direct` in `/mcp` registered its tools again but left them off the model until the next session. Separately, the MCP tests kept asserting on `CustomToolSet::names()` as "what the model sees", which stopped meaning that once `codemode` and `deferred` tools are registered rather than kept aside.
+
+**Root cause**: `ToolLoadout::refresh()` activated only tools that were not registered before; upstream's `_refreshToolRegistry()` activates every tool that was not activated on registration before and is now (`previousActivatedOnRegistration`), which covers an exposure change. And the registered set is no longer the declared set: a `deferred` tool is registered and inactive.
+
+**Trap rules**:
+- `refresh()` compares against `$activatedOnRegistration` (what `isActivatedOnRefresh()` said at the last `apply()`), never against what was registered.
+- What the model is offered is `AgentSession::activeTools()` / `agent->tools()`; `CustomToolSet::names()` is every registered tool, whatever its exposure. A test that builds a `CustomToolSet` by hand seeds the tools registered while loading through the constructor (`adopt()` only hears later changes), as startup does.
+- Tests: `ToolExposureTest::testAToolWhoseExposureBecomesDirectIsActivatedLikeANewOne`, `McpExtensionTest::testChangingTheExposureInTheManagerIsSavedAndReRegistersTheTools`.

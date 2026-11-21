@@ -1538,7 +1538,7 @@ final class AgentSession
     /**
      * Every registered tool, active or not. Upstream's `getAllTools()`.
      *
-     * @return list<array{name: string, description: string, parameters: array<string, mixed>, active: bool}>
+     * @return list<array{name: string, description: string, parameters: array<string, mixed>, active: bool, exposure: string, namespace?: array<string, mixed>}>
      */
     public function allTools(): array
     {
@@ -1547,6 +1547,7 @@ final class AgentSession
             'description' => $tool->definition()->description,
             'parameters' => $tool->definition()->parameters,
             'active' => true,
+            'exposure' => 'direct',
         ], $this->agent->state->tools);
     }
 
@@ -1592,11 +1593,14 @@ final class AgentSession
      * who made it.
      *
      * @param array<string, mixed> $arguments
-     * @throws AgentError when no active tool has that name; whatever the tool throws otherwise
+     * Upstream's `ctx.executeTool()` reaches the callable tools (`ToolLoadout::callable()`): the
+     * active `direct` ones and every `codemode` or `deferred` one, active or not.
+     *
+     * @throws AgentError when no callable tool has that name; whatever the tool throws otherwise
      */
     public function executeTool(string $name, array $arguments, ?\Pig\Async\AbortSignal $signal = null): AgentToolResult
     {
-        foreach ($this->agent->state->tools as $tool) {
+        foreach ($this->loadout?->callable() ?? $this->agent->state->tools as $tool) {
             if ($tool->definition()->name !== $name) {
                 continue;
             }
@@ -1607,7 +1611,7 @@ final class AgentSession
             return $tool->execute($id, $arguments, $signal ?? $this->signal());
         }
 
-        throw new AgentError("No active tool called '{$name}'.");
+        throw new AgentError("No callable tool called '{$name}'.");
     }
 
     /** @var array<string, int> how many nested calls each tool call has made, by its id */

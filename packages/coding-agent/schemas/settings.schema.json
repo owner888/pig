@@ -499,6 +499,14 @@
       },
       "description": "Initial tool selection. Plain names replace the inherited selection; +name and -name entries add or remove tools."
     },
+    "toolExposure": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "enum": ["direct", "model-only", "codemode", "deferred", "hidden"]
+      },
+      "description": "How the model reaches tools, by name or * pattern, over the exposure their extension gives. A name wins over patterns; among patterns, the first match wins."
+    },
     "doubleEscapeAction": {
       "anyOf": [
         {

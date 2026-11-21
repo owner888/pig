@@ -86,8 +86,7 @@ final class McpServersSection
 
     /**
      * "Exposures the server's tools can have, known from its config before it connects": the
-     * server's and every per-tool override's, as `here()` reads them. pig's `codemode-deferred` is
-     * reached from codemode scripts too, so it counts as `codemode` here.
+     * server's and every per-tool override's, as `here()` reads them.
      *
      * @return array<string, true>
      */
@@ -97,8 +96,7 @@ final class McpServersSection
         $exposures = [];
 
         foreach ([$entry->exposure(), ...$overrides] as $exposure) {
-            $here = McpConfig::here((string) $exposure);
-            $exposures[$here === 'codemode-deferred' ? 'codemode' : $here] = true;
+            $exposures[McpConfig::here((string) $exposure)] = true;
         }
 
         return $exposures;

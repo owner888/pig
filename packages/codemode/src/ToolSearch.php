@@ -9,13 +9,9 @@ namespace Pig\Codemode;
  * shared by the `tool_search` tool (`pig-tool-search`) and `search_tools()` in codemode scripts,
  * which is why it lives in this package and not in either extension.
  *
- * Upstream keeps a loadout with an active set per tool and records activation in the transcript,
- * so a loaded tool survives `/tree` and resume. pig has no exposure in its loadout: a `deferred`
- * tool is simply **not registered** until `tool_search` names it — it waits in `DeferredTools` —
- * and then it is registered like any other, which reaches the agent through the same door a
- * connecting server uses. The cost is that a
- * resumed session starts with the deferred tools unloaded again, and the model searches once more.
- * That is the smaller mechanism and the one with no second copy of what the agent's tools are.
+ * `tool_search` searches the registered `codemode` and `deferred` tools that are not active and
+ * activates the matches, as upstream's does, so the loadout records them in the transcript and a
+ * loaded tool survives `/tree` and resume.
  */
 final class ToolSearch
 {
@@ -304,30 +300,16 @@ final class ToolSearch
     }
 
     /**
-     * The `tool_search` description, listing the servers whose tools can be found.
-     *
-     * @param list<array{name: string, description: ?string}> $sources
+     * Upstream's `TOOL_SEARCH_DESCRIPTION`: "It does not list the searchable tools or their
+     * namespaces, so it stays the same while tools are registered, for example when MCP servers
+     * connect."
      */
-    public static function description(array $sources = []): string
+    public static function description(): string
     {
-        if ($sources === []) {
-            $listed = 'None currently enabled.';
-        } else {
-            $lines = [];
-
-            foreach ($sources as $source) {
-                $first = trim((string) strtok(trim((string) ($source['description'] ?? '')), "\r\n"));
-                $lines[] = $first !== '' ? "- {$source['name']}: {$first}" : "- {$source['name']}";
-            }
-
-            $listed = implode("\n", $lines);
-        }
-
         $name = self::TOOL_NAME;
 
         return "# Tool discovery\n\nSearches over deferred tool metadata with BM25 and exposes matching tools for the next model call.\n\n"
-            . "You have access to tools from the following sources:\n{$listed}\n\n"
-            . "Some of the tools may not have been provided to you upfront, and you should use this tool (`{$name}`) to search for the required tools. "
+            . "Some of the tools, such as tools of MCP servers, may not have been provided to you upfront, and you should use this tool (`{$name}`) to search for the required tools. "
             . "For MCP tool discovery, always use `{$name}`.";
     }
 

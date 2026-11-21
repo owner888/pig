@@ -13,7 +13,6 @@ use Pig\Ai\TextContent;
 use Pig\Ai\Tool;
 use Pig\Async\Async;
 use Pig\Async\Loop;
-use Pig\Codemode\Registry;
 use PigCodemode\CodemodeDescription;
 use Pig\CodingAgent\Auth;
 use Pig\CodingAgent\CodingAgent;
@@ -48,7 +47,6 @@ final class CodemodeExtensionTest extends TestCase
     protected function setUp(): void
     {
         Loop::reset();
-        Registry::reset();
         $this->realHome = getenv('HOME');
         $this->root = sys_get_temp_dir() . '/pig-codemode-' . bin2hex(random_bytes(4));
         $this->home = $this->root . '/home';
@@ -225,7 +223,8 @@ final class CodemodeExtensionTest extends TestCase
         // Upstream's tool keeps one description; `prepareLoadout` is what lists the callable tools.
         $codemode = $started->customTools->find('codemode');
         $this->assertStringContainsString('## fixture', (string) self::declared($started, 'codemode'), 'the server is a namespace in the catalog');
-        $this->assertStringContainsString('$tools->mcp__fixture__echo(array{text?: string} $input): array{', (string) self::declared($started, 'codemode'));
+        // Upstream's `codemode` exposure: listed by its namespace only, a script finds it with `search_tools()`.
+        $this->assertStringNotContainsString('$tools->mcp__fixture__echo(', (string) self::declared($started, 'codemode'));
 
         // A script calls it and the result is the whole CallToolResult, which the script filters.
         $result = Async::run(static fn () => ($codemode->execute)('1', ['code' => '$r = $tools->mcp__fixture__echo(["text" => "hi"]); return strtoupper($r["content"][0]["text"]);'], null, $started->extensionRunner->context(), null));
@@ -484,13 +483,24 @@ PHP);
     public function testDescribeNamespaceFindsAServerByAnyOfItsNamesAndSearchToolsFiltersByThem(): void
     {
         file_put_contents($this->home . '/settings.json', json_encode(['defaultTools' => ['+codemode']]));
-        $started = $this->start();
         // Upstream 24382bedd: a namespace names its other names (`aliases`), in place of the rule that
-        // took the part after its last `__`.
-        $space = ['name' => 'mcp__dev-radius', 'aliases' => ['dev-radius'], 'description' => 'the radius server', 'instructions' => 'be gentle'];
-        Registry::register('mcp__dev-radius__search', 'search radius', ['type' => 'object', 'properties' => []], static fn (): string => 'found', $space, 'codemode');
-        Registry::register('mcp__dev-radius__fetch', 'fetch a radius page', ['type' => 'object', 'properties' => []], static fn (): string => 'page', $space, 'codemode');
-        Registry::register('mcp__other__search', 'search elsewhere', ['type' => 'object', 'properties' => []], static fn (): string => 'x', ['name' => 'mcp__other', 'description' => null], 'codemode');
+        // took the part after its last `__`. Three `codemode` tools: callable from scripts, not declared.
+        $extension = $this->root . '/namespaced.php';
+        file_put_contents($extension, <<<'PHP'
+            <?php
+            use Pig\Agent\AgentToolResult;
+            use Pig\Ai\TextContent;
+            use Pig\CodingAgent\Extensions\{ExtensionApi, ToolDefinition};
+
+            return static function (ExtensionApi $pig): void {
+                $space = ['name' => 'mcp__dev-radius', 'aliases' => ['dev-radius'], 'description' => 'the radius server', 'instructions' => 'be gentle'];
+
+                foreach ([['mcp__dev-radius__search', 'search radius', $space], ['mcp__dev-radius__fetch', 'fetch a radius page', $space], ['mcp__other__search', 'search elsewhere', ['name' => 'mcp__other', 'description' => null]]] as [$name, $description, $namespace]) {
+                    $pig->registerTool(new ToolDefinition($name, $name, $description, ['type' => 'object', 'properties' => []], static fn () => new AgentToolResult([new TextContent('x')]), exposure: 'codemode', namespace: $namespace));
+                }
+            };
+            PHP);
+        $started = $this->start(extensions: [$extension]);
         $codemode = $started->customTools->find('codemode');
 
         $result = Async::run(static fn () => ($codemode->execute)('1', ['code' => <<<'PHP'
@@ -820,7 +830,7 @@ PHP));
             ],
         ]);
 
-        $descriptions = ($codemode->prepareLoadout)([$process, $entries, $count, $refs])['descriptions'];
+        $descriptions = ($codemode->prepareLoadout)(new \Pig\CodingAgent\Tools\LoadoutView([$process, $entries, $count, $refs], [$process, $entries, $count, $refs], [$process, $entries, $count, $refs], static fn (): string => 'direct', static fn (): ?array => null))['descriptions'];
         $this->assertSame('refs tool' . "\n\nCodemode: `\$tools->refs([...])` resolves to `{ structuredContent?: { rows, next? }, kind: \"table\" }`.", $descriptions['refs']);
 
         $this->assertSame('process tool' . "\n\nCodemode: `\$tools->process([...])` resolves to `{ action: \"start\", process } | { action: \"list\", processes, truncated? }`.", $descriptions['process']);

@@ -40,6 +40,7 @@ See [Choose a Model](/docs/latest/models) for model selection and thinking contr
 |---|---|---|---|
 | `defaultTools` | `string[]` | `read`, `bash`, `edit`, `write` | Tools enabled at startup. Plain names replace the defaults; `+name` adds a tool and `-name` removes one. An empty array disables all built-in tools but not extension or SDK tools. Extension tools are active unless a `-name` removes them, except tools registered inactive, such as `codemode`, which are on only when named. |
 | `codemode.mode` | `"on"` \| `"only"` | `"on"` | How the `codemode` tool presents tools while it is active. `on`: declared tools get their `codemode` declaration appended to their description, and `codemode` lists only tools that are not declared (MCP `codemode` exposure). `only`: `codemode` lists every tool scripts can call, and active built-in and extension tools are hidden from the model, so it reaches them through `codemode`. |
+| `toolExposure` | object | `{}` | The [exposure](/docs/latest/cli#tool-exposure) of tools by name, over the one their extension gives: `direct`, `model-only`, `codemode`, `deferred`, or `hidden`. Keys are tool names or patterns where `*` matches any characters; a name wins over patterns, and among patterns the first match wins. Project keys come before the user's and win a key both give. Entries with any other value are ignored and reported. |
 | `codemode.inlineBudget` | number | `3000` | Estimated tokens (characters / 4) the `codemode` tool's description may spend on tool declarations. Tools that do not fit are left out and found with `search_tools()`. `0` lists only namespaces. |
 
 Available built-in tools are `read`, `bash`, `powershell`, `edit`, `write`, `grep`, `find`, and `ls`. `codemode` is registered inactive, so naming it turns it on:
@@ -50,7 +51,7 @@ Available built-in tools are `read`, `bash`, `powershell`, `edit`, `write`, `gre
 }
 ```
 
-`tool_search` is registered automatically while any `deferred` MCP tool is listed.
+`tool_search` is registered inactive too; an MCP server with `deferred` exposure turns it on, and so does `"+tool_search"`.
 
 A list of only `+name` and `-name` entries changes the inherited selection instead of replacing it. For example, this replaces `bash` with `powershell` and enables `grep`: `["-bash", "+powershell", "+grep"]`. Project settings apply on top of user settings: a project list with only `+name` and `-name` entries changes the user's selection, and a project list with a plain name replaces it. In one list, plain names form the selection, and `+name` and `-name` then apply in order.
 

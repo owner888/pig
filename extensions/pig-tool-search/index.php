@@ -5,28 +5,20 @@ declare(strict_types=1);
 use Pig\Agent\AgentError;
 use Pig\Agent\AgentToolResult;
 use Pig\Ai\TextContent;
-use Pig\Codemode\DeferredTools;
 use Pig\Codemode\ToolSearch;
-use Pig\CodingAgent\Extensions\ToolDefinition;
 use Pig\CodingAgent\Extensions\ExtensionApi;
+use Pig\CodingAgent\Extensions\ToolDefinition;
 
 /**
- * The `tool_search` tool as an extension — upstream's built-in `extensions/tool-search`.
- *
- * Upstream registers `tool_search` inactive, and the MCP extension activates it when a server
- * has deferred tools. pig has no inactive tool, so this registers it while `DeferredTools` lists
- * something — a deferred tool, loaded or not — and takes it away when the list is empty. The
- * search is upstream's `searchAndLoad()`: BM25 (`ToolSearch`) over the listed tools that are not
- * loaded yet, and each match is loaded — registered by the extension that listed it — so it is
- * declared from the next model call.
- *
- * The description lists the sources the tools come from, as pig's has from the start; upstream's
- * is fixed and leaves that to the `mcp_servers` prompt section.
+ * The `tool_search` tool as an extension — upstream's built-in `extensions/tool-search`: registered
+ * inactive (`defaultActive: false`) and `model-only`, activated by `--tools`, the `defaultTools`
+ * setting or `setActiveTools()`. The search is upstream's `searchAndLoad()`: BM25 (`ToolSearch`)
+ * over the registered tools with `codemode` or `deferred` exposure that are not active, and the
+ * matches are activated, so they are declared from the next model call and the change is recorded
+ * in the transcript like any other. The MCP extension activates it for a `deferred` server.
  */
 return static function (ExtensionApi $pig): void {
-    $registered = false;
-
-    $search = static function (string $id, array $params): AgentToolResult {
+    $search = static function (string $id, array $params) use ($pig): AgentToolResult {
         $query = trim((string) ($params['query'] ?? ''));
 
         if ($query === '') {
@@ -39,68 +31,49 @@ return static function (ExtensionApi $pig): void {
             throw new AgentError('limit must be a positive integer');
         }
 
+        $active = $pig->getActiveTools();
+        /** @var array<string, string> $descriptions name => description, of every candidate */
+        $descriptions = [];
         $documents = [];
 
-        foreach (DeferredTools::all() as $name => $one) {
-            if (!$one['loaded']) {
-                $documents[] = ToolSearch::document($name, ['description' => $one['description'], 'inputSchema' => $one['inputSchema']], $one['namespace']['name'], $one['namespace']['description']);
+        // Upstream's `isSearchable()`: `codemode` or `deferred`, and not active.
+        foreach ($pig->getAllTools() as $tool) {
+            if (in_array($tool['exposure'], ['codemode', 'deferred'], true) && !in_array($tool['name'], $active, true)) {
+                $descriptions[$tool['name']] = $tool['description'];
+                $documents[] = ToolSearch::document(
+                    $tool['name'],
+                    ['description' => $tool['description'], 'inputSchema' => $tool['parameters']],
+                    $tool['namespace']['name'] ?? null,
+                    $tool['namespace']['description'] ?? null,
+                );
             }
         }
 
-        $matches = ToolSearch::rank($query, $documents, (int) $max);
-        $lines = [];
+        $matches = array_map(static fn (array $match): string => $match['name'], ToolSearch::rank($query, $documents, (int) $max));
+        $lines = array_map(static fn (string $name): string => "- {$name}: " . trim((string) strtok(trim($descriptions[$name]), "\r\n")), $matches);
 
-        foreach ($matches as $match) {
-            $tool = DeferredTools::load($match['name']);
-            $lines[] = "- {$match['name']}: " . trim((string) strtok(trim((string) $tool?->description), "\r\n"));
+        if ($matches !== []) {
+            $pig->setActiveTools([...$active, ...$matches]);
         }
 
         $text = $lines === []
             ? 'No matching tools found.'
             : sprintf("Loaded %d tool%s. They are available from your next call:\n%s", count($lines), count($lines) === 1 ? '' : 's', implode("\n", $lines));
 
-        return new AgentToolResult([new TextContent($text)], ['loaded' => array_map(static fn (array $m): string => $m['name'], $matches)]);
+        return new AgentToolResult([new TextContent($text)], ['loaded' => $matches]);
     };
 
-    /** Register `tool_search` while something is listed, with the sources in its description. */
-    $sync = static function () use ($pig, &$registered, $search): void {
-        $listed = DeferredTools::all();
-
-        if ($listed === []) {
-            if ($registered) {
-                $pig->removeTools(static fn (ToolDefinition $tool): bool => $tool->name === ToolSearch::TOOL_NAME);
-                $registered = false;
-            }
-
-            return;
-        }
-
-        // Every source with a listed tool, loaded or not: a source whose tools are all loaded is
-        // still where they came from. The ones still waiting come first.
-        $sources = [];
-
-        foreach ([false, true] as $loaded) {
-            foreach ($listed as $one) {
-                if ($one['loaded'] === $loaded) {
-                    $sources[$one['namespace']['name']] ??= ['name' => $one['namespace']['name'], 'description' => $one['namespace']['description']];
-                }
-            }
-        }
-
-        // Registered again on every change, as pig-mcp did when it owned the tool: the
-        // description stays current, and the tool goes after the ones just loaded.
-        $registered = true;
-        $pig->registerTool(new ToolDefinition(
-            name: ToolSearch::TOOL_NAME,
-            label: ToolSearch::TOOL_NAME,
-            description: ToolSearch::description(array_values($sources)),
-            parameters: ToolSearch::parameters(),
-            execute: $search,
-            // A search may load any deferred tool.
-            reachesTools: static fn (): string => 'all',
-        ));
-    };
-
-    DeferredTools::onChange($sync);
-    $sync();
+    $pig->registerTool(new ToolDefinition(
+        name: ToolSearch::TOOL_NAME,
+        label: ToolSearch::TOOL_NAME,
+        description: ToolSearch::description(),
+        parameters: ToolSearch::parameters(),
+        execute: $search,
+        promptSnippet: 'Search for tools that are not loaded yet and load the matches',
+        defaultActive: false,
+        // A query can match any tool that is not declared yet.
+        reachesTools: static fn (): string => 'all',
+        // Searching is not something scripts need; it changes what the model sees.
+        exposure: 'model-only',
+    ));
 };

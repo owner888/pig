@@ -189,7 +189,7 @@ Default enabled tools are `read`, `bash`, `edit`, and `write`, unless `defaultTo
 | `find` | Find paths using glob patterns |
 | `ls` | List directory contents |
 
-Built-in extensions add two more tools. They are off by default; the MCP extension turns them on when an MCP server needs them (see [MCP](/docs/latest/mcp#exposure)). `codemode` is always registered and can also be turned on by name ([below](#enable-codemode)). `tool_search` is registered only while it is needed, so naming it in `--tools` or `defaultTools` does not turn it on.
+Built-in extensions add two more tools. They are always registered and off by default; the MCP extension turns them on when an MCP server needs them (see [MCP](/docs/latest/mcp#exposure)), and naming them in `--tools` or `defaultTools` turns them on too ([below](#enable-codemode)).
 
 | Built-in extension | Purpose |
 |---|---|
@@ -208,7 +208,7 @@ A third built-in extension, pig's own `schedule`, adds the `schedule` tool, whic
 }
 ```
 
-This keeps `read`, `bash`, `edit`, and `write` and adds `codemode`. An MCP server with `codemode` exposure also turns it on when it connects, and it stays on.
+This keeps `read`, `bash`, `edit`, and `write` and adds `codemode`. An MCP server with `codemode` exposure also turns it on when the session starts, and it stays on.
 
 Codemode is useful without MCP: scripts can run several tool calls in parallel, filter large output before it reaches the model, and call classifier models such as TypeSafe's Jev through `$models->classify()` (see [Classifier models](/docs/latest/models#use-classifier-models)).
 
@@ -238,7 +238,21 @@ Tools with an output schema answer structured arrays: `bash` answers `['output',
 
 ### Tool search
 
-`tool_search` is registered while any `deferred` MCP tool is listed, and removed when none is; there is no setting for it. It uses the same ranking as `search_tools()` (BM25, default limit 8) over `deferred` tools that are not loaded yet and declares the matches for the next model call. Loaded tools are recorded in the session like other tool changes, so they stay declared on that branch.
+`tool_search` is registered inactive. An MCP server with `deferred` exposure turns it on, and so does naming it (`"defaultTools": ["+tool_search"]`). It uses the same ranking as `search_tools()` (BM25, default limit 8) over the registered tools with `codemode` or `deferred` exposure that are not active, and activates the matches, which are declared from the next model call. Loaded tools are recorded in the session like other tool changes, so they stay declared on that branch.
+
+### Tool exposure
+
+How the model reaches a tool is its exposure, which an extension gives when it registers the tool (see [Extensions](/docs/latest/extensions#1-register-tools-with-the-model-registertool)):
+
+| Exposure | Declared to the model | Callable from other tools (`codemode` scripts) |
+|---|---|---|
+| `direct` (default) | while active | while active |
+| `model-only` | while active | no |
+| `codemode` | only once `tool_search` loads it | always |
+| `deferred` | only once `tool_search` loads it | always |
+| `hidden` | never | never |
+
+The `toolExposure` setting changes the exposure of tools by name without changing the extension that registers them (see [Settings](/docs/latest/settings#tools)). A tool's schema is sent with every request while it is declared, so moving rarely used tools to `deferred` keeps requests smaller; activate `tool_search` so the model can still find them.
 
 <a id="resource-options"></a>
 

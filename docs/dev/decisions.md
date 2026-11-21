@@ -496,7 +496,7 @@ key grammar against `Keys::isKeyName()`, and `SchemaErrors` against typebox itse
 Where pig's schemas differ from upstream's: the `$id`s are `https://pigagent.dev/schemas/…`; the
 settings schema leaves out what pig does not read (`npmCommand`, `enableAnalytics`, `trackingId`,
 `deviceId`, the legacy `queueMode` and `websockets`) and adds pig's own keys (`fallbackModels`,
-`disabledExtensions`, `proxy.bypass`, `update.check`, the legacy
+`disabledExtensions`, `toolExposure`, `proxy.bypass`, `update.check`, the legacy
 `tui.mode`); the key grammar also reads `control`, `option`, `cmd`, `command`, `meta`, `pageup` and
 `pagedown`. A change to a setting, a binding, a theme token or a `models.json` field is a change to
 the schema file in the same commit; the test names the file when it is forgotten. The files must be

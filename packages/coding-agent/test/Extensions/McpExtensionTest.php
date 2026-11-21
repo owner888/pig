@@ -42,8 +42,6 @@ final class McpExtensionTest extends TestCase
     {
         $this->setUpGlobalTheme();
         Loop::reset();
-        \Pig\Codemode\Registry::reset();
-        \Pig\Codemode\DeferredTools::reset();
         McpServerRegistry::reset();
         $this->root = sys_get_temp_dir() . '/pig-mcp-ext-' . bin2hex(random_bytes(4));
         $this->home = $this->root . '/home';
@@ -186,10 +184,13 @@ final class McpExtensionTest extends TestCase
         $this->assertSame('deferred', McpConfig::toolExposure(['exposure' => 'deferred'], 'x'));
         $this->assertSame('codemode', McpConfig::toolExposure([], 'x'), "upstream's default, before pig's mapping");
 
-        // All five of upstream's are pig's own now that codemode is ported; a sixth lands on the default.
-        foreach (McpServers::EXPOSURES as $exposure) {
+        // Upstream's four are read as written, its older `codemode-deferred` as `codemode`
+        // (`MCP_EXPOSURE_ALIASES`), and a value from a newer pi lands on the default.
+        foreach (['codemode', 'deferred', 'direct', 'hidden'] as $exposure) {
             $this->assertSame($exposure, McpConfig::here($exposure));
         }
+
+        $this->assertSame('codemode', McpConfig::here('codemode-deferred'));
 
         $this->assertSame('codemode', McpConfig::here('something-newer'));
     }
@@ -504,7 +505,6 @@ final class McpExtensionTest extends TestCase
     public function testTheFirstPromptDoesNotWaitForACodemodeServer(): void
     {
         // Upstream's `waitForDirectServers()`: only a server with direct tools holds up the prompt.
-        \Pig\Codemode\Registry::reset();
         file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => [
             'slow' => ['command' => PHP_BINARY, 'args' => ['-r', 'sleep(30);']],
         ]]));
@@ -522,32 +522,35 @@ final class McpExtensionTest extends TestCase
         Async::run(fn () => $extensionRunner->emit(new SessionShutdownEvent()));
     }
 
-    public function testACodemodeExposedToolIsNotOnTheModelButInTheCodemodeRegistry(): void
+    public function testACodemodeExposedToolIsRegisteredDeferredNotDeclaredAndCallableFromOtherTools(): void
     {
-        \Pig\Codemode\Registry::reset();
         file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => [
             'fixture' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer()]],   // upstream's default exposure: codemode
         ]]));
 
-        [$set, $extensionRunner, $ui] = $this->start();
+        [$set, $extensionRunner, $ui, $session] = $this->start();
 
-        // Nothing declared, nothing said: the tool is where codemode scripts find it.
-        $this->assertSame([], $set->names());
-        $this->assertStringNotContainsString('codemode', implode("\n", $ui->notices));
-        $registered = \Pig\Codemode\Registry::all();
-        $this->assertSame(['mcp__fixture__echo'], array_keys($registered));
-        $this->assertSame('codemode', $registered['mcp__fixture__echo']['exposure']);
-        $this->assertSame('fixture', $registered['mcp__fixture__echo']['namespace']['name']);
+        // Upstream's `toToolExposure()`: registered `deferred`, with its server as its namespace,
+        // and not declared; nothing said about it.
+        $all = array_column($session->allTools(), null, 'name');
+        $this->assertSame('deferred', $all['mcp__fixture__echo']['exposure']);
+        $this->assertFalse($all['mcp__fixture__echo']['active']);
+        $this->assertSame('fixture', $all['mcp__fixture__echo']['namespace']['name']);
+        $this->assertSame(['read'], $session->activeTools(), 'no codemode loaded here, so nothing to activate');
+        // And upstream's warning says so, once.
+        $warning = 'MCP tools are only reachable from the codemode or tool_search tool, but neither is active; they cannot be called.';
+        $this->assertSame(1, count(array_keys($ui->notices, "[warning] {$warning}", true)), implode("\n", $ui->notices));
 
-        // And the registry entry calls through to the server, answering the whole CallToolResult.
-        $value = Async::run(static fn () => ($registered['mcp__fixture__echo']['execute'])(['text' => 'via script'], (new \Pig\Async\AbortController())->signal, new \Pig\CodingAgent\Extensions\ExtensionContext('.')));
-        $this->assertSame([['type' => 'text', 'text' => 'echo: via script']], $value['content']);
+        // Callable from other tools (upstream's `ctx.executeTool()`), with the whole CallToolResult
+        // as the structured result a codemode script receives.
+        $result = Async::run(static fn () => $session->executeTool('mcp__fixture__echo', ['text' => 'via script']));
+        $this->assertSame('echo: via script', $result->content[0]->text);
+        $this->assertSame([['type' => 'text', 'text' => 'echo: via script']], $result->structuredContent['content']);
 
         // The status says so too.
         $this->assertStringContainsString('fixture: connected, 1 tools (codemode)', $this->mcpStatus());
 
         Async::run(fn () => $extensionRunner->emit(new SessionShutdownEvent()));
-        $this->assertSame([], \Pig\Codemode\Registry::all(), 'shutdown takes them out of the registry');
     }
 
     public function testADeferredToolIsDeclaredOnlyOnceToolSearchFindsIt(): void
@@ -556,11 +559,11 @@ final class McpExtensionTest extends TestCase
             'fixture' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer()], 'exposure' => 'deferred'],
         ]]));
 
-        [$set, $extensionRunner, $ui] = $this->start();
+        [$set, $extensionRunner, $ui, $session] = $this->start();
 
-        $this->assertSame(['tool_search'], $set->names(), 'the deferred tool is not declared yet');
+        // Upstream's `ensureDiscoveryActive()`: a `deferred` server activates `tool_search`; the tool waits.
+        $this->assertSame(['read', 'tool_search'], $session->activeTools(), 'the deferred tool is not declared yet');
         $search = $set->find('tool_search');
-        $this->assertStringContainsString("You have access to tools from the following sources:\n- fixture", $search->description);
 
         // `/mcp` says how many are waiting.
         $command = $this->extension->api->commands()['mcp'];
@@ -571,20 +574,16 @@ final class McpExtensionTest extends TestCase
         $ctx = new \Pig\CodingAgent\Extensions\ExtensionContext('.');
         $none = Async::run(static fn () => ($search->execute)('1', ['query' => 'weather forecast'], null, $ctx, null));
         $this->assertSame('No matching tools found.', $none->content[0]->text);
-        $this->assertSame(['tool_search'], $set->names());
+        $this->assertSame(['read', 'tool_search'], $session->activeTools());
 
         // One that matches declares it, and says so for the next call.
         $found = Async::run(static fn () => ($search->execute)('2', ['query' => 'echo some text'], null, $ctx, null));
         $this->assertStringStartsWith("Loaded 1 tool. They are available from your next call:\n- mcp__fixture__echo:", $found->content[0]->text);
         $this->assertSame(['loaded' => ['mcp__fixture__echo']], $found->details);
-        $this->assertSame(['mcp__fixture__echo', 'tool_search'], $set->names());
-
-        // `tool_search` stays, as upstream's stays active, and still names the server its tools came from.
-        $this->assertStringContainsString('- fixture', $set->find('tool_search')->description);
+        $this->assertSame(['read', 'tool_search', 'mcp__fixture__echo'], $session->activeTools(), '`tool_search` stays, as upstream\'s stays active');
 
         // And the loaded tool works.
-        $tool = $set->find('mcp__fixture__echo');
-        $result = Async::run(static fn () => ($tool->execute)('3', ['text' => 'hi'], null, $ctx, null));
+        $result = Async::run(static fn () => $session->executeTool('mcp__fixture__echo', ['text' => 'hi']));
         $this->assertSame('echo: hi', $result->content[0]->text);
 
         Async::run(fn () => $extensionRunner->emit(new SessionShutdownEvent()));
@@ -599,13 +598,8 @@ final class McpExtensionTest extends TestCase
             'fixture' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer()], 'exposure' => 'deferred'],
         ]]));
 
-        [$set, $extensionRunner] = $this->load();
+        [$set, $extensionRunner, $session] = $this->load();
         $extensionRunner->initialize(static fn () => null, ui: new NoticingUi());
-        $agent = new \Pig\Agent\Agent(new \Pig\Agent\AgentOptions());
-        $loadout = new \Pig\CodingAgent\Tools\ToolLoadout($agent, $this->cwd, ['read'], $set, $extensionRunner, [], []);
-        $set->onChange(static fn () => $loadout->refresh());
-        $loadout->apply();
-        $session = new \Pig\CodingAgent\Session\AgentSession($agent, $this->cwd, extensionRunner: $extensionRunner, loadout: $loadout);
 
         // What the transcript of the earlier session declared, `tool_search` having loaded the tool.
         $session->restore([new \Pig\Ai\SystemMessage('', ['cwd' => 'x'], [
@@ -621,8 +615,7 @@ final class McpExtensionTest extends TestCase
         });
         $this->untilServersSettle();
 
-        $this->assertSame(['mcp__fixture__echo', 'tool_search'], $set->names());
-        $this->assertSame(['read', 'mcp__fixture__echo', 'tool_search'], $session->activeTools());
+        $this->assertSame(['read', 'tool_search', 'mcp__fixture__echo'], $session->activeTools());
         $this->assertFalse($session->isToolPending('mcp__fixture__echo'));
 
         Async::run(fn () => $extensionRunner->emit(new SessionShutdownEvent()));
@@ -701,9 +694,9 @@ final class McpExtensionTest extends TestCase
             'broken' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer(), '--exit-on', 'initialize']],
         ]]));
 
-        [$set, $extensionRunner] = $this->start();
+        [$set, $extensionRunner, , $session] = $this->start();
         [$terminal, $tui, $ui] = $this->terminal();
-        $this->assertSame(['mcp__fixture__echo'], $set->names());
+        $this->assertSame(['read', 'mcp__fixture__echo'], $session->activeTools());
 
         $command = $this->extension->api->commands()['mcp'];
         $ctx = new \Pig\CodingAgent\Extensions\ExtensionContext('.', ui: $ui, hasUi: true);
@@ -747,7 +740,8 @@ final class McpExtensionTest extends TestCase
         $terminal->type("\r");
         $this->until(fn (): bool => str_contains($this->screenOf($tui), 'State: disabled'));
 
-        $this->assertSame([], $set->names(), 'its tool is gone from the agent');
+        $this->assertSame(['read'], $session->activeTools(), 'its tool is gone from the agent');
+        $this->assertNotContains('mcp__fixture__echo', $set->names());
         $this->assertFalse(json_decode((string) file_get_contents($this->home . '/mcp.json'), true)['mcpServers']['fixture']['enabled'], 'and the file says so');
         $screen = $this->screenOf($tui);
         $this->assertStringContainsString('State: disabled', $screen);
@@ -758,7 +752,7 @@ final class McpExtensionTest extends TestCase
         // The tool is back the moment the connection is, which is *before* the menu is redrawn —
         // a key typed in that window lands on the status screen, which takes none. Wait for the menu.
         $this->until(fn (): bool => str_contains($this->screenOf($tui), 'State: connected'));
-        $this->assertSame(['mcp__fixture__echo'], $set->names());
+        $this->assertSame(['read', 'mcp__fixture__echo'], $session->activeTools());
         $this->assertArrayNotHasKey('enabled', json_decode((string) file_get_contents($this->home . '/mcp.json'), true)['mcpServers']['fixture'], 'the default is not written out');
 
         // Esc back to the list, Esc closes the manager.
@@ -779,9 +773,9 @@ final class McpExtensionTest extends TestCase
             'fixture' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer()], 'exposure' => 'direct'],
         ]]));
 
-        [$set, $extensionRunner] = $this->start();
+        [$set, $extensionRunner, , $session] = $this->start();
         [$terminal, $tui, $ui] = $this->terminal();
-        $this->assertSame(['mcp__fixture__echo'], $set->names());
+        $this->assertSame(['read', 'mcp__fixture__echo'], $session->activeTools());
 
         $command = $this->extension->api->commands()['mcp'];
         Async::spawn(static fn () => ($command->handler)('', new \Pig\CodingAgent\Extensions\ExtensionContext('.', ui: $ui, hasUi: true)));
@@ -803,7 +797,8 @@ final class McpExtensionTest extends TestCase
         $this->turn();
 
         $this->assertSame('deferred', json_decode((string) file_get_contents($this->home . '/mcp.json'), true)['mcpServers']['fixture']['exposure']);
-        $this->assertSame(['tool_search'], $set->names(), 'the tool went behind tool_search; the one that was declared is gone');
+        $this->assertSame(['read'], $session->activeTools(), 'the tool went behind tool_search; the one that was declared is gone');
+        $this->assertSame('deferred', array_column($session->allTools(), 'exposure', 'name')['mcp__fixture__echo']);
         $this->assertStringContainsString('Exposure', $this->screenOf($tui));
 
         $terminal->type("\e");
@@ -855,12 +850,12 @@ final class McpExtensionTest extends TestCase
             'plain' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer()], 'exposure' => 'direct'],
         ]]));
 
-        [$set, $extensionRunner] = $this->start();
+        [$set, $extensionRunner, , $session] = $this->start();
 
-        $names = $set->names();
+        $names = $session->activeTools();
         sort($names);
         $this->assertSame(
-            ['list_mcp_resource_templates', 'list_mcp_resources', 'mcp__docs__echo', 'mcp__plain__echo', 'read_mcp_resource'],
+            ['list_mcp_resource_templates', 'list_mcp_resources', 'mcp__docs__echo', 'mcp__plain__echo', 'read', 'read_mcp_resource'],
             $names,
             'the resource tools once, not per server, and declared because a server with resources is direct',
         );
@@ -928,16 +923,16 @@ final class McpExtensionTest extends TestCase
             'docs' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer(), '--resources'], 'exposure' => 'deferred'],
         ]]));
 
-        [$set, $extensionRunner] = $this->start();
+        [$set, $extensionRunner, , $session] = $this->start();
 
         // A deferred server's resources: the tools wait behind tool_search, with the server's tool.
-        $this->assertSame(['tool_search'], $set->names());
+        $this->assertSame(['read', 'tool_search'], $session->activeTools());
+        $this->assertSame('deferred', array_column($session->allTools(), 'exposure', 'name')['list_mcp_resources']);
         $search = $set->find('tool_search');
-        $this->assertStringContainsString('- mcp resources', $search->description, 'listed as a source of their own');
         $ctx = new \Pig\CodingAgent\Extensions\ExtensionContext('.');
         $found = Async::run(static fn () => ($search->execute)('1', ['query' => 'list resources'], null, $ctx, null));
         $this->assertStringContainsString('list_mcp_resources', $found->content[0]->text);
-        $this->assertContains('list_mcp_resources', $set->names(), 'loaded like any deferred tool');
+        $this->assertContains('list_mcp_resources', $session->activeTools(), 'loaded like any deferred tool');
 
         // Disabling the only server with resources takes them away, loaded or not.
         $command = $this->extension->api->commands()['mcp'];
@@ -951,7 +946,8 @@ final class McpExtensionTest extends TestCase
         $terminal->type("\e[B");                             // → Disable
         $terminal->type("\r");
         $this->until(fn (): bool => str_contains($this->screenOf($tui), 'State: disabled'));
-        $this->assertSame([], $set->names(), 'no server with resources, no resource tools, no tool_search');
+        $this->assertSame(['read', 'tool_search'], $session->activeTools(), 'no server with resources, no resource tools; tool_search stays, as upstream\'s does');
+        $this->assertSame('hidden', array_column($session->allTools(), 'exposure', 'name')['list_mcp_resources']);
 
         $terminal->type("\e");
         $terminal->type("\e");
@@ -959,7 +955,7 @@ final class McpExtensionTest extends TestCase
         Async::run(fn () => $extensionRunner->emit(new SessionShutdownEvent()));
     }
 
-    public function testAResourceLinkNamesTheReaderOnlyWhileTheResourceToolsAreOnTheModel(): void
+    public function testAResourceLinkNamesTheReaderOnlyWhileItReachesTheServersResources(): void
     {
         $withTools = McpTools::convert('docs', 't', ['content' => [['type' => 'resource_link', 'uri' => 'file:///x', 'name' => 'x']]], readableResources: true);
         $without = McpTools::convert('docs', 't', ['content' => [['type' => 'resource_link', 'uri' => 'file:///x', 'name' => 'x']]]);
@@ -1025,10 +1021,10 @@ final class McpExtensionTest extends TestCase
         ]]));
 
         try {
-            [$set, $extensionRunner, $ui] = $this->start();
+            [$set, $extensionRunner, $ui, $session] = $this->start();
 
             // Not failed: waiting for a sign-in, and the report says how.
-            $this->assertSame([], $set->names());
+            $this->assertSame(['read'], $session->activeTools());
             $this->assertStringContainsString('remote: needs sign-in, run /mcp login remote', implode("\n", $ui->notices));
             $this->assertStringContainsString('remote: needs sign-in, run /mcp login remote (direct)', $this->mcpStatus());
 
@@ -1065,7 +1061,7 @@ final class McpExtensionTest extends TestCase
             });
 
             $this->assertStringContainsString('remote: connected, 1 tools (direct)', $this->mcpStatus());
-            $this->assertSame(['mcp__remote__echo'], $set->names(), 'signed in, connected, and the tool is on the model');
+            $this->assertSame(['read', 'mcp__remote__echo'], $session->activeTools(), 'signed in, connected, and the tool is on the model');
             $this->assertStringContainsString('Signed in to MCP server "remote" (1 tools).', end($ui->notices));
 
             // The credentials file holds the tokens, keyed by URL, and is private.
@@ -1082,7 +1078,7 @@ final class McpExtensionTest extends TestCase
             $this->assertStringContainsString('Signed out of MCP server "remote".', end($ui->notices));
             $this->assertArrayNotHasKey($server->url(), json_decode((string) file_get_contents($this->home . '/mcp-auth.json'), true));
             $this->assertStringContainsString('remote: needs sign-in', $this->mcpStatus());
-            $this->assertSame([], $set->names(), 'and its tool is off the model');
+            $this->assertSame(['read'], $session->activeTools(), 'and its tool is off the model');
 
             Async::run(fn () => $extensionRunner->emit(new SessionShutdownEvent()));
         } finally {
@@ -1109,9 +1105,9 @@ final class McpExtensionTest extends TestCase
         ]]));
 
         try {
-            [$set] = $this->start();
+            [$set, , , $session] = $this->start();
 
-            $this->assertSame(['mcp__remote__echo'], $set->names());
+            $this->assertSame(['read', 'mcp__remote__echo'], $session->activeTools());
             $this->assertSame('refresh_token', $server->tokenRequests[0]['grant_type'], 'refreshed before the first request');
             $this->assertSame('refresh-old', $server->tokenRequests[0]['refresh_token']);
             $auth = json_decode((string) file_get_contents($this->home . '/mcp-auth.json'), true);
@@ -1544,9 +1540,10 @@ final class McpExtensionTest extends TestCase
      *
      * @return array{CustomToolSet, ExtensionRunner, NoticingUi}
      */
+    /** @return array{0: CustomToolSet, 1: ExtensionRunner, 2: NoticingUi, 3: \Pig\CodingAgent\Session\AgentSession} */
     private function start(): array
     {
-        [$set, $extensionRunner] = $this->load();
+        [$set, $extensionRunner, $session] = $this->load();
         $ui = new NoticingUi();
         $extensionRunner->initialize(static fn () => null, ui: $ui);
 
@@ -1556,7 +1553,7 @@ final class McpExtensionTest extends TestCase
         });
         $this->untilServersSettle();
 
-        return [$set, $extensionRunner, $ui];
+        return [$set, $extensionRunner, $ui, $session];
     }
 
     /**
@@ -1590,6 +1587,13 @@ final class McpExtensionTest extends TestCase
      *
      * @return array{CustomToolSet, ExtensionRunner}
      */
+    /**
+     * The MCP and tool-search extensions as startup loads them: the tools registered while loading
+     * are the set's to begin with, and a session's loadout declares them — `activeTools()` is
+     * what the model is offered.
+     *
+     * @return array{0: CustomToolSet, 1: ExtensionRunner, 2: \Pig\CodingAgent\Session\AgentSession}
+     */
     private function load(): array
     {
         $repo = dirname(__DIR__, 4);
@@ -1597,7 +1601,10 @@ final class McpExtensionTest extends TestCase
         $this->assertSame([], $errors);
         $this->assertCount(2, $loaded);
         $this->extension = $loaded[0];
-        $set = new CustomToolSet([]);
+        $set = new CustomToolSet(array_merge(...array_map(
+            static fn ($extension): array => array_map(static fn ($tool) => new \Pig\CodingAgent\Extensions\RegisteredTool($extension->path, $extension->resolved, $tool), $extension->api->tools()),
+            $loaded,
+        )));
         $extensionRunner = [];
 
         foreach ($loaded as $extension) {
@@ -1605,6 +1612,12 @@ final class McpExtensionTest extends TestCase
             $extensionRunner[] = new LoadedExtension($extension->path, $extension->resolved, $extension->name, $extension->api);
         }
 
-        return [$set, new ExtensionRunner($extensionRunner, $this->cwd)];
+        $runner = new ExtensionRunner($extensionRunner, $this->cwd);
+        $agent = new \Pig\Agent\Agent(new \Pig\Agent\AgentOptions());
+        $loadout = new \Pig\CodingAgent\Tools\ToolLoadout($agent, $this->cwd, ['read'], $set, $runner, [], []);
+        $set->onChange(static fn () => $loadout->refresh());
+        $loadout->apply();
+
+        return [$set, $runner, new \Pig\CodingAgent\Session\AgentSession($agent, $this->cwd, extensionRunner: $runner, loadout: $loadout)];
     }
 }

@@ -56,6 +56,15 @@ final readonly class ToolDefinition
     private const string NAME = '/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/';
 
     /**
+     * Upstream's `ToolExposure`, "how the model reaches a tool": `direct` is declared to the model
+     * and callable from other tools while active; `model-only` is declared and not callable from
+     * them; `codemode` is not declared, callable from other tools (codemode scripts) whether active
+     * or not, and findable by `tool_search`; `deferred` is like `codemode` but codemode does not list
+     * it, and `tool_search` loads it; `hidden` is registered and unreachable.
+     */
+    public const array EXPOSURES = ['direct', 'model-only', 'codemode', 'deferred', 'hidden'];
+
+    /**
      * @param array<string, mixed> $parameters JSON Schema for the arguments object
      * @param Closure(string, array<string, mixed>, ?Closure, \Pig\CodingAgent\Extensions\ExtensionContext, ?\Pig\Async\AbortSignal): \Pig\Agent\AgentToolResult $execute
      * @param Closure(CustomToolSessionEvent, \Pig\CodingAgent\Extensions\ExtensionContext): void|null $onSession
@@ -75,9 +84,10 @@ final readonly class ToolDefinition
      *        (`false | ConstrainedSamplingConfig`): e.g. `['type' => 'json_schema', 'strict' => 'prefer']`
      *        asks for strict sampling where the provider has it, as the built-in bash, edit, read and
      *        write do. Null and false both mean no — see `Ai\Tool::$constrainedSampling`
-     * @param Closure(list<\Pig\Agent\AgentTool>): array{descriptions?: array<string, string>, hiddenDeclarations?: list<string>}|null $prepareLoadout
-     *        upstream's `ToolDefinition.prepareLoadout`: asked by `ToolLoadout::apply()` with every
-     *        active tool (the hooked ones, in the order the model is offered them), it answers the
+     * @param Closure(\Pig\CodingAgent\Tools\LoadoutView): array{descriptions?: array<string, string>, hiddenDeclarations?: list<string>}|null $prepareLoadout
+     *        upstream's `ToolDefinition.prepareLoadout`: asked by `ToolLoadout::apply()` with the
+     *        loadout — the declared tools (the hooked ones, in the order the model is offered them),
+     *        the callable ones, every registered one, and each one's exposure — it answers the
      *        descriptions to show in place of the tools' own, by name, and the names of tools to
      *        keep callable but not declare to the model. The codemode tool is what this exists for
      * @param bool $defaultActive upstream's `ToolDefinition.defaultActive`: whether registering the
@@ -93,6 +103,17 @@ final readonly class ToolDefinition
      *        may reach. `"all"`, or the words of the input that may name them, where a word refers to
      *        a tool or namespace whose name it contains, so words may over-match." The MCP extension
      *        waits from its `tool_call` handler for the servers a call may reach
+     * @param 'direct'|'model-only'|'codemode'|'deferred'|'hidden' $exposure upstream's `ToolDefinition.exposure`,
+     *        `EXPOSURES`. Only a `direct` or `model-only` tool is activated by registering it; the
+     *        others are activated by naming them (`--tools`, `defaultTools`, `setActiveTools()`) or,
+     *        `codemode` and `deferred` ones, by `tool_search`. The `toolExposure` setting overrides it
+     *        (`ToolLoadout::exposure()`)
+     * @param array{name: string, description?: ?string, instructions?: ?string}|null $namespace upstream's
+     *        `ToolDefinition.namespace`, "group the tool belongs to, for example its MCP server" —
+     *        what `tool_search` reads beside the tool's own description
+     * @param array<string, mixed>|null $outputSchema upstream's `ToolDefinition.outputSchema`: "JSON
+     *        Schema of `structuredContent` in successful results. Tools that declare it should always
+     *        set `structuredContent`; codemode scripts then receive it instead of the text content."
      * @throws InvalidArgumentException when the declaration could not work
      */
     public function __construct(
@@ -111,6 +132,9 @@ final readonly class ToolDefinition
         public bool $defaultActive = true,
         public ToolReplay $replay = ToolReplay::Unsafe,
         public ?Closure $reachesTools = null,
+        public string $exposure = 'direct',
+        public ?array $namespace = null,
+        public ?array $outputSchema = null,
     ) {
         // Checked here rather than left to the provider: a tool with no description is
         // one the model will never choose, and a tool with a name the API rejects fails
@@ -128,6 +152,10 @@ final readonly class ToolDefinition
 
         if (trim($label) === '') {
             throw new InvalidArgumentException("The tool '{$name}' needs a label — it is what the UI shows while it runs.");
+        }
+
+        if (!in_array($exposure, self::EXPOSURES, true)) {
+            throw new InvalidArgumentException("The tool '{$name}' has exposure '{$exposure}': it is one of " . implode(', ', self::EXPOSURES) . '.');
         }
 
         if (($parameters['type'] ?? null) !== 'object') {
