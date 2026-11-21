@@ -2625,6 +2625,7 @@ final class InteractiveMode
         ['changelog', 'What changed, release by release'],
         ['reload', 'Reload extensions, skills, commands, tools, and context files'],
         ['tools', 'What the model can call, built-in and loaded'],
+        ['system-prompt', 'The system prompt, tools and skills the model is given, in full'],
         ['doctor', 'Inspect system health, PHP runtime, binaries, and auth tokens'],
         ['bug', 'Report a bug to the pig developers (/bug [what went wrong])'],
         ['trust', 'Decide whether this project\'s .pig/ extensions may load'],
@@ -2732,6 +2733,7 @@ final class InteractiveMode
             'arminsayshi' => $this->sayHi(),
             'debug' => $this->writeDebugLog(),
             'tools' => $this->say($this->toolList()),
+            'system-prompt' => $this->sayThemed($this->systemPromptReport()),
             'doctor' => $this->say($this->doctorReport()),
             'bug' => $this->reportBug(trim(substr($text, strlen($name) + 1))),
             'trust' => $this->showTrust(),
@@ -2913,6 +2915,67 @@ final class InteractiveMode
             }
 
             return $lines === [] ? 'This session has no tools at all.' : implode("\n", $lines);
+        };
+    }
+
+    /**
+     * `/system-prompt`, pig's: what the model is given, in full — the system prompt as the next
+     * request sends it (`AgentSession::systemPrompt()`, which includes every skill's description and
+     * every context file), then each tool it is offered with its parameters, then the skills and
+     * whether each is in the prompt. `/tools` and `/skills` say what is there; this says what is
+     * sent. The web page's is a dialog over the same data (`RpcMode`'s `get_system_prompt`).
+     *
+     * @return Closure(): string the report taken now, drawn in whichever theme is on
+     */
+    private function systemPromptReport(): Closure
+    {
+        $prompt = $this->session->systemPrompt();
+        $tools = $this->session->allTools();
+        $skills = $this->session->skills();
+
+        return static function () use ($prompt, $tools, $skills): string {
+            $theme = Themes::theme();
+            $offered = array_values(array_filter($tools, static fn (array $tool): bool => $tool['active']));
+            $held = array_values(array_filter($tools, static fn (array $tool): bool => !$tool['active']));
+            $lines = [
+                Style::bold('System prompt') . $theme->fg('dim', ' · ' . number_format(mb_strlen($prompt)) . ' characters'),
+                $prompt === '' ? $theme->fg('dim', '(empty)') : $prompt,
+                '',
+                Style::bold('Tools offered') . $theme->fg('dim', ' · ' . count($offered)),
+            ];
+
+            foreach ($offered as $tool) {
+                $lines[] = $theme->fg('accent', $tool['name']) . $theme->fg('muted', ' — ' . $tool['description']);
+                $properties = is_array($tool['parameters']['properties'] ?? null) ? $tool['parameters']['properties'] : [];
+                $required = is_array($tool['parameters']['required'] ?? null) ? $tool['parameters']['required'] : [];
+
+                foreach ($properties as $name => $property) {
+                    $type = is_array($property) ? ($property['type'] ?? 'any') : 'any';
+                    $description = is_array($property) && is_string($property['description'] ?? null) ? ' — ' . $property['description'] : '';
+                    $lines[] = $theme->fg('dim', '  ' . $name . ': ' . (is_array($type) ? implode('|', $type) : (string) $type)
+                        . (in_array((string) $name, $required, true) ? ', required' : ', optional') . $description);
+                }
+            }
+
+            if ($held !== []) {
+                $lines[] = $theme->fg('dim', 'Registered, not offered: ' . implode(', ', array_column($held, 'name')));
+            }
+
+            $lines[] = '';
+            $lines[] = Style::bold('Skills') . $theme->fg('dim', ' · ' . count($skills));
+
+            foreach ($skills as $skill) {
+                $lines[] = $theme->fg('accent', $skill->name)
+                    . $theme->fg('dim', $skill->disableModelInvocation ? ' (not in the prompt: disable-model-invocation)' : '')
+                    . $theme->fg('muted', ' — ' . $skill->description);
+                $lines[] = $theme->fg('dim', '  ' . $skill->path);
+            }
+
+            if ($skills === []) {
+                $lines[] = $theme->fg('dim', 'No skills loaded.');
+            }
+
+            return implode("\n", $lines);
         };
     }
 

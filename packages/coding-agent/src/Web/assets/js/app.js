@@ -1820,6 +1820,63 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       }
     }
 
+    /**
+     * `get_system_prompt`'s answer as a dialog: the prompt as the next request sends it, each tool
+     * offered with its parameters, the ones registered and not offered, and the skills, each with
+     * whether its description is in the prompt (the terminal's `/system-prompt`).
+     */
+    function showSystemPrompt(data) {
+      const prompt = typeof data?.systemPrompt === "string" ? data.systemPrompt : "";
+      const tools = Array.isArray(data?.tools) ? data.tools : [];
+      const skills = Array.isArray(data?.skills) ? data.skills : [];
+      const offered = tools.filter((tool) => tool.active);
+      const held = tools.filter((tool) => !tool.active);
+      const dim = (html) => `<span style="color:var(--color-dim);">${html}</span>`;
+      const heading = (label, count) => `<div class="modal-section">${escapeHtml(label)} ${dim("· " + escapeHtml(String(count)))}</div>`;
+      const parameters = (schema) => {
+        const properties = schema && typeof schema.properties === "object" && schema.properties ? schema.properties : {};
+        const required = Array.isArray(schema?.required) ? schema.required : [];
+        const rows = Object.entries(properties).map(([name, property]) => {
+          const type = Array.isArray(property?.type) ? property.type.join("|") : (property?.type || "any");
+          const note = typeof property?.description === "string" && property.description !== "" ? " — " + escapeHtml(property.description) : "";
+          return `<li><code>${escapeHtml(name)}</code> ${dim(escapeHtml(type) + " · " + escapeHtml(t(required.includes(name) ? "system_prompt_required" : "system_prompt_optional")))}${note}</li>`;
+        });
+        return rows.length ? `<ul style="margin:4px 0 0 18px;">${rows.join("")}</ul>` : "";
+      };
+      const toolRows = offered.map((tool) => `<li style="margin-bottom:8px;"><code>${escapeHtml(tool.name)}</code> — ${escapeHtml(tool.description || "")}${parameters(tool.parameters)}</li>`).join("");
+      const skillRows = skills.map((skill) => `<li style="margin-bottom:6px;"><code>${escapeHtml(skill.name)}</code>${skill.inPrompt ? "" : " " + dim(escapeHtml(t("system_prompt_not_in_prompt")))} — ${escapeHtml(skill.description || "")}<div>${dim(escapeHtml(skill.path || ""))}</div></li>`).join("");
+
+      openModal({
+        title: t("system_prompt_title"),
+        width: "min(760px, 94vw)",
+        hideFooter: true,
+        headerExtraHtml: `<button type="button" class="modal-btn" data-copy-prompt>${escapeHtml(t("copy"))}</button>`,
+        bodyHtml: `
+          <div style="display:flex; flex-direction:column; gap:10px; font-size:var(--text-base);">
+            ${heading(t("system_prompt_section"), t("system_prompt_chars", { count: prompt.length.toLocaleString() }))}
+            <pre style="white-space:pre-wrap; word-break:break-word; margin:0; padding:10px 12px; font-size:var(--text-sm); background:var(--color-background); border:1px solid var(--color-divider); border-radius:var(--radius-md);">${prompt === "" ? escapeHtml(t("system_prompt_empty")) : escapeHtml(prompt)}</pre>
+            ${heading(t("system_prompt_tools"), offered.length)}
+            ${offered.length ? `<ul style="margin:0 0 0 18px; padding:0;">${toolRows}</ul>` : dim(escapeHtml(t("system_prompt_no_tools")))}
+            ${held.length ? `<div>${dim(escapeHtml(t("system_prompt_not_offered")) + " " + held.map((tool) => escapeHtml(tool.name)).join(", "))}</div>` : ""}
+            ${heading(t("system_prompt_skills"), skills.length)}
+            ${skills.length ? `<ul style="margin:0 0 0 18px; padding:0;">${skillRows}</ul>` : dim(escapeHtml(t("system_prompt_no_skills")))}
+          </div>
+        `,
+        onOpen: (modalEl) => {
+          const copy = modalEl.querySelector("[data-copy-prompt]");
+          copy.addEventListener("click", async () => {
+            try {
+              await navigator.clipboard.writeText(prompt);
+              copy.textContent = t("copied");
+            } catch (err) {
+              copy.textContent = err.message;
+              throw err;
+            }
+          });
+        },
+      });
+    }
+
     /** The built-in tools a custom session starts with ticked: pig's default, `ToolSet::CODING`. */
     const CUSTOM_SESSION_TOOLS = ["read", "bash", "edit", "write"];
 
@@ -1941,6 +1998,16 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       // ---- the slash commands the page answers itself -------------------------------------
       // Each is an rpc command to the active tab's child (`RpcMode`'s `doctor`, `bug`, `diff`,
       // `export_markdown`): the child owns the session, so the child answers about it.
+      // `/system-prompt`: what the model is given, in a dialog rather than in the conversation —
+      // it is read and closed, and thousands of characters of prompt in the transcript would be
+      // in the way of everything after it.
+      if (text === "/system-prompt") {
+        try {
+          showSystemPrompt(await active.rpc({ type: "get_system_prompt" }));
+        } catch (err) { appendErrorMessage(err.message); }
+        return;
+      }
+
       if (text === "/doctor") {
         appendUserMessage(text);
         try {

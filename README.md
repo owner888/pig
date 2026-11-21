@@ -191,6 +191,7 @@ pig
   - `/scoped-models`: Choose which models `Ctrl+P` cycles through, and save the choice as `enabledModels`.
   - `/reload`: Hot-reload extensions, skills, prompt templates, themes, keybindings, tools, and context files without restarting `pig`. An extension that declares PHP classes keeps running the version loaded at startup (PHP cannot unload a class) and the reload says so when its files changed — restart `pig` to pick that up.
   - `/doctor`: Run system diagnostic checks on PHP extensions, tools, permissions, and network endpoints.
+  - `/system-prompt`: Show what the model is given, in full: the system prompt as the next request sends it (skills and context files included), every tool it is offered with its parameters, and the skills, each marked if it is not in the prompt. The Web UI shows it in a dialog.
 
 ### 2. Web UI Interface (`pig web`)
 

@@ -56,8 +56,8 @@ use Throwable;
  * **The wire is upstream's** (`modes/rpc/rpc-types.ts`, `rpc-mode.ts`, `json-event.ts`): every command,
  * field, response and event name, so a client written against `pi --mode rpc` drives `pig --mode rpc`
  * unchanged. pig's own additions are additive and named as such — the extra `get_state` fields a web
- * tab draws, `navigate_tree`, and the four commands the web shell needs from its child (`doctor`,
- * `diff`, `bug`, `export_markdown`).
+ * tab draws, `navigate_tree`, the four commands the web shell needs from its child (`doctor`,
+ * `diff`, `bug`, `export_markdown`), and `get_system_prompt`, its `/system-prompt`.
  *
  * `id` is the host's, echoed back on the response so replies can be matched to commands.
  * It is optional, and a command without one gets a response without one. **One response per
@@ -516,9 +516,33 @@ final class RpcMode
             'bug' => $this->bug($command),
             'export_markdown' => $this->exportMarkdown($command),
             'translate' => $this->translate($command),
+            // pig's: the terminal's `/system-prompt` as a command, which the web shell shows in a dialog.
+            'get_system_prompt' => $this->systemPromptReport(),
 
             default => throw new \RuntimeException("Unknown command: {$type}"),
         };
+    }
+
+    /**
+     * What the model is given, as the next request would give it: the effective system prompt
+     * (`AgentSession::systemPrompt()`, pending changes included), every registered tool with its
+     * schema and whether it is offered, and every skill with whether its description is in the
+     * prompt (one with `disable-model-invocation` is not).
+     *
+     * @return array{systemPrompt: string, tools: list<array{name: string, description: string, parameters: array<string, mixed>, active: bool}>, skills: list<array{name: string, description: string, path: string, inPrompt: bool}>}
+     */
+    private function systemPromptReport(): array
+    {
+        return [
+            'systemPrompt' => $this->session->systemPrompt(),
+            'tools' => $this->session->allTools(),
+            'skills' => array_map(static fn (Skill $skill): array => [
+                'name' => $skill->name,
+                'description' => $skill->description,
+                'path' => $skill->path,
+                'inPrompt' => !$skill->disableModelInvocation,
+            ], $this->session->skills()),
+        ];
     }
 
     /** A success with no `data` key at all — upstream's `success(id, command)`. */

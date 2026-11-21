@@ -68,6 +68,11 @@ const COMMANDS = [
     descEn: "List tools available to the model",
   },
   {
+    name: "system-prompt",
+    descZh: "查看发给模型的完整系统提示词、工具和技能",
+    descEn: "The system prompt, tools and skills the model is given, in full",
+  },
+  {
     name: "changelog",
     descZh: "查看 pig 版本更新日志",
     descEn: "View pig release changelog",

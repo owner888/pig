@@ -1091,6 +1091,21 @@ final class RpcModeTest extends TestCase
         );
     }
 
+    /** `/system-prompt`'s command: the prompt as the next request sends it, every tool with its schema, every skill. */
+    public function testTheSystemPromptIsReportedWithTheToolsAndTheirSchemas(): void
+    {
+        $this->start();
+
+        $data = $this->data(['type' => 'get_system_prompt']);
+
+        $this->assertSame($this->session->systemPrompt(), $data['systemPrompt']);
+        $this->assertSame(['read'], array_column($data['tools'], 'name'));
+        $this->assertTrue($data['tools'][0]['active']);
+        $this->assertSame('object', $data['tools'][0]['parameters']['type']);
+        $this->assertArrayHasKey('path', $data['tools'][0]['parameters']['properties']);
+        $this->assertSame([], $data['skills']);
+    }
+
     /** What the page's "New custom session" dialog offers: every extension loaded, the built-ins by their `builtin:` name too. */
     public function testEveryLoadedExtensionIsListedByTheNameThatLeavesItOut(): void
     {

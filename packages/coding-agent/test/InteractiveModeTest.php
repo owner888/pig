@@ -4287,6 +4287,19 @@ final class InteractiveModeTest extends TestCase
         $this->assertStringContainsString('built-in', $this->screen());
     }
 
+    public function testSlashSystemPromptShowsThePromptTheToolsWithTheirParametersAndTheSkills(): void
+    {
+        $this->start(customTools: $this->tools('wc'));
+        $this->type('/system-prompt');
+        $this->type(self::ENTER);
+        $screen = $this->screen();
+
+        $this->assertStringContainsString('Tools offered', $screen);
+        $this->assertStringContainsString('wc', $screen);
+        $this->assertStringContainsString('Skills', $screen);
+        $this->assertStringContainsString('No skills loaded.', $screen);
+    }
+
     public function testSlashToolsNamesTheFileACustomToolCameFrom(): void
     {
         $this->start(customTools: $this->tools('wc'));
