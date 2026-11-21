@@ -843,3 +843,14 @@ read that nothing local interrupts.
 and when a request is waiting for room while someone reads, sends a PING with its RST_STREAM: the server's
 answer is what wakes the reader to look again. `Http2ConnectionTest::testAStreamTheServerHasEndedNoLongerCountsAgainstItsLimitOnStreams`
 and `testAStreamLetGoOfLeavesRoomForTheRequestWaitingForIt` hold it.
+
+## A root coroutine's `delay()` never woke, on PHP 8.5 in CI only
+
+**Symptom**: `TuiDocsEvalTest` failed on PHP 8.5 in CI, and only there, with "The event loop ran out of work while the root coroutine was still suspended … suspended at … `Async::delay()` ← `RecordingTerminal::takeRenders()`". The timer `delay()` arms was gone from the loop without having fired.
+
+**Root cause**: watcher ids were numbered per loop, and `Loop::reset()` (every test's `setUp()`) started the next loop at `t0` again. Something that outlived its test and still held an id of the dropped loop — `AcmeServer::__destruct()`, run whenever the GC gets to it, which PHP 8.5 does at other moments than 8.4 — cancelled that id on the *current* loop, where the same number now belonged to an unrelated watcher: here the root coroutine's `delay()`. A timer leaves the loop only by firing or by `cancel()`, so it never fired.
+
+**Trap rules**:
+- Watcher ids are unique in the process (`Loop::$nextId` is static): an id from a dropped loop cancels nothing on the next one.
+- Cancel a watcher on the loop it was armed on (`AcmeServer` keeps `$loop`), never on `Loop::get()` from a destructor or a static that may outlive the test.
+- Tests: `LoopTest::testAnIdKeptFromADroppedLoopCancelsNothingOnTheNextOne` (fails with per-loop ids), `FutureTest::testTheReportNamesWhereTheRootCoroutineWaits`.

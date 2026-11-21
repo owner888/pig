@@ -59,7 +59,13 @@ final class Loop
     /** @var list<Closure> */
     private array $queue = [];
 
-    private int $nextId = 0;
+    /**
+     * Watcher ids are unique in the process, not per loop: a test drops the loop (`reset()`) and
+     * the next starts afresh, and an id kept from the old one — a destructor that runs late, a
+     * static that outlived its test — named whatever the new loop gave that number to, and
+     * cancelling it took someone else's timer (a root coroutine's `delay()`, under PHP 8.5's GC).
+     */
+    private static int $nextId = 0;
 
     private bool $stopped = false;
 
@@ -152,7 +158,7 @@ final class Loop
      */
     public function onReadable($stream, Closure $callback): string
     {
-        $id = 'r' . $this->nextId++;
+        $id = 'r' . self::$nextId++;
         $this->readers[$id] = ['stream' => $stream, 'callback' => $callback];
 
         if ($this->pollContext !== null && is_resource($stream)) {
@@ -175,7 +181,7 @@ final class Loop
      */
     public function onWritable($stream, Closure $callback): string
     {
-        $id = 'w' . $this->nextId++;
+        $id = 'w' . self::$nextId++;
         $this->writers[$id] = ['stream' => $stream, 'callback' => $callback];
 
         if ($this->pollContext !== null && is_resource($stream)) {
@@ -225,7 +231,7 @@ final class Loop
      */
     public function onSleep(Closure $callback): string
     {
-        $id = 's' . $this->nextId++;
+        $id = 's' . self::$nextId++;
         $this->sleepers[$id] = $callback;
 
         return $id;
@@ -259,7 +265,7 @@ final class Loop
     /** @return string watcher id for cancel() */
     public function delay(float $seconds, Closure $callback): string
     {
-        $id = 't' . $this->nextId++;
+        $id = 't' . self::$nextId++;
         $this->timers[$id] = ['at' => microtime(true) + $seconds, 'callback' => $callback];
 
         return $id;

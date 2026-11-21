@@ -46,7 +46,7 @@ final class ScheduleTool
 
     /**
      * @param (Closure(): ScheduleClient)|null $client how the server is found; `ScheduleClient::find()`
-     * @param (Closure(): string)|null $timezone the timezone a task is in when none is given; this machine's
+     * @param (Closure(): string)|null $timezone the timezone a task is in; this machine's
      */
     public function __construct(
         private readonly ?Closure $client = null,
@@ -56,28 +56,29 @@ final class ScheduleTool
 
     public static function description(): string
     {
-        return 'Create a scheduled task: a prompt pig runs on its own on a schedule — every day at 9, '
-            . 'on weekdays, once at a given time, or only when asked — in the task\'s own conversation in a given folder (in the sidebar from the moment it is created). '
-            . 'The task is shown to the user to confirm first; changing, pausing, running and deleting tasks is done in the web UI\'s Scheduled page. '
-            . 'The schedule is a five-field cron expression in the task\'s timezone (`0 9 * * *` every day at 9:00, '
-            . '`0 9 * * 1-5` weekdays), or `at` for one run, or neither for a task that runs only when asked.';
+        return 'Create a scheduled task: a prompt pig runs on its own, in a conversation of its own in a folder. '
+            . 'The user confirms it first; the web UI\'s Scheduled page changes, pauses and deletes tasks. '
+            . 'Give cron (five fields, e.g. `0 9 * * 1-5` weekdays at 9), or at for one run, or neither to run only when asked.';
     }
 
-    /** @return array<string, mixed> */
+    /**
+     * Only what creating a task needs: the timezone is this machine's and the model and thinking
+     * level pig's defaults, which the Scheduled page changes — the developer's call, so the schema
+     * sent with every request of a web conversation stays small.
+     *
+     * @return array<string, mixed>
+     */
     public static function parameters(): array
     {
         return [
             'type' => 'object',
             'properties' => [
-                'name' => ['type' => 'string', 'description' => 'A short name for the task'],
-                'prompt' => ['type' => 'string', 'description' => 'What each run is asked, in the task\'s own conversation — which knows nothing of this one, so say everything: the repository or files, what to check, what to report, and what to ask before doing'],
-                'cwd' => ['type' => 'string', 'description' => 'The folder each run starts in; defaults to the current one'],
-                'cron' => ['type' => 'string', 'description' => 'Five-field cron expression: minute hour day-of-month month day-of-week'],
-                'at' => ['type' => 'string', 'description' => "One run at this local time, e.g. '2026-10-12 09:00'"],
-                'timezone' => ['type' => 'string', 'description' => "IANA timezone the schedule is in, e.g. 'Asia/Singapore'; defaults to this machine's"],
-                'model' => ['type' => 'string', 'description' => 'provider/id for the runs; defaults to pig\'s default model'],
-                'thinking' => ['type' => 'string', 'description' => 'Thinking level for the runs: off, minimal, low, medium, high, xhigh'],
-                'permission' => ['type' => 'string', 'enum' => [ScheduledTask::AUTO, ScheduledTask::ASK], 'description' => "auto (the default for a new task): a run's confirmations are answered yes and it does not stop to wait; ask: a run stops at each one until the user answers"],
+                'name' => ['type' => 'string', 'description' => 'Short name'],
+                'prompt' => ['type' => 'string', 'description' => 'What each run is asked; it knows nothing of this conversation'],
+                'cwd' => ['type' => 'string', 'description' => 'Folder; defaults to the current one'],
+                'cron' => ['type' => 'string', 'description' => 'minute hour day-of-month month day-of-week'],
+                'at' => ['type' => 'string', 'description' => "Local time of one run, e.g. '2026-10-12 09:00'"],
+                'permission' => ['type' => 'string', 'enum' => [ScheduledTask::AUTO, ScheduledTask::ASK], 'description' => "auto (default) answers the run's confirmations yes; ask waits for the user"],
             ],
             'required' => ['name', 'prompt'],
         ];
@@ -86,16 +87,15 @@ final class ScheduleTool
     /** One line for the system prompt's tool list. */
     public static function promptSnippet(): string
     {
-        return 'schedule: create a task pig runs on its own on a schedule (cron), with a conversation of its own';
+        return 'schedule: create a task pig runs on its own on a schedule';
     }
 
     /** @return list<string> */
     public static function promptGuidelines(): array
     {
         return [
-            'When the user asks for something to happen on a schedule ("every morning", "each Monday", "tomorrow at 9"), use the schedule tool rather than describing how to set it up.',
-            'A scheduled task runs in a conversation of its own that knows nothing of this one: write its prompt to stand on its own — the repository or folder, what to check, what to report.',
-            'A scheduled run reports by default: unless the user asked otherwise, write its prompt so that it asks before pulling, merging, committing or editing files.',
+            'When the user wants something to happen on a schedule, use the schedule tool.',
+            'Write a scheduled task\'s prompt to stand on its own (the folder, what to check, what to report) and, unless the user asked otherwise, to ask before pulling, committing or editing files.',
         ];
     }
 
@@ -123,14 +123,14 @@ final class ScheduleTool
     {
         $data = [];
 
-        foreach (['name' => 'name', 'prompt' => 'prompt', 'cwd' => 'cwd', 'timezone' => 'timezone', 'model' => 'model', 'thinking' => 'thinkingLevel', 'permission' => 'permissionMode'] as $param => $field) {
+        foreach (['name' => 'name', 'prompt' => 'prompt', 'cwd' => 'cwd', 'permission' => 'permissionMode'] as $param => $field) {
             if (isset($params[$param])) {
                 $data[$field] = is_string($params[$param]) ? trim($params[$param]) : $params[$param];
             }
         }
 
         $data['cwd'] = self::folder((string) ($data['cwd'] ?? ''), $ctx->cwd);
-        $data['timezone'] ??= $this->timezone !== null ? ($this->timezone)() : self::localTimezone();
+        $data['timezone'] = $this->timezone !== null ? ($this->timezone)() : self::localTimezone();
         $data['enabled'] = true;
         // The Claude app's default for a new task: it works without stopping for approval.
         $data['permissionMode'] ??= ScheduledTask::AUTO;

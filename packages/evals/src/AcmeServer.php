@@ -79,6 +79,9 @@ JSON;
     /** @var list<string> */
     private array $watchers = [];
 
+    /** The loop the watchers are on: a destructor that runs in a later test must not cancel that test's. */
+    private ?Loop $loop = null;
+
     private string $serverOrigin = '';
 
     private bool $receivedValidRequest = false;
@@ -114,6 +117,7 @@ JSON;
 
         stream_set_blocking($server, false);
         $this->open[] = $server;
+        $this->loop = Loop::get();
 
         $this->watchers[] = Loop::get()->onReadable($server, function ($listening): void {
             $connection = stream_socket_accept($listening, 0);
@@ -173,7 +177,7 @@ JSON;
     public function stop(): void
     {
         foreach ($this->watchers as $watcher) {
-            Loop::get()->cancel($watcher);
+            $this->loop?->cancel($watcher);
         }
 
         $this->watchers = [];

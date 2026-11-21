@@ -106,6 +106,25 @@ final class LoopTest extends TestCase
         $this->assertTrue(is_resource($idlePeer));
     }
 
+    public function testAnIdKeptFromADroppedLoopCancelsNothingOnTheNextOne(): void
+    {
+        // A test drops the loop; something that outlived it — a destructor run late by the GC, a
+        // static — cancels the id it kept. Per-loop ids restarted at 0, so that id named the new
+        // loop's timer of the same number: a root coroutine's `delay()`, which then never woke.
+        $stale = Loop::get()->delay(60.0, static fn () => null);
+        Loop::reset();
+
+        $fired = false;
+        $fresh = Loop::get()->delay(0.0, static function () use (&$fired): void {
+            $fired = true;
+        });
+        $this->assertNotSame($stale, $fresh);
+
+        Loop::get()->cancel($stale);
+        Loop::get()->run();
+        $this->assertTrue($fired);
+    }
+
     public function testCancelDisarmsAWatcherBeforeItFires(): void
     {
         $loop = Loop::get();
