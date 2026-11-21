@@ -50,7 +50,8 @@ final class Async
                 if ($loop->isIdle()) {
                     throw new AsyncError(
                         'The event loop ran out of work while the root coroutine was still suspended — '
-                        . 'something awaited a Future that nothing will ever complete',
+                        . 'something awaited a Future that nothing will ever complete. It is suspended at: '
+                        . self::suspendedAt($fiber),
                     );
                 }
 
@@ -100,6 +101,23 @@ final class Async
     }
 
     /** Suspend the current coroutine for $seconds. */
+    /**
+     * Where a suspended fiber waits, innermost first — `Future::await()`'s caller and on up — so
+     * the error that it will never be woken names what it waits for.
+     */
+    private static function suspendedAt(Fiber $fiber): string
+    {
+        $frames = [];
+
+        foreach ((new \ReflectionFiber($fiber))->getTrace(DEBUG_BACKTRACE_IGNORE_ARGS) as $frame) {
+            if (isset($frame['file'])) {
+                $frames[] = $frame['file'] . ':' . $frame['line'] . (isset($frame['function']) ? ' ' . ($frame['class'] ?? '') . ($frame['type'] ?? '') . $frame['function'] . '()' : '');
+            }
+        }
+
+        return $frames === [] ? '(no frames)' : implode("\n  ", array_slice($frames, 0, 12));
+    }
+
     public static function delay(float $seconds): void
     {
         $deferred = new Deferred();

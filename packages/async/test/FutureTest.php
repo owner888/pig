@@ -110,6 +110,21 @@ final class FutureTest extends TestCase
         );
     }
 
+    public function testTheReportNamesWhereTheRootCoroutineWaits(): void
+    {
+        $line = __LINE__ + 4;
+
+        try {
+            Async::run(static function (): void {
+                (new Deferred())->future->await();
+            });
+            $this->fail('returned');
+        } catch (AsyncError $error) {
+            $this->assertStringContainsString('It is suspended at: ', $error->getMessage());
+            $this->assertStringContainsString(__FILE__ . ':' . $line, $error->getMessage(), 'the await that is never answered');
+        }
+    }
+
     public function testRunReturnsWhenAWatcherOutlivesTheCoroutine(): void
     {
         if (!function_exists('pcntl_alarm')) {

@@ -14,7 +14,7 @@ use RuntimeException;
 
 /**
  * The scheduled tasks from outside the server that runs them: what the `schedule` tool
- * (`builtin:schedule`) changes them through, from a terminal or from a conversation in the page.
+ * (`builtin:schedule`) creates them through, from a conversation in the page.
  *
  * The tasks are `ScheduleManager`'s, in memory in the one `pig web` that holds the lock; writing
  * `scheduled-tasks.json` from here would be undone the next time that server saved. So this asks
@@ -68,32 +68,8 @@ final class ScheduleClient
         return new self($owner['url'], WebLogin::at($home)->localToken(), $http ?? new HttpClient(10.0));
     }
 
-    /** @return list<array<string, mixed>> every task, with `nextRunAt`, `running` and `lastRun` */
-    public function list(): array
-    {
-        return $this->call('GET', '/api/scheduled')['tasks'] ?? [];
-    }
-
-    /** @return array<string, mixed>|null one task as `list()` has it, or null when there is none */
-    public function get(string $id): ?array
-    {
-        foreach ($this->list() as $task) {
-            if (($task['id'] ?? null) === $id) {
-                return $task;
-            }
-        }
-
-        return null;
-    }
-
-    /** @return list<array<string, mixed>> a task's runs, newest first */
-    public function runs(string $id): array
-    {
-        return $this->call('GET', '/api/scheduled/runs?id=' . rawurlencode($id))['runs'] ?? [];
-    }
-
     /**
-     * Create a task, or replace the one `$task['id']` names.
+     * Create a task.
      *
      * @param array<string, mixed> $task the fields `ScheduledTask::fromArray()` reads
      * @return array<string, mixed> the task as saved
@@ -101,21 +77,6 @@ final class ScheduleClient
     public function save(array $task): array
     {
         return $this->call('POST', '/api/scheduled/save', $task)['task'];
-    }
-
-    public function delete(string $id): void
-    {
-        $this->call('POST', '/api/scheduled/delete', ['id' => $id]);
-    }
-
-    public function setEnabled(string $id, bool $enabled): void
-    {
-        $this->call('POST', '/api/scheduled/toggle', ['id' => $id, 'enabled' => $enabled]);
-    }
-
-    public function runNow(string $id): void
-    {
-        $this->call('POST', '/api/scheduled/run', ['id' => $id]);
     }
 
     /**
