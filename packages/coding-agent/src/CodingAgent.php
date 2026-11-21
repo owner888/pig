@@ -612,6 +612,7 @@ final class CodingAgent
         // activated on registration as upstream's `_refreshToolRegistry()` does (`refresh()`).
         $loadout = new ToolLoadout($agent, $cwd, $builtIn, $customTools, $extensionRunner, $contextFiles, $skills, $promptFiles->custom(), $promptFiles->appended());
         $loadout->useNamed($named);
+        $loadout->useAllowlist($selection === null ? null : $selection->matches(...));
         $loadout->useToolExposure($settings->toolExposure());
         $customTools->onChange(static fn () => $loadout->refresh());
         $loadout->apply();

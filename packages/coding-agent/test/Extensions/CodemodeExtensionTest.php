@@ -77,7 +77,7 @@ final class CodemodeExtensionTest extends TestCase
     }
 
     /** Start a session with both extensions and let `session_start` connect the servers. */
-    private function start(array $mcp = [], array $extra = [], ?Auth $auth = null, array $extensions = []): StartedSession
+    private function start(array $mcp = [], array $extra = [], ?Auth $auth = null, array $extensions = [], ?\Pig\CodingAgent\Extensions\ExtensionUi $ui = null): StartedSession
     {
         if ($mcp !== []) {
             file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => $mcp]));
@@ -98,6 +98,7 @@ final class CodemodeExtensionTest extends TestCase
         $started->extensionRunner->initialize(
             static fn () => $started->model,
             note: static fn (string $customType, mixed $data) => $session->appendHookEntry($customType, $data),
+            ui: $ui,
         );
 
         Async::run(static function () use ($started): void {
@@ -237,6 +238,27 @@ final class CodemodeExtensionTest extends TestCase
         // does not take it off the loadout.
         $this->stop($started);
         $this->assertContains('codemode', self::toolNames($started));
+    }
+
+    public function testAutoEnableCodemodeFalseKeepsItOffAndSaysWhyNothingReachesTheTools(): void
+    {
+        file_put_contents($this->home . '/mcp.json', json_encode(['autoEnableCodemode' => false, 'mcpServers' => [
+            'fixture' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer()]],   // default exposure: codemode
+        ]]));
+        $ui = new NoticingUi();
+        $started = $this->start(ui: $ui);
+
+        $this->assertNotContains('codemode', self::toolNames($started));
+        $this->assertContains('[warning] MCP tools are only reachable from the codemode or tool_search tool, but neither is active (autoEnableCodemode is false); they cannot be called.', $ui->notices);
+
+        // Named, it is on all the same, and no warning is owed.
+        $this->stop($started);
+        file_put_contents($this->home . '/settings.json', json_encode(['defaultTools' => ['+codemode']]));
+        $ui = new NoticingUi();
+        $started = $this->start(ui: $ui);
+        $this->assertContains('codemode', self::toolNames($started));
+        $this->assertSame([], array_values(array_filter($ui->notices, static fn (string $n): bool => str_contains($n, 'only reachable'))));
+        $this->stop($started);
     }
 
     public function testDefaultToolsTurnsItOnWithoutAnyServer(): void

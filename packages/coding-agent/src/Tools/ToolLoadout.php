@@ -134,6 +134,34 @@ final class ToolLoadout
     }
 
     /**
+     * `--tools` as upstream's `_allowedTools`: whether an entry matched the tool by name or
+     * pattern. Null: no `--tools`. Only `isActivatable()` reads it; `useNamed()` is what activates.
+     */
+    private ?Closure $allowlist = null;
+
+    /** `--tools`, for `isActivatable()`. A loadout already applied is applied again. */
+    public function useAllowlist(?Closure $matches): void
+    {
+        $this->allowlist = $matches;
+        $this->reapply();
+    }
+
+    /**
+     * Upstream's `_isActivatable()`: "MCP tools the allowlist keeps without matching them are only
+     * for codemode and tool_search: they may be declared only when tool_search can load them
+     * (non-`direct` exposure and tool_search registered). This also applies to tools restored
+     * from the transcript or set by extensions."
+     */
+    private function isActivatable(string $name): bool
+    {
+        if ($this->allowlist === null || ($this->allowlist)($name) || !ToolSelection::isMcp($name)) {
+            return true;
+        }
+
+        return $this->exposure($name) !== 'direct' && in_array('tool_search', $this->names(), true);
+    }
+
+    /**
      * The `toolExposure` setting — see `$exposureOverrides`. A loadout already applied is applied again.
      *
      * @param array<string, string> $overrides
@@ -527,8 +555,9 @@ final class ToolLoadout
      */
     public function activeNames(): array
     {
-        // Upstream's `_applyToolLoadout()`: a `hidden` tool is never active, whoever names it.
-        $visible = array_values(array_filter($this->names(), fn (string $name): bool => $this->exposure($name) !== 'hidden'));
+        // Upstream's `_applyToolLoadout()`: a `hidden` tool is never active, whoever names it, and
+        // nor is one that is not activatable (`isActivatable()`).
+        $visible = array_values(array_filter($this->names(), fn (string $name): bool => $this->exposure($name) !== 'hidden' && $this->isActivatable($name)));
 
         return $this->active === null
             ? array_values(array_filter($visible, $this->isActivatedByDefault(...)))

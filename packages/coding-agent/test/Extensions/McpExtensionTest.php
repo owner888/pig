@@ -99,6 +99,25 @@ final class McpExtensionTest extends TestCase
         $this->assertSame('npx', array_combine(array_map(static fn ($e) => $e->name, $gated->servers), $gated->servers)['fs']->config['command']);
     }
 
+    public function testAutoEnableCodemodeIsReadFromBothFilesAndTheProjectWins(): void
+    {
+        // Upstream's top-level `autoEnableCodemode`: unset by default, a boolean, the project's over the global one.
+        $this->assertNull(McpConfig::load($this->home, $this->cwd, true)->autoEnableCodemode);
+
+        file_put_contents($this->home . '/mcp.json', json_encode(['autoEnableCodemode' => false, 'mcpServers' => []]));
+        $this->assertFalse(McpConfig::load($this->home, $this->cwd, true)->autoEnableCodemode);
+
+        mkdir($this->cwd . '/.pig', 0o755, true);
+        file_put_contents($this->cwd . '/.pig/mcp.json', json_encode(['autoEnableCodemode' => true, 'mcpServers' => []]));
+        $this->assertTrue(McpConfig::load($this->home, $this->cwd, true)->autoEnableCodemode);
+        $this->assertFalse(McpConfig::load($this->home, $this->cwd, false)->autoEnableCodemode, 'an untrusted project is not read');
+
+        file_put_contents($this->cwd . '/.pig/mcp.json', json_encode(['autoEnableCodemode' => 'no', 'mcpServers' => []]));
+        $config = McpConfig::load($this->home, $this->cwd, true);
+        $this->assertFalse($config->autoEnableCodemode, 'a bad value is not a value');
+        $this->assertSame([$this->cwd . '/.pig/mcp.json: autoEnableCodemode must be a boolean'], $config->errors);
+    }
+
     public function testMcpConfigStdioPathsWithTildeAreExpandedToHome(): void
     {
         $home = \Pig\Tui\Env::home();
@@ -797,7 +816,7 @@ final class McpExtensionTest extends TestCase
         $this->turn();
 
         $this->assertSame('deferred', json_decode((string) file_get_contents($this->home . '/mcp.json'), true)['mcpServers']['fixture']['exposure']);
-        $this->assertSame(['read'], $session->activeTools(), 'the tool went behind tool_search; the one that was declared is gone');
+        $this->assertSame(['read', 'tool_search'], $session->activeTools(), 'the tool went behind tool_search, which upstream\'s `ensureDiscoveryActive()` then activates; the one that was declared is gone');
         $this->assertSame('deferred', array_column($session->allTools(), 'exposure', 'name')['mcp__fixture__echo']);
         $this->assertStringContainsString('Exposure', $this->screenOf($tui));
 

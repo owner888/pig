@@ -52,6 +52,9 @@ final class McpConfig
     public function __construct(
         public readonly array $servers,
         public readonly array $errors,
+        // Upstream's top-level `autoEnableCodemode`: "activates the codemode tool when a server with
+        // `codemode` exposure connects. A project value overrides the global one." Null: not set.
+        public readonly ?bool $autoEnableCodemode = null,
     ) {
     }
 
@@ -63,14 +66,15 @@ final class McpConfig
     {
         $servers = [];
         $errors = [];
+        $autoEnableCodemode = null;
 
-        self::readFile($agentDir . '/' . self::FILE, 'global', $servers, $errors);
+        self::readFile($agentDir . '/' . self::FILE, 'global', $servers, $errors, $autoEnableCodemode);
 
         if ($projectTrusted) {
-            self::readFile(rtrim($cwd, '/') . '/.pig/' . self::FILE, 'project', $servers, $errors);
+            self::readFile(rtrim($cwd, '/') . '/.pig/' . self::FILE, 'project', $servers, $errors, $autoEnableCodemode);
         }
 
-        return new self(array_values($servers), $errors);
+        return new self(array_values($servers), $errors, $autoEnableCodemode);
     }
 
     /** Upstream's `stripBom()`: a leading U+FEFF taken off. */
@@ -83,7 +87,7 @@ final class McpConfig
      * @param array<string, ServerEntry> $servers
      * @param list<string>               $errors
      */
-    private static function readFile(string $path, string $scope, array &$servers, array &$errors): void
+    private static function readFile(string $path, string $scope, array &$servers, array &$errors, ?bool &$autoEnableCodemode): void
     {
         if (!is_file($path)) {
             return;
@@ -110,6 +114,12 @@ final class McpConfig
             $errors[] = "{$path}: expected an object with an \"mcpServers\" object";
 
             return;
+        }
+
+        if (is_bool($parsed['autoEnableCodemode'] ?? null)) {
+            $autoEnableCodemode = $parsed['autoEnableCodemode'];
+        } elseif (array_key_exists('autoEnableCodemode', $parsed)) {
+            $errors[] = "{$path}: autoEnableCodemode must be a boolean";
         }
 
         foreach ($parsed['mcpServers'] ?? [] as $name => $value) {

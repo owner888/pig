@@ -121,6 +121,29 @@ final class ToolExposureTest extends TestCase
         $this->assertSame(['read', 'later'], $session->activeTools());
     }
 
+    public function testAnMcpToolToolsKeepsWithoutMatchingItIsDeclaredOnlyWhenToolSearchCanLoadIt(): void
+    {
+        // Upstream's `_isActivatable()`: `--tools read,codemode` keeps MCP tools registered for
+        // codemode and tool_search without naming them.
+        $allowed = static fn (string $name): bool => in_array($name, ['read', 'codemode', 'named_direct'], true);
+        [$session, $loadout] = $this->session([self::tool('mcp__gh__issues'), self::tool('mcp__gh__search', 'deferred'), self::tool('mcp__gh__named')]);
+        $loadout->useAllowlist(static fn (string $name): bool => $allowed($name) || $name === 'mcp__gh__named');
+
+        $session->setActiveTools(['read', 'mcp__gh__issues', 'mcp__gh__search', 'mcp__gh__named']);
+        $this->assertSame(['read', 'mcp__gh__named'], $session->activeTools(), 'without tool_search, only the one --tools matched');
+
+        // With tool_search registered, the deferred one can be loaded; a direct one never can.
+        [$session, $loadout] = $this->session([self::tool('mcp__gh__issues'), self::tool('mcp__gh__search', 'deferred'), self::tool('tool_search', 'model-only', defaultActive: false)]);
+        $loadout->useAllowlist(static fn (string $name): bool => in_array($name, ['read', 'tool_search'], true));
+        $session->setActiveTools(['read', 'tool_search', 'mcp__gh__issues', 'mcp__gh__search']);
+        $this->assertSame(['read', 'mcp__gh__search', 'tool_search'], $session->activeTools());
+
+        // A tool that is not an MCP tool is the allowlist's to keep or drop, and not this rule's.
+        [$session, $loadout] = $this->session([self::tool('zoo')]);
+        $loadout->useAllowlist(static fn (string $name): bool => $name === 'read');
+        $this->assertSame(['read', 'zoo'], $session->activeTools());
+    }
+
     public function testCallableToolsAreTheActiveDirectOnesAndEveryCodemodeOrDeferredOne(): void
     {
         [$session, $loadout] = $this->session([

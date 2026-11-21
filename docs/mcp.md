@@ -146,7 +146,11 @@ Each server's tools are registered as `mcp__<server>__<tool>`. The `exposure` se
 
 `codemode-deferred` is accepted as another name for `codemode`.
 
-pig activates `codemode` for a server with `codemode` exposure and `tool_search` for one with `deferred` exposure, when the session starts. To make the model see a tool without searching, give it `direct` exposure with `toolExposure`. pig warns once when neither `codemode` nor `tool_search` is active and the tools that are not `direct` cannot be called.
+pig activates `codemode` for a server with `codemode` exposure and `tool_search` for one with `deferred` exposure, when the session starts and again after a sign-in, a reconnect, or a change in `/mcp`. To make the model see a tool without searching, give it `direct` exposure with `toolExposure`.
+
+To keep `codemode` from being activated for MCP servers, set `"autoEnableCodemode": false` beside `mcpServers`; a project's `mcp.json` overrides the user's. pig warns once per session when neither `codemode` nor `tool_search` is active and the tools that are not `direct` cannot be called.
+
+`--tools` does not remove MCP tools unless one of its entries starts with `mcp__`. MCP tools it keeps without matching them are there for `codemode` and `tool_search` only: they are declared to the model only once `tool_search` loads them, so a `direct` one is not declared at all. `pig --tools read,codemode,'mcp__radius__*'` keeps only the tools of `radius`.
 
 `toolExposure` sets the exposure of single tools and overrides `exposure` for them. Keys are tool names as the server offers them, or patterns where `*` matches any characters. An exact name wins over patterns; among patterns, the first match in the object wins. With `hidden` as the server's exposure, only the listed tools are reachable:
 

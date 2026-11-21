@@ -1173,11 +1173,16 @@ PHP);
         $this->writeAnExtensionWithThreeTools();
 
         // pi's `--tools read,codemode,'mcp__radius__*'` shape: an exact built-in and a pattern.
-        $names = $this->toolNames($this->start(['tools' => ['read', 'zoo_*']]));
+        $started = $this->start(['tools' => ['read', 'zoo_*']]);
 
         // `mcp__gh__issues` survives: an MCP tool is kept unless an entry starts with `mcp__`,
-        // because `--tools read` means "that built-in" and not "and no MCP servers either".
-        $this->assertSame(['read', 'zoo_feed', 'zoo_clean', 'mcp__gh__issues'], $names);
+        // because `--tools read` means "that built-in" and not "and no MCP servers either". But
+        // upstream's `_isActivatable()`: kept without being matched, an MCP tool may be declared
+        // only when tool_search can load it, which a `direct` one it cannot — so it stays
+        // registered and is neither declared nor (inactive and `direct`) callable.
+        $this->assertSame(['read', 'zoo_feed', 'zoo_clean'], $this->toolNames($started));
+        $this->assertContains('mcp__gh__issues', array_column($started->session->allTools(), 'name'));
+        $this->assertNotContains('mcp__gh__issues', array_map(static fn ($t): string => $t->definition()->name, $started->session->loadout()->callable()));
     }
 
     public function testAnMcpEntryInToolsIsWhatNarrowsTheMcpTools(): void

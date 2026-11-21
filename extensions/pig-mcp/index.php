@@ -118,6 +118,68 @@ return static function (ExtensionApi $pig): void {
     $resourceToolsExposure = null;
     /** Whether the user was told that non-direct tools cannot be reached — upstream's `warnedUnreachable`. */
     $warnedUnreachable = false;
+    /** `mcp.json`'s `autoEnableCodemode`, read at each session start; upstream's default is true. */
+    $autoEnableCodemode = true;
+    /** The session's context, for the places that change what is reachable without one of their own. */
+    $sessionCtx = null;
+
+    /**
+     * Upstream's `ensureDiscoveryActive()`: tools that are not declared are reached through the
+     * codemode tool (scripts call them) or the tool_search tool (it declares them). Activate the
+     * one the tools' exposure asks for — codemode for `codemode` unless `autoEnableCodemode` is
+     * false, tool_search for `deferred` — from the config, so the tool is active before the servers
+     * connect. "Only a tool of these names that declares `reachesTools` can reach MCP tools;
+     * another extension's tool of the same name without it is never activated."
+     */
+    $ensureDiscoveryActive = static function () use ($pig, &$entries, &$autoEnableCodemode, &$warnedUnreachable, &$sessionCtx): void {
+        if ($sessionCtx?->session === null) {
+            return;
+        }
+
+        $exposures = [];
+
+        foreach ($entries as $entry) {
+            if ($entry->isEnabled()) {
+                $exposures += McpServersSection::configuredExposures($entry);
+            }
+        }
+
+        $needsCodemode = isset($exposures['codemode']);
+        $needsToolSearch = isset($exposures['deferred']);
+
+        if (!$needsCodemode && !$needsToolSearch) {
+            return;
+        }
+
+        $all = $pig->getAllTools();
+        $reaching = static fn (string $name): bool => array_filter($all, static fn (array $tool): bool => $tool['name'] === $name && isset($tool['reachesTools'])) !== [];
+        $hasCodemode = $reaching('codemode');
+        $hasToolSearch = $reaching('tool_search');
+        $active = $pig->getActiveTools();
+        $activate = [];
+
+        if ($needsCodemode && $hasCodemode && $autoEnableCodemode && !in_array('codemode', $active, true)) {
+            $activate[] = 'codemode';
+        }
+
+        if ($needsToolSearch && $hasToolSearch && !in_array('tool_search', $active, true)) {
+            $activate[] = 'tool_search';
+        }
+
+        if ($activate !== []) {
+            $pig->setActiveTools([...$active, ...$activate]);
+        }
+
+        $reachable = [...$active, ...$activate];
+
+        if (($hasCodemode && in_array('codemode', $reachable, true)) || ($hasToolSearch && in_array('tool_search', $reachable, true)) || $warnedUnreachable) {
+            return;
+        }
+
+        $warnedUnreachable = true;
+        $reason = $needsCodemode && $hasCodemode && !$autoEnableCodemode ? ' (autoEnableCodemode is false)' : '';
+        $sessionCtx->ui->notify("MCP tools are only reachable from the codemode or tool_search tool, but neither is active{$reason}; they cannot be called.", 'warning');
+    };
 
     $describeState = static function (ServerEntry $entry, ?ServerConnection $connection, bool $withError = true): string {
         if (!$entry->isEnabled()) {
@@ -472,6 +534,9 @@ return static function (ExtensionApi $pig): void {
         &$waitedForStartup,
         &$generation,
         &$warnedUnreachable,
+        &$autoEnableCodemode,
+        &$sessionCtx,
+        $ensureDiscoveryActive,
         $cwd,
         $createConnection,
         $registeredServers,
@@ -485,6 +550,9 @@ return static function (ExtensionApi $pig): void {
         $registeredConfigs = $registered['configs'];
         $entries = [...$loaded->servers, ...$registered['servers']];
         $configErrors = $loaded->errors;
+        $autoEnableCodemode = $loaded->autoEnableCodemode ?? true;
+        $warnedUnreachable = false;
+        $sessionCtx = $ctx;
         $waitedForStartup = false;
         $current = ++$generation;
 
@@ -496,43 +564,9 @@ return static function (ExtensionApi $pig): void {
             return;
         }
 
-        // Upstream's `ensureDiscoveryActive()`, from the config "so the tool is active before the
-        // servers connect": codemode for a `codemode` server, `tool_search` for a `deferred` one.
-        // "Only a tool of these names that declares `reachesTools` can reach MCP tools; another
-        // extension's tool of the same name without it is never activated."
-        if ($ctx->session !== null) {
-            $exposures = [];
-
-            foreach ($enabled as $entry) {
-                $exposures += McpServersSection::configuredExposures($entry);
-            }
-
-            $all = $pig->getAllTools();
-            $reaching = static fn (string $name): bool => array_filter($all, static fn (array $tool): bool => $tool['name'] === $name && isset($tool['reachesTools'])) !== [];
-            $active = $pig->getActiveTools();
-            $activate = [];
-
-            if (isset($exposures['codemode']) && $reaching('codemode') && !in_array('codemode', $active, true)) {
-                $activate[] = 'codemode';
-            }
-
-            if (isset($exposures['deferred']) && $reaching('tool_search') && !in_array('tool_search', $active, true)) {
-                $activate[] = 'tool_search';
-            }
-
-            if ($activate !== []) {
-                $pig->setActiveTools([...$active, ...$activate]);
-            }
-
-            // Upstream's warning, once: tools that are not direct with neither tool to reach them.
-            $reachable = [...$active, ...$activate];
-            $needed = isset($exposures['codemode']) || isset($exposures['deferred']);
-
-            if ($needed && !$warnedUnreachable && !($reaching('codemode') && in_array('codemode', $reachable, true)) && !($reaching('tool_search') && in_array('tool_search', $reachable, true))) {
-                $warnedUnreachable = true;
-                $ctx->ui->notify('MCP tools are only reachable from the codemode or tool_search tool, but neither is active; they cannot be called.', 'warning');
-            }
-        }
+        // Upstream: "Codemode or tool_search is activated from the config: the first prompt does
+        // not wait for servers whose tools are not declared to the model."
+        $ensureDiscoveryActive();
 
         // Upstream's `server.ready`, one per server and made before anything connects, so a call that
         // arrives first still finds something to wait on.
@@ -694,6 +728,7 @@ return static function (ExtensionApi $pig): void {
         $hideTools,
         $emitChange,
         $reportProblems,
+        $ensureDiscoveryActive,
     ): void {
         $registered = $registeredServers();
         $overridden = $registered['overridden'];
@@ -725,6 +760,7 @@ return static function (ExtensionApi $pig): void {
         $added = array_values(array_filter($registered['servers'], static fn (ServerEntry $e): bool => !in_array($e->name, $have, true)));
         $entries = [...$entries, ...$added];
         $emitChange();
+        $ensureDiscoveryActive();
 
         $connecting = array_values(array_filter($added, static fn (ServerEntry $e): bool => $e->isEnabled()));
 
@@ -757,8 +793,9 @@ return static function (ExtensionApi $pig): void {
         $reportProblems($ctx, $connecting);
     });
 
-    $pig->on('session_shutdown', static function (SessionShutdownEvent $event, ExtensionContext $ctx) use (&$connections, &$entries, &$configuredEntries, &$overridden, &$registeredConfigs, &$generation, &$serverTools, $hideTools, &$signIns): void {
+    $pig->on('session_shutdown', static function (SessionShutdownEvent $event, ExtensionContext $ctx) use (&$connections, &$entries, &$configuredEntries, &$overridden, &$registeredConfigs, &$generation, &$serverTools, $hideTools, &$signIns, &$sessionCtx): void {
         $generation++;
+        $sessionCtx = null;
         // A sign-in still running belongs to the session that is ending (upstream #10565).
         $signIns->abort('session shutdown');
         $signIns = new \Pig\Async\AbortController();
@@ -875,7 +912,7 @@ return static function (ExtensionApi $pig): void {
     };
 
     /** The sign-in with the plain dialogs — `/mcp login` outside the manager. */
-    $loginCommand = static function (ServerEntry $entry, ExtensionContext $ctx) use ($signIn, $openUrl, &$connections): void {
+    $loginCommand = static function (ServerEntry $entry, ExtensionContext $ctx) use ($signIn, $openUrl, &$connections, $ensureDiscoveryActive): void {
         $name = $entry->name;
 
         if (!$ctx->hasUi) {
@@ -902,6 +939,7 @@ return static function (ExtensionApi $pig): void {
             return;
         }
 
+        $ensureDiscoveryActive();
         $ctx->ui->notify("Signed in to MCP server \"{$name}\" (" . count($connections[$name]?->tools ?? []) . ' tools).', 'info');
     };
 
@@ -1071,7 +1109,7 @@ return static function (ExtensionApi $pig): void {
         return $setExposure($entry, $choice);
     };
 
-    $runAction = static function (McpManagerView $ui, ServerEntry $entry, string $action) use (&$connections, &$messages, $showTools, $chooseExposure, $setEnabled, $emitChange, $signIn, $signOut, $openUrl): void {
+    $runAction = static function (McpManagerView $ui, ServerEntry $entry, string $action) use (&$connections, &$messages, $showTools, $chooseExposure, $setEnabled, $emitChange, $signIn, $signOut, $openUrl, $ensureDiscoveryActive): void {
         $name = $entry->name;
         $message = null;
 
@@ -1128,6 +1166,7 @@ return static function (ExtensionApi $pig): void {
             $messages[$name] = $message;
         }
 
+        $ensureDiscoveryActive();
         $emitChange();
     };
 
@@ -1154,7 +1193,7 @@ return static function (ExtensionApi $pig): void {
 
     $pig->registerCommand(
         'mcp',
-        static function (string $args, ExtensionContext $ctx) use (&$entries, &$connections, $formatStatus, $describeState, $manage, $loginCommand, $signOut): void {
+        static function (string $args, ExtensionContext $ctx) use (&$entries, &$connections, $formatStatus, $describeState, $manage, $loginCommand, $signOut, $ensureDiscoveryActive): void {
             $parts = preg_split('/\s+/', trim($args), -1, PREG_SPLIT_NO_EMPTY) ?: [];
             $action = $parts[0] ?? null;
             $name = $parts[1] ?? null;
@@ -1266,6 +1305,7 @@ return static function (ExtensionApi $pig): void {
 
             try {
                 $connection->reconnect();
+                $ensureDiscoveryActive();
                 $ctx->ui->notify("Reconnected to MCP server \"{$entry->name}\" (" . $describeState($entry, $connection) . ').', 'info');
             } catch (\Throwable $error) {
                 $ctx->ui->notify($error->getMessage(), 'error');

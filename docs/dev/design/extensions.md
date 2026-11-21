@@ -360,7 +360,9 @@ for what the config file means. Two things are pig's own and both are consequenc
   applies upstream's rules: only a declarable (`direct`/`model-only`) tool is activated by
   registering it, a `hidden` one is never active, and `callable()` — what
   `AgentSession::executeTool()` and codemode scripts reach — is the active `direct` tools plus
-  every `codemode` or `deferred` one. pig-mcp registers every tool with `toToolExposure()` of its
+  every `codemode` or `deferred` one; and `isActivatable()` (upstream's `_isActivatable()`) keeps
+  an MCP tool that `--tools` kept without matching it off the model unless `tool_search` could load
+  it (`useAllowlist()`). pig-mcp registers every tool with `toToolExposure()` of its
   server's exposure (`codemode` → `deferred`), pig-tool-search searches `getAllTools()` for the
   inactive `codemode`/`deferred` ones and loads the matches with `setActiveTools()`, and
   `prepareLoadout` receives a `LoadoutView` (upstream's `ToolLoadout` interface: declared, callable,
