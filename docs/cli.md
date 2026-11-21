@@ -196,7 +196,7 @@ Built-in extensions add two more tools. They are always registered and off by de
 | `codemode` | Run a PHP script that calls the other tools, for example in parallel with `parallel_settled()`; only the script's output reaches the model |
 | `tool_search` | Search tools that are not declared to the model (`codemode` and `deferred` exposure, such as MCP tools) and declare the matches for the next call |
 
-A third built-in extension, pig's own `schedule`, adds the `schedule` tool, which is on by default: the model creates, lists and removes [scheduled tasks](/docs/latest/web#9-scheduled-tasks) with it. Turn it off with `-schedule` in `--tools` or `defaultTools`.
+A third built-in extension, pig's own `schedule`, adds the `schedule` tool to the conversations of the web UI only: the model creates [scheduled tasks](/docs/latest/web#9-scheduled-tasks) with it, and the Scheduled page changes, pauses, runs and deletes them. Terminal sessions do not have it. Turn it off with `-schedule` in `--tools` or `defaultTools`.
 
 ### Enable codemode
 

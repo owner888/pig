@@ -216,8 +216,7 @@ final class HttpServer
                         ...($here !== null ? ['--no-approve', '--cwd', $cwd] : []),
                         ...self::customToolArguments($excludeTools),
                     ],
-                    // The page's theme, which `RpcMode` makes the child's before `session_start`.
-                    environment: array_filter([...$environment, 'PIG_WEB_THEME' => $theme, 'PIG_SESSION_OWNER' => $owner ?? ''], static fn (?string $v): bool => $v !== null),
+                    environment: self::childEnvironment($environment, $theme, $owner),
                 );
             },
             onEvent: $this->onSessionEvent(...),
@@ -2544,6 +2543,23 @@ final class HttpServer
                 $this->wsClients[$connectionId]->close();
             }
         }
+    }
+
+    /**
+     * The environment of the child started for a conversation: what the account adds, the page's
+     * theme, which `RpcMode` makes the child's before `session_start`, the owner it writes as, and
+     * the mark that it is one of the page's conversations (`ScheduleTool::WEB_CONVERSATION`, for
+     * `builtin:schedule`).
+     *
+     * @param array<string, string> $environment
+     * @return array<string, string>
+     */
+    public static function childEnvironment(array $environment, ?string $theme, ?string $owner): array
+    {
+        return array_filter(
+            [...$environment, 'PIG_WEB_THEME' => $theme, 'PIG_SESSION_OWNER' => $owner ?? '', Schedule\ScheduleTool::WEB_CONVERSATION => '1'],
+            static fn (?string $v): bool => $v !== null,
+        );
     }
 
     /**

@@ -330,16 +330,21 @@ three `continue` cases in `RpcModeTest`.
 ### Setting one up by asking: the `schedule` tool
 
 The Claude app's way, which the developer asked for: "every morning, see what changed upstream and
-whether this code needs it" in a conversation becomes a task. `Web\Schedule\ScheduleTool`
-(list, runs, create, update, delete, enable, disable, run), registered by `builtin:schedule`
-(`extensions/pig-schedule`) — a built-in rather than core so `-builtin:schedule` switches it off,
-the tool itself in the core beside the scheduler. The developer's three decisions:
+whether this code needs it" in a conversation becomes a task. `Web\Schedule\ScheduleTool`,
+registered by `builtin:schedule` (`extensions/pig-schedule`) — a built-in rather than core so
+`-builtin:schedule` switches it off, the tool itself in the core beside the scheduler. The
+developer's decisions:
 
-- **Every change is confirmed** in a `$ctx->ui->confirm()` showing what will be saved (name, when
+- **The page's conversations only, and only creating.** The schedule is the server's, for every
+  conversation, so a conversation needs a way to add to it and nothing more: changing, pausing,
+  running and deleting are the Scheduled page's. The server starts each conversation's child with
+  `PIG_WEB_CONVERSATION=1` (`HttpServer::childEnvironment()`), and the extension registers the tool
+  only then, so a terminal session is not sent its schema. It used to have eight actions (list,
+  runs, create, update, delete, enable, disable, run).
+- **Creating is confirmed** in a `$ctx->ui->confirm()` showing what will be saved (name, when
   with the next run, folder, model, prompt), checked by `ScheduledTask::fromArray()` first so the
-  dialog never shows a task that cannot be saved. With `hasUi` false (`-p`, `--mode json`) the tool
-  only reads.
-- **From the terminal and from the page alike.** Neither is the process that holds the tasks:
+  dialog never shows a task that cannot be saved. With `hasUi` false the tool refuses.
+- **Through the server that holds the tasks.** The conversation's child is not that process:
   `ScheduleManager` keeps them in memory in the one `pig web` that owns the lock, and a write to
   `scheduled-tasks.json` from anywhere else is undone the next time it saves. So `ScheduleClient`
   asks that server over the page's own `/api/scheduled`. The owner writes its address

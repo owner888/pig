@@ -35,37 +35,60 @@ final class ScheduleExtensionTest extends TestCase
     protected function tearDown(): void
     {
         putenv($this->previousHome === false ? 'PIG_CODING_AGENT_DIR' : 'PIG_CODING_AGENT_DIR=' . $this->previousHome);
+        putenv(ScheduleTool::WEB_CONVERSATION);
         exec('rm -rf ' . escapeshellarg($this->root));
     }
 
-    public function testItRegistersTheScheduleTool(): void
+    /** @return list<\Pig\CodingAgent\Extensions\ToolDefinition> */
+    private function load(): array
     {
         [$loaded, $errors] = ExtensionLoader::load(
             $this->root . '/project',
             cliPaths: [dirname(__DIR__, 4) . '/extensions/pig-schedule/index.php'],
             home: $this->root . '/home',
         );
-
         $this->assertSame([], $errors);
-        $tools = $loaded[0]->api->tools();
+
+        return $loaded[0]->api->tools();
+    }
+
+    public function testItRegistersTheScheduleToolInAWebConversation(): void
+    {
+        putenv(ScheduleTool::WEB_CONVERSATION . '=1');
+        $tools = $this->load();
+
         $this->assertSame([ScheduleTool::NAME], array_map(static fn ($t): string => $t->name, $tools));
         $this->assertSame(ScheduleTool::promptSnippet(), $tools[0]->promptSnippet);
         $this->assertNotSame([], $tools[0]->promptGuidelines);
-        $this->assertSame(ScheduleTool::ACTIONS, $tools[0]->parameters['properties']['action']['enum']);
+        // It only creates: no action to choose, no task to name.
+        $this->assertSame(['name', 'prompt'], $tools[0]->parameters['required']);
+        $this->assertArrayNotHasKey('action', $tools[0]->parameters['properties']);
+        $this->assertArrayNotHasKey('id', $tools[0]->parameters['properties']);
+    }
+
+    public function testThePagesConversationsAreStartedMarkedAsSuch(): void
+    {
+        $this->assertSame('1', \Pig\CodingAgent\Web\HttpServer::childEnvironment([], null, null)[ScheduleTool::WEB_CONVERSATION]);
+        $this->assertSame(['PIG_SANDBOX_CONTAINER' => 'c', 'PIG_WEB_THEME' => 'dark', 'PIG_SESSION_OWNER' => 'ann', ScheduleTool::WEB_CONVERSATION => '1'], \Pig\CodingAgent\Web\HttpServer::childEnvironment(['PIG_SANDBOX_CONTAINER' => 'c'], 'dark', 'ann'));
+    }
+
+    public function testOutsideAWebConversationThereIsNoTool(): void
+    {
+        $this->assertSame([], $this->load(), 'the terminal, print and an RPC client of their own are not sent its schema');
     }
 
     public function testWithoutAServerItSaysHowToStartOne(): void
     {
         $this->expectException(AgentError::class);
         $this->expectExceptionMessage('pig web start -d');
-        (new ScheduleTool())->execute(['action' => 'list'], new ExtensionContext(cwd: $this->root . '/project'));
+        (new ScheduleTool())->execute(['name' => 'x', 'prompt' => 'y'], new ExtensionContext(cwd: $this->root . '/project', ui: $this->createStub(\Pig\CodingAgent\Extensions\ExtensionUi::class), hasUi: true));
     }
 
-    public function testAnActionThatIsNotOneIsRefusedNamingThem(): void
+    public function testWithNobodyToConfirmItRefuses(): void
     {
         $this->expectException(AgentError::class);
-        $this->expectExceptionMessage('list, runs, create, update, delete, enable, disable, run');
-        (new ScheduleTool())->execute(['action' => 'schedule'], new ExtensionContext(cwd: $this->root . '/project'));
+        $this->expectExceptionMessage('nobody is here to confirm');
+        (new ScheduleTool())->execute(['name' => 'x', 'prompt' => 'y'], new ExtensionContext(cwd: $this->root . '/project'));
     }
 
     public function testThisMachinesTimezoneIsOneDateTimeKnows(): void

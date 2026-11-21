@@ -15,8 +15,16 @@ use Pig\CodingAgent\Web\Schedule\ScheduleTool;
  * are: `-builtin:schedule` in the `extensions` setting and the model is never offered it. The
  * tool itself is in the core beside the scheduler it talks to (`Web\Schedule`), so this file is
  * only the registration.
+ *
+ * Registered in `pig web`'s conversations only (`PIG_WEB_CONVERSATION`, which the server gives the
+ * child it starts for each), as the developer asked: the schedule is the web server's, and a
+ * terminal session that cannot show the Scheduled page has no use for its schema in every request.
  */
 return static function (ExtensionApi $pig): void {
+    if (getenv(ScheduleTool::WEB_CONVERSATION) !== '1') {
+        return;
+    }
+
     $tool = new ScheduleTool();
 
     $pig->registerTool(new ToolDefinition(
