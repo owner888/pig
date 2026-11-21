@@ -1,6 +1,7 @@
 import { network } from "../network.js";
 import { escapeHtml, openModal, apiFetch } from "../utils.js";
 import { t, currentLocale } from "../i18n.js";
+import { showNotification } from "../attention.js";
 
 /**
  * Scheduled tasks, laid out as the Claude app lays its own out — the developer asked for the two to
@@ -724,13 +725,13 @@ export function watchScheduledTasks({ onAttention }) {
     const now = new Map(data.tasks.map((task) => [task.id, task]));
     onAttention(data.tasks.some((task) => task.lastRun?.status === "needs_input"), data.tasks);
 
-    if (last && "Notification" in window && Notification.permission === "granted") {
+    if (last) {
       for (const task of data.tasks) {
         const run = task.lastRun;
         const before = last.get(task.id)?.lastRun;
         if (!run || (before?.id === run.id && before.status === run.status)) continue;
         if (!["done", "error", "needs_input"].includes(run.status)) continue;
-        new Notification(task.name, { body: statusLabel(run.status) + (run.error ? ": " + run.error : ""), tag: "pig-scheduled-" + task.id });
+        showNotification({ title: task.name, body: statusLabel(run.status) + (run.error ? ": " + run.error : ""), tag: "pig-scheduled-" + task.id });
       }
     }
     last = now;

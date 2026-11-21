@@ -30,7 +30,7 @@ final class WebNotificationTest extends TestCase
         $this->assertFileExists($js . '/sw.js');
         $attention = (string) file_get_contents($js . '/attention.js');
         $this->assertStringContainsString('register("/assets/js/sw.js")', $attention);
-        $this->assertStringContainsString('showNotification(', $attention);
+        $this->assertStringContainsString('export function showNotification(', $attention);
         $this->assertStringContainsString('notificationclick', (string) file_get_contents($js . '/sw.js'));
     }
 }

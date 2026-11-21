@@ -57,13 +57,20 @@ export function notifyAway({ title, body, onOpen }) {
   document.title = `(${unseen}) ✓ ${document.title.replace(MARK, "")}`;
   dot(true);
   chime();
-  if (canNotify() && Notification.permission === "granted") {
-    const id = ++lastId;
-    if (onOpen) opens.set(id, onOpen);
-    register()
-      .then((reg) => reg.showNotification(title, { body, tag: title, renotify: true, icon: "/favicon.svg", data: { id } }))
-      .catch((e) => console.error("pig: the notification was not shown", e));
-  }
+  showNotification({ title, body, tag: title, onOpen });
+}
+
+/**
+ * A system notification, if the browser allows it and the person said yes; the one way the page
+ * shows one (`WebNotificationTest`). `onOpen` runs in this page when it is clicked.
+ */
+export function showNotification({ title, body, tag, onOpen }) {
+  if (!canNotify() || Notification.permission !== "granted") return;
+  const id = ++lastId;
+  if (onOpen) opens.set(id, onOpen);
+  register()
+    .then((reg) => reg.showNotification(title, { body, tag, renotify: true, icon: "/favicon.svg", data: { id } }))
+    .catch((e) => console.error("pig: the notification was not shown", e));
 }
 
 function clear() {
