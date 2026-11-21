@@ -69,6 +69,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ### Fixed
 
+- The `schedule` tool's line in the system prompt said its name twice (`- schedule: schedule: create a task…`): its snippet no longer starts with it.
 - [Extensions] (the terminal's startup header, and `pig web`'s panel under a new conversation) lists the extensions that loaded, as upstream's does, and no longer every file in the extensions folders: one a setting or a custom session left out (`pig-vless` unticked) was named as if it had loaded.
 - An extension unticked in `pig web`'s "New custom session" that belongs to a package leaves the whole package out (`ResolvedPaths::withoutPackagesOf()`): its skills, prompts and themes no longer reach the conversation without it, as `pig-quant`'s `quant` skill did.
 - `pig web`'s "New custom session" dialog opened from a custom session starts at the default again: the extensions that session left out are offered too (`get_loaded_resources`'s new `leftOutExtensions`), where before they were missing and could not be ticked back on.

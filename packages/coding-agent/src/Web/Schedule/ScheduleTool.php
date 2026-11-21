@@ -87,7 +87,7 @@ final class ScheduleTool
     /** One line for the system prompt's tool list. */
     public static function promptSnippet(): string
     {
-        return 'schedule: create a task pig runs on its own on a schedule';
+        return 'Create a task pig runs on its own on a schedule';
     }
 
     /** @return list<string> */

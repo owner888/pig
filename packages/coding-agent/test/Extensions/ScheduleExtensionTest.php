@@ -59,6 +59,8 @@ final class ScheduleExtensionTest extends TestCase
 
         $this->assertSame([ScheduleTool::NAME], array_map(static fn ($t): string => $t->name, $tools));
         $this->assertSame(ScheduleTool::promptSnippet(), $tools[0]->promptSnippet);
+        // The prompt writes `- schedule: <snippet>`, so a snippet naming the tool says it twice.
+        $this->assertStringStartsNotWith(ScheduleTool::NAME . ':', $tools[0]->promptSnippet);
         $this->assertNotSame([], $tools[0]->promptGuidelines);
         // It only creates: no action to choose, no task to name.
         $this->assertSame(['name', 'prompt'], $tools[0]->parameters['required']);
