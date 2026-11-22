@@ -150,6 +150,15 @@ Click the **`Scheduled`** button at the top of the left sidebar to open the sche
 
 ---
 
+### 10. Notifications & Push to Your Phone
+When a turn finishes, a scheduled run is done or fails, or something waits for your answer, the page lets you know:
+- **While you are away from the tab**: the tab title gains a `(n) ✓` mark, the tab gets a dot, and a short chime plays; the mark clears when you come back.
+- **System notifications**: allowed the first time you send a message. They need a secure context — `https://` or `localhost`; a plain `http://` LAN address cannot show them. For a phone or another machine, serve pig over HTTPS, e.g. with Tailscale: `tailscale serve --bg 8088`, then open `https://<machine>.<tailnet>.ts.net`.
+- **Web Push, even with the page closed or the phone locked**: once notifications are allowed, the browser is also subscribed to its push service. While none of your pages is being looked at, the server sends the notification itself, so it reaches a phone whose page has been frozen or closed; while one is open in front of you, that page says it and nothing is sent twice. Clicking a notification opens its conversation. Pure PHP, no extra service; the key and subscriptions are kept in `~/.pig/agent/web-push.json` (owner-only).
+- **iPhone / iPad**: notifications only work in a Home Screen web app (iOS 16.4+). In Safari, choose **Share → Add to Home Screen**, open pig from the Home Screen, and log in there once (it keeps its own cookies). The server must be able to reach `web.push.apple.com`.
+
+---
+
 ## Several Accounts, Docker & SSH
 
 With sessions kept in a database (`"storage": "sqlite:pig.db"` or a `mysql:` DSN, see [Keep sessions in a database](/docs/latest/sessions#keep-sessions-in-a-database)), one `pig web` serves several people:
