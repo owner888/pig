@@ -3,7 +3,7 @@
  */
 
 import "./viewport.js";
-import { escapeHtml, cleanSessionTitle, formatSessionFilename, openModal, enterModalLayer, leaveModalLayer, apiFetch } from "./utils.js";
+import { autoFocus, escapeHtml, cleanSessionTitle, formatSessionFilename, openModal, enterModalLayer, leaveModalLayer, apiFetch } from "./utils.js";
 import { t, __t, currentLocale, setLocale, applyI18n, onLocaleChanged, loadExtensionLocales, openLangModal, customLocales, extensionLocales, translateSettings, translateRequest, needsTranslation } from "./i18n.js";
 import { openThemeModal, initTheme, applyTheme, hasTheme, onThemeApplied, currentTheme } from "./theme.js";
 import { clientId, network } from "./network.js";
@@ -3160,7 +3160,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         tab.lastScrollTop = tab.scroller.scrollTop;
       }
       scrollBottomBtn.style.display = tab.userScrolledUp ? "flex" : "none";
-      promptInput.focus();
+      autoFocus(promptInput);
     }
 
     /** Find the tab on `cwd`/`sessionFile`, or open one. */
@@ -3863,7 +3863,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
             clearTimeout(timer);
             timer = setTimeout(() => load(false), 250);
           });
-          input.focus();
+          autoFocus(input);
           load(false);
         },
       });

@@ -1,5 +1,5 @@
 import { network } from "../network.js";
-import { escapeHtml, openModal, apiFetch } from "../utils.js";
+import { autoFocus, escapeHtml, openModal, apiFetch } from "../utils.js";
 import { t, currentLocale } from "../i18n.js";
 import { showNotification } from "../attention.js";
 
@@ -646,7 +646,7 @@ export function createScheduledPages({ host, onShow, onHide, onOpenConversation,
       });
     };
     drawRows();
-    field("name").focus();
+    autoFocus(field("name"));
 
     form.addEventListener("submit", async (e) => {
       e.preventDefault();

@@ -1,4 +1,4 @@
-import { escapeHtml, openModal, apiFetch } from "../utils.js";
+import { autoFocus, escapeHtml, openModal, apiFetch } from "../utils.js";
 import { t } from "../i18n.js";
 import { splitTyped, matching, joinPath, folderName } from "../cwd.js";
 
@@ -105,8 +105,8 @@ export function openCwdPicker({ current, onPick }) {
         use();
       });
 
-      input.focus();
-      input.setSelectionRange(input.value.length, input.value.length);
+      autoFocus(input);
+      if (document.activeElement === input) input.setSelectionRange(input.value.length, input.value.length);
       go(current || "");
 
       try {

@@ -3,6 +3,21 @@
  */
 
 /**
+ * Focus `el` only where doing so will not open an on-screen keyboard over a small screen.
+ *
+ * On desktop, opening a conversation, the folder picker, the session list, a terminal drawer or
+ * the login page puts the cursor in its field so typing starts at once; on a phone or touch
+ * screen (`(hover: none) and (pointer: coarse)` or `max-width: 768px`) that brings up the
+ * virtual keyboard over half the view before anything is read, so focus waits for a tap on the
+ * field itself.
+ */
+export function autoFocus(el) {
+  if (!el || typeof window === "undefined") return;
+  if (window.matchMedia?.("(hover: none) and (pointer: coarse), (max-width: 768px)").matches) return;
+  el.focus();
+}
+
+/**
  * Put `text` on the clipboard. Resolves when it is there, rejects with the reason when it is not.
  *
  * `navigator.clipboard` exists only in a secure context — https or localhost. The page opened from

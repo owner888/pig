@@ -1,5 +1,5 @@
 import { network } from "../network.js";
-import { escapeHtml, openModal } from "../utils.js";
+import { autoFocus, escapeHtml, openModal } from "../utils.js";
 import { t, applyI18n } from "../i18n.js";
 import { terminalTheme } from "../theme.js";
 import { loadXterm } from "../xterm-loader.js";
@@ -510,7 +510,7 @@ export class NodeWorkbench {
               rows: t.term.rows,
             });
           } catch (e) {}
-          t.term.focus();
+          autoFocus(t.term);
         });
       } else {
         t.container.style.display = "none";

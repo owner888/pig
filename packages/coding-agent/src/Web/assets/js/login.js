@@ -65,7 +65,7 @@ confirmField.placeholder = T.confirm;
 password.placeholder = setup ? T.newPassword : T.password;
 password.autocomplete = setup ? "new-password" : "current-password";
 submit.textContent = setup ? T.setup : T.login;
-name.focus();
+if (!window.matchMedia?.("(hover: none) and (pointer: coarse), (max-width: 768px)").matches) name.focus();
 
 form.addEventListener("submit", async (e) => {
   e.preventDefault();

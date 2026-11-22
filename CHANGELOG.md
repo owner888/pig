@@ -45,6 +45,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Fixed
+
+- Fixed `pig web` opening the on-screen keyboard automatically on phones and touch screens whenever a conversation, tab, folder picker, session list, terminal drawer or login page was opened: automatic initial focus (`autoFocus()` in `assets/js/utils.js`, and `login.js`) now runs only on desktop viewports with fine pointers, leaving small screens clear until an input is tapped.
+
 ## [2.0.20] - 2026-11-23
 
 ### New Features

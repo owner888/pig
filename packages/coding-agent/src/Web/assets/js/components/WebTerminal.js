@@ -1,6 +1,6 @@
 import { network } from "../network.js";
 import { __t } from "../i18n.js";
-import { escapeHtml, copyText } from "../utils.js";
+import { autoFocus, escapeHtml, copyText } from "../utils.js";
 import { terminalTheme } from "../theme.js";
 import { loadXterm } from "../xterm-loader.js";
 
@@ -277,7 +277,7 @@ export class WebTerminal {
           rows: tab.term.rows,
         });
       } catch (e) {}
-      tab.term.focus();
+      autoFocus(tab.term);
     });
   }
 
@@ -403,7 +403,7 @@ export class WebTerminal {
         this.fitActiveTab();
         const tab = this.tabs.find((t) => t.id === this.activeTabId);
         if (tab && tab.term) {
-          tab.term.focus();
+          autoFocus(tab.term);
         }
       }
 
@@ -412,7 +412,7 @@ export class WebTerminal {
         if (this.isOpen) {
           this.fitActiveTab();
           const tab = this.tabs.find((t) => t.id === this.activeTabId);
-          tab?.term?.focus();
+          autoFocus(tab?.term);
         }
       }, 240);
     });
