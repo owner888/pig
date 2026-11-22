@@ -75,9 +75,10 @@ final class P256
     /** ECDH: the shared x coordinate, 32 bytes. */
     public static function sharedSecret(OpenSSLAsymmetricKey $private, OpenSSLAsymmetricKey $public): string
     {
-        $secret = openssl_pkey_derive($public, $private, 32);
+        // No `$key_length`: PHP 8.5 deprecates it, and P-256's is always the 32-byte x coordinate.
+        $secret = openssl_pkey_derive($public, $private);
 
-        if ($secret === false) {
+        if ($secret === false || strlen($secret) !== 32) {
             throw new RuntimeException('ECDH failed: ' . self::opensslError());
         }
 
