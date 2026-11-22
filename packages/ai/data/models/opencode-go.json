@@ -769,34 +769,8 @@
     },
     {
         "type": "chat",
-        "id": "longcat-2.0",
-        "name": "LongCat-2.0",
-        "api": "openai-completions",
-        "provider": "opencode-go",
-        "baseUrl": "https://opencode.ai/inference/go/openai/v1",
-        "reasoning": true,
-        "input": [
-            "text"
-        ],
-        "cost": {
-            "input": 0.3,
-            "output": 1.2,
-            "cacheRead": 0.006,
-            "cacheWrite": 0.0
-        },
-        "contextWindow": 1000000,
-        "maxTokens": 131072,
-        "compat": {
-            "supportsStore": false,
-            "supportsDeveloperRole": false,
-            "maxTokensField": "max_tokens",
-            "supportsStrictMode": true
-        }
-    },
-    {
-        "type": "chat",
-        "id": "longcat-2.5-free",
-        "name": "LongCat 2.5 Free",
+        "id": "longcat-2.5",
+        "name": "LongCat-2.5",
         "api": "openai-completions",
         "provider": "opencode-go",
         "baseUrl": "https://opencode.ai/inference/go/openai/v1",
@@ -806,9 +780,9 @@
             "image"
         ],
         "cost": {
-            "input": 0.0,
-            "output": 0.0,
-            "cacheRead": 0.0,
+            "input": 0.3,
+            "output": 1.2,
+            "cacheRead": 0.006,
             "cacheWrite": 0.0
         },
         "contextWindow": 1000000,
