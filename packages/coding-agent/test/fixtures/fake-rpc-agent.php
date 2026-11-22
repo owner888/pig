@@ -12,7 +12,8 @@
  *
  * Ignores `--mode rpc` on its argv; honours `--session <path>` as the file it reports; a
  * `prompt` may carry `holdMs` for how long the turn should appear to take. A message starting
- * `ask:` asks a hook's `confirm` and waits for the answer; one starting `fail:` ends in an error.
+ * `ask:` asks a hook's `confirm` and waits for the answer; one starting `fail:` ends in an error;
+ * one starting `notify:` ends with an extension's `systemNotify()`, as `system-notify.php` does.
  */
 
 declare(strict_types=1);
@@ -116,6 +117,9 @@ while (($raw = fgets(STDIN)) !== false) {
         $out(['type' => 'turn_end']);
         $streaming = false;
         $out(array_filter(['type' => 'agent_end', 'messages' => [], 'willRetry' => false, 'error' => str_starts_with($text, 'fail:') ? 'boom' : null], static fn ($v) => $v !== null));
+        if (str_starts_with($text, 'notify:')) {
+            $out(['type' => 'extension_ui_request', 'id' => 'n' . count($messages), 'method' => 'systemNotify', 'title' => 'Done · pig', 'body' => trim(substr($text, 7))]);
+        }
         $out(['type' => 'agent_settled', 'aborted' => false]);
     } elseif ($type === 'continue') {
         // What the conversation on disk ends on decides the answer, as `AgentSession::continueRun()`

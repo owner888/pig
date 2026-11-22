@@ -114,6 +114,9 @@ final class ScheduleManager
      *        container. Throws to refuse the run, with the reason
      * @param (Closure(?string): bool)|null $elsewhere whether the owner's tasks work in folders of
      *        another machine (an SSH account's), which are then not looked for here
+     * @param (Closure(ScheduledTask, array<string, mixed>): void)|null $onFinished told when a run
+     *        has come to `DONE`, `ERROR` or `NEEDS_INPUT`, with its task and the run as written —
+     *        what a person's phone is told (`HttpServer::pushRun()`)
      */
     public function __construct(
         private readonly SessionPool $pool,
@@ -125,6 +128,7 @@ final class ScheduleManager
         ?ScheduleStore $store = null,
         private readonly ?Closure $environmentFor = null,
         private readonly ?Closure $elsewhere = null,
+        private readonly ?Closure $onFinished = null,
     ) {
         $dir = $dataDir ?? Config::home();
         $this->store = $store ?? new FileScheduleStore($dir . '/scheduled-tasks.json');
@@ -830,6 +834,13 @@ final class ScheduleManager
             $this->runs[$entry['task']][$at] = $updated;
             $this->write();
             ($this->onChange)();
+
+            $status = $updated['status'] ?? null;
+            $task = $this->tasks[$entry['task']] ?? null;
+            if ($this->onFinished !== null && $task !== null && $status !== ($run['status'] ?? null)
+                && in_array($status, [self::DONE, self::ERROR, self::NEEDS_INPUT], true)) {
+                ($this->onFinished)($task, $updated);
+            }
 
             return;
         }

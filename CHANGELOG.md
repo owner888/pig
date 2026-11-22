@@ -47,6 +47,10 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ## Unreleased
 
+### New Features
+
+- Web Push for `pig web` — a turn that finished, a scheduled run that is done, failed or waiting for an answer, now reaches a phone whose page is not open: iOS freezes a page seconds after it is left, so the page could not say it. Once notifications are allowed, the browser is subscribed and the server sends what the page would have shown through the browser's push service, only while no page of that account's is being looked at, so nothing is said twice; a click opens the conversation. Pure PHP over `ext-openssl` (RFC 8291 encryption, RFC 8292 VAPID), no new package; the key and the subscriptions are kept in `~/.pig/agent/web-push.json` (`0600`). On an iPhone, add pig to the Home Screen first (iOS 16.4+): the page now has a web app manifest for that.
+
 ### Fixed
 
 - Fixed `pig web` showing no system notification on Android Chrome, over https and with permission granted: Android has no `Notification` constructor for a page and threw, which the page swallowed. Notifications now go through a service worker (`assets/js/sw.js`, which controls no page and caches nothing) with `showNotification()`, and a click still opens the conversation that sent it. A notification with the same title now sounds again on Android (`renotify`) instead of replacing the last one silently.

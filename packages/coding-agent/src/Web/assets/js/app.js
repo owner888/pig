@@ -14,7 +14,7 @@ import { ToolCard } from "./components/ToolCard.js";
 import { EmptyState } from "./components/EmptyState.js";
 import { openImageLightbox } from "./components/ImageLightbox.js";
 import { SlashAutocomplete } from "./components/SlashAutocomplete.js";
-import { primeAttention, notifyAway } from "./attention.js";
+import { primeAttention, notifyAway, onPushOpen } from "./attention.js";
 import { away, catchUp, overCap, DRAWS_MESSAGES } from "./catchup.js";
 import { createHookState, applyHookRequest, widgetsAt, statusHtml, ansiToHtml, notifyKind, countdownTitle, timeoutSeconds, slashCommandsFrom } from "./hooks.js";
 import { WebTerminal } from "./components/WebTerminal.js";
@@ -3168,6 +3168,8 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       const found = tabs.find((t) => t.cwd === cwd && t.sessionFile && t.sessionFile === sessionFile);
       openTab(found || new Tab(cwd, sessionFile));
     }
+    // A notification the server pushed (`sw.js`) names the conversation it was about, by its path.
+    onPushOpen((cwd, sessionFile) => openOrFocus(cwd, sessionFile.split("/").pop()));
 
     // The strip scrolls sideways when the tabs do not fit (a swipe, a trackpad, or the wheel — see
     // below). Redrawing it empties it, which puts it back at the start, so the scroll is carried

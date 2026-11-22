@@ -79,7 +79,7 @@ final class ScheduleManagerTest extends TestCase
      * @param (Closure(?string): array<string, string>)|null $environmentFor
      * @param (Closure(?string): bool)|null $elsewhere
      */
-    private function manager(?string $url = null, ?ScheduleStore $store = null, ?Closure $environmentFor = null, ?Closure $elsewhere = null): ScheduleManager
+    private function manager(?string $url = null, ?ScheduleStore $store = null, ?Closure $environmentFor = null, ?Closure $elsewhere = null, ?Closure $onFinished = null): ScheduleManager
     {
         $manager = null;
         $pool = new SessionPool(
@@ -111,6 +111,7 @@ final class ScheduleManagerTest extends TestCase
             $store,
             $environmentFor,
             $elsewhere,
+            $onFinished,
         );
 
         $this->pools[] = $pool;
@@ -423,6 +424,36 @@ final class ScheduleManagerTest extends TestCase
             $this->until(static fn (): bool => ($manager->runs($id)[0]['status'] ?? null) === ScheduleManager::ERROR, 'the failure');
 
             self::assertStringContainsString('Could not start the agent', self::lastRun($manager, $id)['error']);
+        });
+    }
+
+    /** What a phone is pushed (`HttpServer::pushRun()`): each run once, as it comes to how it went. */
+    public function testARunIsToldOnceWhenItIsDoneFailsOrWaitsForAnAnswer(): void
+    {
+        Async::run(function (): void {
+            $told = [];
+            $manager = $this->manager(onFinished: static function (ScheduledTask $task, array $run) use (&$told): void {
+                $told[] = [$task->name, $run['status'], $run['error'] ?? null];
+            });
+            $manager->start();
+            $done = $manager->save($this->task())->id;
+            $failed = $manager->save($this->task(['name' => 'Broken', 'prompt' => 'fail: on purpose']))->id;
+            $asking = $manager->save($this->task(['name' => 'Asking', 'prompt' => 'ask: may I?']))->id;
+
+            foreach ([$done, $failed, $asking] as $i => $id) {
+                $manager->runNow($id);
+                $this->until(static function () use (&$told, $i): bool {
+                    return count($told) === $i + 1;
+                }, "run {$i}");
+            }
+            Async::delay(0.1);
+
+            usort($told, static fn (array $a, array $b): int => $a[0] <=> $b[0]);
+            self::assertSame([
+                ['Asking', ScheduleManager::NEEDS_INPUT, null],
+                ['Broken', ScheduleManager::ERROR, 'boom'],
+                ['Morning brief', ScheduleManager::DONE, null],
+            ], $told);
         });
     }
 

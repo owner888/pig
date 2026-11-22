@@ -9,6 +9,7 @@ The page, the WebSocket, tabs, login, the terminal drawer, the service. Moved ou
 - [The folder a new conversation starts in](#the-folder-a-new-conversation-starts-in)
 - [Logging in to the web UI](#logging-in-to-the-web-ui)
 - [Scheduled tasks: a timer per task over the session pool](#scheduled-tasks-a-timer-per-task-over-the-session-pool)
+- [Notifications on a phone: Web Push from the server, while nobody is looking](#notifications-on-a-phone-web-push-from-the-server-while-nobody-is-looking)
 
 ## Three ways in
 
@@ -428,3 +429,38 @@ half-typed query in it does not hold on to anybody: ctrl+c is the list's whichev
 Upstream's selector has a delete key too, and it is ported (`app.session.delete`, ctrl+d):
 it asks first, refuses the session being talked in, and moves the file to the trash when a `trash`
 command is there, `unlink()` otherwise — so a slip of the key can usually be undone.
+
+## Notifications on a phone: Web Push from the server, while nobody is looking
+
+**Asked for by the developer, 2026-11-22**, after the page's notifications worked on Android and
+not on an iPhone. A page can only say something while it runs, and iOS freezes one seconds after
+it is left: the socket goes quiet, `systemNotify()` never reaches the page, and nothing is shown.
+So the server says it, through the browser's push service, which wakes the service worker.
+
+- **The page** (`attention.js`): once notifications are allowed, the browser is subscribed with the
+  server's VAPID key (`/api/push/key`) and the subscription handed over (`/api/push/subscribe`),
+  again on every load and language change, with the words a scheduled run's status reads as in
+  that browser's language — the server has no translations. Over the socket it says whether it is
+  being looked at (`{type: "attention", looking}`), on focus, blur, `visibilitychange`, `pagehide`
+  and every reconnect. A subscribed page shows no system notification itself.
+- **The server** (`HttpServer::pushAway()`): an extension's `systemNotify()` from a child goes to the
+  accounts whose pages were bound to it (`ManagedSession::$watchers`, kept after they detach: iOS's
+  frozen page is closed for its silence, and the turn is still theirs); a scheduled run that is
+  done, failed or waiting for an answer (`ScheduleManager`'s `onFinished`) to the accounts that see
+  its task. Each only while no page of that account's is being looked at — a page that has said
+  nothing counts as looked at — so nothing is said twice, and iOS, which drops a subscription whose
+  pushes show nothing, is never sent one the page would have shown anyway.
+- **The sending** (`Web\Push\*`): pure PHP over `ext-openssl`, no package. `Encryption` is RFC 8291
+  (`aes128gcm`, one record, a new server key per message; `EncryptionTest` holds the RFC's own
+  example), `Vapid` RFC 8292 (ES256 JWT, 12 hours; `r || s`, not DER), `WebPush` one fiber per
+  subscription through `Retrying::fetch()`, a 404 or 410 forgetting the subscription.
+- **Kept** in `web-push.json` in the agent directory, `0600`: the VAPID key, made on first use, and
+  the subscriptions by account. Only endpoints of the push services are taken
+  (`PushStore::SERVICES`): the server POSTs to them, and a logged-in page names them.
+- **A click** focuses the pig tab looked at last and opens the conversation the push names
+  (`sw.js`, `onPushOpen()`); with no tab open, the page.
+- **iPhone**: notifications exist only in a Home Screen web app (iOS 16.4+), so the page has a
+  manifest (`assets/manifest.json`, `display: standalone`). It and `sw.js` are fetched without the
+  login cookie and are in `LoginMiddleware::PUBLIC`. A Home Screen app has cookies of its own: it
+  logs in once.
+

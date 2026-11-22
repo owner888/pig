@@ -42,6 +42,7 @@ export class SharedNetwork {
     this.closed = false;
     this.messageListeners = new Set();
     this.closeListeners = new Set();
+    this.openListeners = new Set();
 
     // Callbacks provided by app.js / tabs
     this.getTabs = () => [];
@@ -117,6 +118,12 @@ export class SharedNetwork {
     return () => this.messageListeners.delete(fn);
   }
 
+  /** Called each time the connection opens — what the server forgets with a connection is said again. */
+  addOpenListener(fn) {
+    this.openListeners.add(fn);
+    return () => this.openListeners.delete(fn);
+  }
+
   /** Called when the connection drops — what was waiting on an answer over it will not get one. */
   addCloseListener(fn) {
     this.closeListeners.add(fn);
@@ -176,6 +183,9 @@ export class SharedNetwork {
       this.hideStatus();
       this.onReachable();
       this.reconnectDelay = 1000;
+      for (const listener of this.openListeners) {
+        try { listener(); } catch (err) { console.error("Open listener error:", err); }
+      }
       // Bind the active tab first; background tabs wait until its initial messages load (or when
       // clicked) so a slow tunnel is not flooded by N concurrent child spawns and RPCs at once.
       const active = this.getActiveTab();

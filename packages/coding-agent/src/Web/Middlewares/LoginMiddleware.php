@@ -20,7 +20,11 @@ use Pig\CodingAgent\Web\WebLogin;
  */
 final class LoginMiddleware implements Middleware
 {
-    /** What the login page needs before there is a session. */
+    /**
+     * What the login page needs before there is a session, and what a browser fetches without its
+     * cookie: the web app manifest (an iPhone's "Add to Home Screen") and the service worker's
+     * script (`sw.js`, notifications). Neither says anything about anybody.
+     */
     public const array PUBLIC = [
         '/login',
         '/api/login',
@@ -31,6 +35,8 @@ final class LoginMiddleware implements Middleware
         '/theme.css',
         '/assets/css/style.css',
         '/assets/js/login.js',
+        '/assets/manifest.json',
+        '/assets/js/sw.js',
     ];
 
     /** What the local token opens: the scheduled tasks and their runs. */

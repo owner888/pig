@@ -21,6 +21,15 @@ final class ManagedSession
     /** @var array<int, array<string, true>> connectionId => [tabId => true] subscribers */
     public array $clients = [];
 
+    /**
+     * The accounts whose pages have been bound to it, by id ('' for the one password): who a
+     * `systemNotify()` from it is pushed to (`HttpServer::pushAway()`). Kept after they detach — a
+     * phone's page iOS froze is closed for its silence, and the turn it left running is still theirs.
+     *
+     * @var array<string, true>
+     */
+    public array $watchers = [];
+
     /** True between `agent_start` and `agent_settled`: a turn in flight keeps an idle child alive. */
     public bool $running = false;
 

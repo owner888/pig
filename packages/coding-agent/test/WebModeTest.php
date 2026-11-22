@@ -18,6 +18,10 @@ use Pig\CodingAgent\Web\HttpServer;
 use Pig\CodingAgent\Web\Schedule\ScheduleClient;
 use Pig\CodingAgent\Web\Schedule\ScheduleManager;
 use Pig\CodingAgent\Web\Schedule\ScheduleTool;
+use Pig\CodingAgent\Web\Push\Base64Url;
+use Pig\CodingAgent\Web\Push\P256;
+use Pig\CodingAgent\Web\Push\PushStore;
+use Pig\CodingAgent\Web\Push\WebPush;
 use Pig\CodingAgent\Web\WebLogin;
 use Pig\CodingAgent\Web\WebMode;
 
@@ -84,7 +88,7 @@ final class WebModeTest extends TestCase
      * A server whose children are the fake agent, and whose idle reaping is quick — with no login
      * unless one is given: the login has tests of its own below.
      */
-    private function server(int $port, ?Auth $auth = null, ?WebLogin $login = null): HttpServer
+    private function server(int $port, ?Auth $auth = null, ?WebLogin $login = null, ?WebPush $push = null): HttpServer
     {
         return new HttpServer(
             $this->cwd,
@@ -102,6 +106,7 @@ final class WebModeTest extends TestCase
             },
             idleTtl: 0.2,
             login: $login ?? WebLogin::off(),
+            push: $push,
         );
     }
 
@@ -2106,4 +2111,91 @@ final class WebModeTest extends TestCase
             $server->stop();
         });
     }
+
+    // ---- Web Push -------------------------------------------------------------------------------
+
+    /**
+     * A browser subscribes over `/api/push/*`; an extension's `systemNotify()` is then pushed to it
+     * only while no page of the account's is being looked at (`attention`), signed and encrypted.
+     */
+    public function testASystemNotifyIsPushedOnlyWhileNoPageIsLookedAt(): void
+    {
+        $port = 28220;
+        $sent = [];
+        $transport = new class ($sent) implements \Pig\Ai\Http\HttpTransport {
+            /** @param list<\Pig\Ai\Http\Request> $sent */
+            public function __construct(private array &$sent)
+            {
+            }
+
+            #[\Override]
+            public function send(Request $request, ?\Pig\Async\AbortSignal $signal = null): \Pig\Ai\Http\Response
+            {
+                $this->sent[] = $request;
+
+                return new \Pig\Ai\Http\Response(201, 'Created', [], new class () extends \Pig\Ai\Http\ResponseBody {
+                    #[\Override]
+                    public function getIterator(): \Generator
+                    {
+                        yield from [];
+                    }
+
+                    #[\Override]
+                    public function close(): void
+                    {
+                    }
+                });
+            }
+        };
+        $push = new WebPush(new PushStore($this->home . '/web-push.json'), $transport);
+        $server = $this->server($port, push: $push);
+        $browser = P256::generate();
+
+        Async::run(function () use ($server, $port, $browser, &$sent) {
+            $server->start();
+            $http = new HttpClient(2.0);
+
+            $key = $this->get($http, $port, '/api/push/key');
+            $this->assertSame(65, strlen(Base64Url::decode($key['publicKey'])));
+
+            [$status] = $this->post($http, $port, '/api/push/subscribe', ['subscription' => [
+                'endpoint' => 'https://evil.example/collect',
+                'keys' => ['p256dh' => Base64Url::encode($browser['public']), 'auth' => Base64Url::encode(random_bytes(16))],
+            ]]);
+            $this->assertSame(400, $status, 'only a push service is POSTed to');
+
+            [$status] = $this->post($http, $port, '/api/push/subscribe', ['subscription' => [
+                'endpoint' => 'https://fcm.googleapis.com/fcm/send/abc',
+                'keys' => ['p256dh' => Base64Url::encode($browser['public']), 'auth' => Base64Url::encode(random_bytes(16))],
+            ], 'labels' => ['done' => '已完成']]);
+            $this->assertSame(200, $status);
+
+            $ws = $this->wsConnect($port);
+            $this->wsSend($ws, ['type' => 'start_session', 'cwd' => $this->cwd, 'sessionFile' => 'n.jsonl']);
+            $this->wsCollect($ws, static fn (array $m) => $m['type'] === 'session_bound');
+
+            // Looked at: the page says it itself.
+            $this->wsSend($ws, ['type' => 'rpc_command', 'command' => ['type' => 'prompt', 'message' => 'notify: one', 'id' => 'p1']]);
+            $this->wsCollect($ws, static fn (array $m) => ($m['event']['method'] ?? null) === 'systemNotify');
+            $this->wsCollect($ws, static fn () => false, timeout: 0.2);
+            $this->assertSame([], $sent, 'nothing is pushed while the page is looked at');
+
+            // Left — another app, a locked phone: pushed, to the push service, as this server.
+            $this->wsSend($ws, ['type' => 'attention', 'looking' => false]);
+            $this->wsSend($ws, ['type' => 'rpc_command', 'command' => ['type' => 'prompt', 'message' => 'notify: two', 'id' => 'p2']]);
+            $this->wsCollect($ws, static fn (array $m) => ($m['event']['method'] ?? null) === 'systemNotify');
+            $this->wsCollect($ws, static fn () => false, timeout: 0.3);
+
+            $this->assertCount(1, $sent);
+            $this->assertSame('https://fcm.googleapis.com/fcm/send/abc', $sent[0]->url);
+            $this->assertStringStartsWith('vapid t=', $sent[0]->headers['Authorization']);
+            $this->assertStringEndsWith(', k=' . $key['publicKey'], $sent[0]->headers['Authorization']);
+            $this->assertSame('aes128gcm', $sent[0]->headers['Content-Encoding']);
+            $this->assertStringNotContainsString('two', (string) $sent[0]->body, 'the push service sees ciphertext');
+
+            fclose($ws);
+            $server->stop();
+        });
+    }
 }
+

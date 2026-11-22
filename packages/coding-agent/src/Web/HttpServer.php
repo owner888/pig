@@ -27,6 +27,8 @@ use Pig\CodingAgent\Web\Node\NodeManager;
 use Pig\CodingAgent\Web\Protocols\Http;
 use Pig\CodingAgent\Web\Protocols\Websocket;
 use Pig\CodingAgent\Web\Pty\PtyManager;
+use Pig\CodingAgent\Web\Push\PushStore;
+use Pig\CodingAgent\Web\Push\WebPush;
 use Pig\CodingAgent\Web\Schedule\ScheduleManager;
 use Pig\CodingAgent\Logger;
 use Throwable;
@@ -95,6 +97,12 @@ final class HttpServer
     /** @var array<int, User> per WebSocket, who opened it */
     private array $wsUsers = [];
 
+    /**
+     * @var array<int, bool> per WebSocket, whether its page is being looked at (`attention.js`
+     *      says, on every change); a page that has said nothing counts as looked at
+     */
+    private array $wsLooking = [];
+
     /** @var array<string, string> terminalId => the account it is (`User::$id`), with accounts */
     private array $terminalOwners = [];
 
@@ -155,6 +163,9 @@ final class HttpServer
     private readonly NodeManager $nodeManager;
     private readonly ScheduleManager $schedules;
 
+    /** What tells a person's phone when no page of theirs is being looked at (`pushAway()`). */
+    private readonly WebPush $push;
+
     /** Who may use the page — see `WebLogin` — and what every request passes through first. */
     private readonly WebLogin $login;
 
@@ -169,6 +180,8 @@ final class HttpServer
      * @param WebLogin|null $login what the `storage` setting means unless given — the password in
      *        the agent directory, or the accounts in the database (`WebLogin::configured()`);
      *        `WebLogin::off()` only for tests of everything else
+     * @param WebPush|null $push where the browsers that said yes to notifications are kept and
+     *        sent to; `web-push.json` in the agent directory unless given
      */
     public function __construct(
         private readonly string $cwd,
@@ -178,8 +191,10 @@ final class HttpServer
         ?Closure $spawn = null,
         float $idleTtl = SessionPool::IDLE_TTL,
         ?WebLogin $login = null,
+        ?WebPush $push = null,
     ) {
         $this->auth = $auth ?? Auth::discover();
+        $this->push = $push ?? new WebPush(new PushStore(\Pig\CodingAgent\Config::home() . '/web-push.json'));
         $this->login = $login ?? WebLogin::configured(\Pig\CodingAgent\Config::home());
         $this->middlewares = [new Middlewares\SameOriginMiddleware(), new Middlewares\LoginMiddleware($this->login), new Middlewares\AdminMiddleware($this->login)];
         $this->nodeManager = new NodeManager();
@@ -233,6 +248,7 @@ final class HttpServer
                 : null,
             environmentFor: $this->environmentOf(...),
             elsewhere: $this->isElsewhere(...),
+            onFinished: $this->pushRun(...),
         );
     }
 
@@ -487,7 +503,7 @@ final class HttpServer
         unset($this->panelUis[$connectionId]);
 
         $this->pool->detach($connectionId);
-        unset($this->connections[$connectionId], $this->wsClients[$connectionId], $this->clientIds[$connectionId], $this->wsSessions[$connectionId], $this->wsUsers[$connectionId]);
+        unset($this->connections[$connectionId], $this->wsClients[$connectionId], $this->clientIds[$connectionId], $this->wsSessions[$connectionId], $this->wsUsers[$connectionId], $this->wsLooking[$connectionId]);
     }
 
     private function ptyManager(): PtyManager
@@ -661,7 +677,7 @@ final class HttpServer
         $path = $req['path'];
         $json = ['Content-Type' => 'application/json'];
 
-        if ($this->routeLogin($conn, $req) || $this->routeAccounts($conn, $req)) {
+        if ($this->routeLogin($conn, $req) || $this->routeAccounts($conn, $req) || $this->routePush($conn, $req)) {
             return;
         }
 
@@ -1489,6 +1505,7 @@ final class HttpServer
                         return;
                     }
 
+                    $managed->watchers[$user->id] = true;
                     $this->sessionBound($conn, $managed, $tabId);
                 });
 
@@ -1503,7 +1520,14 @@ final class HttpServer
                 return;
             }
 
+            $managed->watchers[$user->id] = true;
             $this->sessionBound($conn, $managed, $tabId);
+
+            return;
+        }
+
+        if ($type === 'attention') {
+            $this->wsLooking[$connectionId] = ($data['looking'] ?? true) === true;
 
             return;
         }
@@ -1976,6 +2000,19 @@ final class HttpServer
     private function onSessionEvent(ManagedSession $managed, array $event): void
     {
         $this->schedules->observe($managed, $event);
+
+        // An extension's `$ctx->ui->systemNotify()`: the pages bound to it say it themselves
+        // (`attention.js`); a phone whose page iOS has frozen hears it only this way.
+        if (($event['type'] ?? null) === 'extension_ui_request' && ($event['method'] ?? null) === 'systemNotify') {
+            $title = is_string($event['title'] ?? null) && $event['title'] !== '' ? $event['title'] : 'pig';
+            $this->pushAway(array_keys($managed->watchers), [
+                'title' => $title,
+                'body' => is_string($event['body'] ?? null) ? $event['body'] : '',
+                'tag' => $title,
+                'cwd' => $managed->cwd,
+                'sessionFile' => $managed->sessionFile,
+            ]);
+        }
 
         $browserEvent = self::slimForBrowser($event);
         if ($browserEvent === null) {
@@ -2533,6 +2570,135 @@ final class HttpServer
             $line = ['type' => 'rpc_event', 'event' => $request];
             $conn->send($tabId === 'default' ? $line : [...$line, 'tabId' => $tabId]);
         }
+    }
+
+    /**
+     * `/api/push/key`, `/api/push/subscribe` and `/api/push/unsubscribe`: what a page needs to have
+     * its browser told things while nobody is looking (`attention.js`), as the account logged in.
+     *
+     * @param array{method: string, path: string, headers: array<string, string>, body?: string} $req
+     */
+    private function routePush(Connection $conn, array $req): bool
+    {
+        $path = $req['path'];
+
+        if (!str_starts_with($path, '/api/push/')) {
+            return false;
+        }
+
+        $json = ['Content-Type' => 'application/json', 'Cache-Control' => 'no-store'];
+        $answer = static function (int $status, array $body) use ($conn, $json): bool {
+            $conn->sendResponse($status, $json, (string) json_encode($body, JSON_UNESCAPED_SLASHES));
+
+            return true;
+        };
+
+        if ($path === '/api/push/key') {
+            return $answer(200, ['ok' => true, 'publicKey' => Push\Base64Url::encode($this->push->store->vapid()->public)]);
+        }
+
+        if ($req['method'] !== 'POST') {
+            return $answer(405, ['ok' => false, 'error' => 'POST only']);
+        }
+
+        $data = json_decode($req['body'] ?? '', true);
+        $data = is_array($data) ? $data : [];
+        $user = $this->userOf($req);
+
+        if ($path === '/api/push/subscribe') {
+            try {
+                $this->push->store->add($user->id, is_array($data['subscription'] ?? null) ? $data['subscription'] : [], self::pushLabels($data['labels'] ?? null));
+            } catch (\InvalidArgumentException $e) {
+                return $answer(400, ['ok' => false, 'error' => $e->getMessage()]);
+            }
+
+            return $answer(200, ['ok' => true]);
+        }
+
+        if ($path === '/api/push/unsubscribe') {
+            $this->push->store->remove(is_string($data['endpoint'] ?? null) ? $data['endpoint'] : '', $user->id);
+
+            return $answer(200, ['ok' => true]);
+        }
+
+        return $answer(404, ['ok' => false, 'error' => 'No such endpoint.']);
+    }
+
+    /**
+     * What a scheduled run's status reads as in the browser's language — the page sends its own
+     * words with its subscription, since this server has none.
+     *
+     * @return array<string, string>
+     */
+    private static function pushLabels(mixed $labels): array
+    {
+        $kept = [];
+
+        foreach ([ScheduleManager::DONE, ScheduleManager::ERROR, ScheduleManager::NEEDS_INPUT] as $status) {
+            if (is_array($labels) && is_string($labels[$status] ?? null) && $labels[$status] !== '') {
+                $kept[$status] = mb_substr($labels[$status], 0, 100);
+            }
+        }
+
+        return $kept;
+    }
+
+    /**
+     * Tell `$users` through their push services, each only when no page of theirs is being looked
+     * at: one that is says it itself, and iOS takes a push that shows nothing as a reason to drop
+     * the subscription.
+     *
+     * @param list<string> $users account ids ('' for the one password)
+     * @param array{title: string, body: string, tag: string, cwd?: string|null, sessionFile?: string|null} $message
+     * @param (Closure(array<string, string>): string)|null $body the body in a subscription's words, when it depends on them
+     */
+    private function pushAway(array $users, array $message, ?Closure $body = null): void
+    {
+        foreach (array_unique($users) as $user) {
+            if (!$this->isLooking($user)) {
+                $this->push->toUser($user, $message, $body);
+            }
+        }
+    }
+
+    /** Whether a page of `$user`'s is being looked at right now. */
+    private function isLooking(string $user): bool
+    {
+        foreach ($this->wsUsers as $connectionId => $who) {
+            $client = $this->wsClients[$connectionId] ?? null;
+
+            if ($who->id === $user && $client !== null && !$client->isClosed() && ($this->wsLooking[$connectionId] ?? true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * A scheduled run that finished or stopped for an answer, for the people who see its task:
+     * its owner, and for a task nobody owns, the admins.
+     *
+     * @param array<string, mixed> $run
+     */
+    private function pushRun(Schedule\ScheduledTask $task, array $run): void
+    {
+        $users = $this->login->several()
+            ? array_map(static fn (User $u): string => $u->id, array_values(array_filter(
+                $this->login->accounts()->users(),
+                static fn (User $u): bool => ScheduleManager::visibleTo($task, $u),
+            )))
+            : [''];
+        $status = (string) $run['status'];
+        $error = is_string($run['error'] ?? null) && $run['error'] !== '' ? $run['error'] : null;
+
+        $this->pushAway($users, [
+            'title' => $task->name,
+            'body' => '',
+            'tag' => 'pig-scheduled-' . $task->id,
+            'cwd' => $task->cwd,
+            'sessionFile' => is_string($run['sessionFile'] ?? null) ? $run['sessionFile'] : null,
+        ], static fn (array $labels): string => ($labels[$status] ?? $status) . ($error !== null ? ': ' . $error : ''));
     }
 
     /** Close the pages `$userId` has open: their login sessions have just ended. */

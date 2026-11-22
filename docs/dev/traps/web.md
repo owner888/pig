@@ -452,3 +452,22 @@ looked at last and posts the notification's id to every pig tab, and the one tha
 conversation. `renotify: true`, or Android replaces a notification with the same tag silently.
 
 Regression test: `WebNotificationTest::testNotificationsGoThroughTheServiceWorker`.
+
+## An iPhone showed no notification, Service Worker or not
+
+**Symptom**: with notifications allowed in a Home Screen pig on an iPhone, a turn that finished
+after switching to another app said nothing; on an iPad beside another app, it did.
+
+**Cause**: iOS freezes a page seconds after it is left. Its socket goes silent, the server closes
+it after `SILENT_LIMIT`, and the `systemNotify()` the page was to show never reaches it. Anything
+the page does itself (`attention.js`'s `showNotification()`) needs the page running.
+
+**Rule**: what must reach someone who has left goes from the server, as Web Push
+(`HttpServer::pushAway()`, design/web.md), and only while no page of theirs is looked at — the page
+reports it (`attention`), and a page that has said nothing counts as looked at. A subscribed page
+shows no system notification of its own. The service worker shows every push it gets: iOS drops a
+subscription whose pushes show nothing.
+
+Regression tests: `WebModeTest::testASystemNotifyIsPushedOnlyWhileNoPageIsLookedAt`,
+`ScheduleManagerTest::testARunIsToldOnceWhenItIsDoneFailsOrWaitsForAnAnswer`, `Web\Push\*Test`.
+
