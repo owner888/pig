@@ -3445,10 +3445,14 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       // A virtual model routes each request; say where the latest response went, as the TUI's
       // footer does (`model → routed-id • level`).
       const routed = s.routedModel ? ` → ${s.routedModel.id}${s.routedModel.thinkingLevel ? ` • ${s.routedModel.thinkingLevel}` : ""}` : "";
-      const context = footer.level ? `<span class="telemetry-${footer.level}">${escapeHtml(footer.context)}</span>` : escapeHtml(footer.context);
-      telemetryStats.innerHTML = (hookStatus ? `<span class="hook-status">${hookStatus}</span>  ` : "")
-        + (footer.tokenSpeed ? escapeHtml(footer.tokenSpeed + " • ") : "")
-        + escapeHtml([...footer.parts, ""].join(" ")) + context + escapeHtml(routed);
+      // A conversation whose process started before `footer` existed (one still running across
+      // `pig update`) has none, and reading it threw out of `refreshState()` — the page then said
+      // pig was unreachable and kept reconnecting. Its line is the hooks' alone until it restarts.
+      const usage = !footer ? "" : (footer.tokenSpeed ? escapeHtml(footer.tokenSpeed + " • ") : "")
+        + escapeHtml([...footer.parts, ""].join(" "))
+        + (footer.level ? `<span class="telemetry-${footer.level}">${escapeHtml(footer.context)}</span>` : escapeHtml(footer.context))
+        + escapeHtml(routed);
+      telemetryStats.innerHTML = (hookStatus ? `<span class="hook-status">${hookStatus}</span>  ` : "") + usage;
 
       if (userIsInteracting) return;
       const provider = model.provider, modelId = model.id, level = s.thinkingLevel;

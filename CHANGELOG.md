@@ -50,6 +50,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 ### Fixed
 
 - Fixed `pig web`'s retry banner (`Retrying in 2s (attempt 1/3)`) standing still and staying up after the retry had started — for as long as the retried request took, up to minutes when it hung again, until a reload took it away. It now counts down once a second, the seconds rounded up as the terminal's `Retrying (1/3) in 2s...` does, and goes when the retry starts, as the terminal's indicator gives way to `Working`.
+- Fixed `pig web` saying it could not reach pig (`Cannot read properties of undefined (reading 'level')`) and reconnecting for ever on a conversation whose process started before the telemetry line's `footer` field existed, such as one still running across `pig update`: its line is now left empty until the process restarts.
 
 ## [2.0.23] - 2026-11-23
 

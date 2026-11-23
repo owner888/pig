@@ -159,6 +159,41 @@ final class WebMessageBlocksTest extends TestCase
         $this->assertSame('compacting', $result['otherKept'], 'and only a retry banner');
     }
 
+    public function testTheTelemetryLineIsTheFootersTextAndAnOlderChildWithoutOneDoesNotBreakThePage(): void
+    {
+        // `applyState()` in app.js, run as it is. A conversation process started before `footer`
+        // existed answers `get_state` without it; reading it threw, and the page took that for pig
+        // being unreachable and reconnected for ever.
+        $node = trim((string) shell_exec('command -v node'));
+        if ($node === '') {
+            $this->markTestSkipped('node is not available to run the browser code');
+        }
+
+        $script = <<<'JS'
+            const fs = require('fs');
+            const src = fs.readFileSync(process.argv[1], 'utf8');
+            const fn = src.match(/function applyState\(s\) \{[\s\S]*?\n    \}/)[0];
+            const telemetryStats = { innerHTML: 'old' };
+            const active = {};
+            const hookStatus = '';
+            const userIsInteracting = true;
+            const escapeHtml = (text) => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+            const applyState = eval('(' + fn + ')');
+            applyState({ footer: { parts: ['↑34k', '↓21', '$0.069'], context: '93.0%/1.0M (auto)', level: 'error', tokenSpeed: '⚡ 2696 tok/s · TTFT 1ms' } });
+            const drawn = telemetryStats.innerHTML;
+            applyState({ model: { id: 'm' } });
+            console.log(JSON.stringify({ drawn, older: telemetryStats.innerHTML }));
+            JS;
+        $out = [];
+        $code = 0;
+        exec(escapeshellarg($node) . ' -e ' . escapeshellarg($script) . ' ' . escapeshellarg(realpath(__DIR__ . '/../src/Web/assets/js/app.js')) . ' 2>&1', $out, $code);
+        $this->assertSame(0, $code, implode("\n", $out));
+        $result = json_decode(implode('', $out), true);
+
+        $this->assertSame('⚡ 2696 tok/s · TTFT 1ms • ↑34k ↓21 $0.069 <span class="telemetry-error">93.0%/1.0M (auto)</span>', $result['drawn']);
+        $this->assertSame('', $result['older'], 'no footer: an empty line, not an error');
+    }
+
     public function testAfterASleepThePageOpensANewConnectionAndBindsItsTabsAgain(): void
     {
         // `network.js` run as it is, with a browser made of stubs: its socket still says OPEN, as
