@@ -7,9 +7,18 @@ Nothing is committed, tagged or pushed until the developer has reviewed the chan
 
 1. **Regenerate the model catalogue**, as upstream's `build` runs `generate-models` first:
    `php scripts/generate-models.php` (it ends by running `build-models.php`), its result in a commit
-   of its own so models.dev's drift stays out of the release's real changes, then the tests. Also
-   after porting anything that changes the generator's rules or `BuiltinCatalog.php`; not in
-   between, since each run pulls whatever models.dev changed meanwhile.
+   of its own so models.dev's drift stays out of the release's real changes. Only when the
+   catalogue changed, and only `vendor/bin/phpunit packages/ai/test` before that commit: the rest
+   was tested as it was written, and CI runs the whole suite on the push and the tag — too late for
+   a broken catalogue, which is out once the tag is. Also after porting anything that changes the
+   generator's rules or `BuiltinCatalog.php`; not in between, since each run pulls whatever
+   models.dev changed meanwhile.
+
+   ```bash
+   php scripts/generate-models.php
+   git add -A packages/ai/data/models scripts/BuiltinCatalog.php
+   git diff --cached --quiet || { vendor/bin/phpunit packages/ai/test && git commit -m "Regenerate the model catalogue from models.dev"; }
+   ```
 2. **Update the documentation before the tag**, without being reminded. Go over everything
    user-visible in the release (commands, options, settings, slash commands, file formats,
    defaults) and update, in order:
