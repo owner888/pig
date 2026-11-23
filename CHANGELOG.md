@@ -45,11 +45,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
-## Unreleased
+## [2.0.23] - 2026-11-23
 
 ### Changed
 
 - Changed `pig web`'s telemetry line under the prompt to say what the terminal's footer says, the same way: the `⚡` token-speed reading (tok/s, average, time to first token; off with `tokenSpeed.enabled: false`), cache reads and writes and the latest cache hit rate (`R`, `W`, `CH`), `(sub)` on a subscription, `(auto)` when auto-compaction is on, `?` for the context right after a compaction, the context coloured past 70% and 90%, and the terminal's number format (`565k`, not `565.0k`). The page used to build a shorter line of its own; it now draws `get_state`'s new `footer` (`FooterComponent::usage()` and `TokenSpeed`, the terminal's own code), and refreshes it as each answer starts and ends.
+
+## [2.0.22] - 2026-11-23
 
 ### Fixed
 

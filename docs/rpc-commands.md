@@ -185,7 +185,7 @@ Response:
 
 The `model` field is a full [Model](#model-object) object, or omitted when no model is selected. The `sessionName` field is the display name set via `set_session_name`, or omitted if not set. `sessionFile` is omitted with `--no-session`; `sessionId` is then the in-memory session's ID.
 
-pig adds fields of its own after these, which upstream clients can ignore: `isBashRunning`, `isPersisted`, `contextTokens`, `autoRetryEnabled`, `isRetrying`, `routedModel` (`{provider, id, thinkingLevel}` of the model a [virtual model](/docs/latest/virtual-models) last routed to, or `null`), `cwd`, and `opening` (the first 60 characters of the first user message).
+pig adds fields of its own after these, which upstream clients can ignore: `isBashRunning`, `isPersisted`, `contextTokens`, `autoRetryEnabled`, `isRetrying`, `routedModel` (`{provider, id, thinkingLevel}` of the model a [virtual model](/docs/latest/virtual-models) last routed to, or `null`), `cwd`, `opening` (the first 60 characters of the first user message), and `footer` — the terminal footer's usage line as text: `parts` (such as `↑34k`, `R2.1k`, `CH80.0%`, `$0.069 (sub)`), `context` (`3.3%/1.0M (auto)`), `level` (`warning` past 70%, `error` past 90%, else `null`) and `tokenSpeed` (the latest `⚡` reading, or `null` when there is none or `tokenSpeed.enabled` is off).
 
 ### get_messages
 
