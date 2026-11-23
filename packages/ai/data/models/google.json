@@ -85,39 +85,6 @@
     },
     {
         "type": "chat",
-        "id": "gemini-2.5-computer-use-preview-10-2025",
-        "name": "Gemini 2.5 Computer Use Preview 10-2025",
-        "api": "google-generative-ai",
-        "provider": "google",
-        "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
-        "reasoning": true,
-        "input": [
-            "text",
-            "image"
-        ],
-        "cost": {
-            "input": 1.25,
-            "output": 10.0,
-            "cacheRead": 0.0,
-            "cacheWrite": 0.0
-        },
-        "contextWindow": 128000,
-        "maxTokens": 64000,
-        "inputLimits": {
-            "maxRequestBytes": 20971520,
-            "images": {
-                "maxPerRequest": 3600,
-                "resize": {
-                    "maxWidth": 2000,
-                    "maxHeight": 2000,
-                    "maxBytes": 4718592,
-                    "jpegQuality": 80
-                }
-            }
-        }
-    },
-    {
-        "type": "chat",
         "id": "gemini-2.5-flash",
         "name": "Gemini 2.5 Flash",
         "api": "google-generative-ai",
@@ -337,48 +304,6 @@
         },
         "contextWindow": 65536,
         "maxTokens": 4096,
-        "inputLimits": {
-            "maxRequestBytes": 20971520,
-            "images": {
-                "maxPerRequest": 3600,
-                "resize": {
-                    "maxWidth": 2000,
-                    "maxHeight": 2000,
-                    "maxBytes": 4718592,
-                    "jpegQuality": 80
-                }
-            }
-        }
-    },
-    {
-        "type": "chat",
-        "id": "gemini-3.1-flash-lite-preview",
-        "name": "Gemini 3.1 Flash Lite Preview",
-        "api": "google-generative-ai",
-        "provider": "google",
-        "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
-        "reasoning": true,
-        "thinkingLevelMap": {
-            "off": null,
-            "minimal": "minimal",
-            "low": "low",
-            "medium": "medium",
-            "high": "high",
-            "xhigh": null,
-            "max": null
-        },
-        "input": [
-            "text",
-            "image"
-        ],
-        "cost": {
-            "input": 0.25,
-            "output": 1.5,
-            "cacheRead": 0.025,
-            "cacheWrite": 0.0
-        },
-        "contextWindow": 1048576,
-        "maxTokens": 65536,
         "inputLimits": {
             "maxRequestBytes": 20971520,
             "images": {
