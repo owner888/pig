@@ -70,7 +70,7 @@ final class BuiltinCatalog
      * catalog server must be newer than to count (`RemoteCatalog::isNewer()`). `generate-models.php`
      * rewrites it with the rows.
      */
-    public const string GENERATED_AT = '2026-11-23T07:53:16Z';
+    public const string GENERATED_AT = '2026-11-23T11:07:12Z';
 
     /** Upstream's generator `CODEX_BASE_URL`. */
     private const string OPENAI_CODEX_BASE_URL = 'https://chatgpt.com/backend-api';
@@ -1770,6 +1770,7 @@ final class BuiltinCatalog
         'qwen3.6-plus' => ['Qwen3.6 Plus', Api::AnthropicMessages, 262_144, 65_536, true, true, 0.5, 3.0, 0.05, 0.625],
         'qwen3.8-flash' => ['Qwen3.8 Flash', Api::AnthropicMessages, 1_000_000, 131_072, true, true, 0.15, 0.47, 0.016, 0.2, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => null, 'xhigh' => 'xhigh', 'max' => null]],
         'qwen3.8-max' => ['Qwen3.8 Max', Api::OpenAiCompletions, 262_144, 131_072, true, true, 2.0, 6.0, 0.25, 2.5, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => null, 'xhigh' => 'xhigh', 'max' => null]],
+        'qwen4-max-free' => ['Qwen4 Max Free', Api::AnthropicMessages, 1_000_000, 262_144, true, true, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'tidepool-alpha-free' => ['Tidepool Alpha Free', Api::OpenAiCompletions, 1_048_576, 131_072, true, false, 0.0, 0.0, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         // <<< generated
     ];
@@ -1889,7 +1890,7 @@ final class BuiltinCatalog
         'deepseek/deepseek-v4-pro' => ['DeepSeek: DeepSeek V4 Pro 0423', Api::OpenAiCompletions, 1_048_576, 393_216, true, false, 0.9, 1.5, 0.2, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'deepseek/deepseek-v4-pro-0813' => ['DeepSeek: DeepSeek V4 Pro 0813', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 1.32, 3.96, 0.044, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'deepseek/deepseek-v4.1-flash' => ['DeepSeek: DeepSeek V4.1 Flash', Api::OpenAiCompletions, 1_048_576, 393_216, true, true, 0.0498, 0.1992, 0.000996, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'deepseek/deepseek-v4.1-flash-1017' => ['DeepSeek: DeepSeek V4.1 Flash 1017', Api::OpenAiCompletions, 1_048_576, 393_216, true, true, 0.3, 1.2, 0.006, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'deepseek/deepseek-v4.1-flash-1017' => ['DeepSeek: DeepSeek V4.1 Flash 1017', Api::OpenAiCompletions, 1_048_576, 393_216, true, true, 0.15, 0.6, 0.003, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'deepseek/deepseek-v4.1-flash-1017:batch' => ['DeepSeek: DeepSeek V4.1 Flash 1017 (batch)', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 0.035, 0.149, 0.0029, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'deepseek/deepseek-v4.1-flash:batch' => ['DeepSeek: DeepSeek V4.1 Flash (batch)', Api::OpenAiCompletions, 1_048_576, 384_000, true, true, 0.05, 0.15, 0.004, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'dots-studio/dots-3-note-preview:free' => ['Dots Studio: Dots3-Note Preview (free)', Api::OpenAiCompletions, 512_000, 460_800, true, true, 0.0, 0.0, 0.0, 0.0],
@@ -2225,7 +2226,7 @@ final class BuiltinCatalog
         '~anthropic/claude-opus-latest' => ['Anthropic: Claude Opus Latest', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 4.0, 20.0, 0.2, 5.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         '~anthropic/claude-sonnet-latest' => ['Anthropic: Claude Sonnet Latest', Api::AnthropicMessages, 1_000_000, 128_000, true, true, 2.0, 10.0, 0.1, 2.5, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         '~deepseek/deepseek-flash-latest' => ['DeepSeek: DeepSeek Flash Latest', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 0.036, 0.5, 0.01, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        '~deepseek/deepseek-pro-latest' => ['DeepSeek: DeepSeek Pro Latest', Api::OpenAiCompletions, 1_048_576, 393_216, true, false, 0.1188, 5.0, 0.12, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        '~deepseek/deepseek-pro-latest' => ['DeepSeek: DeepSeek Pro Latest', Api::OpenAiCompletions, 1_048_576, 393_216, true, false, 0.0999, 5.0, 0.0999, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         '~deepseek/deepseek-v4-flash-latest' => ['DeepSeek: DeepSeek V4 Flash Latest', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.0434, 0.3, 0.035, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         '~google/gemini-flash-latest' => ['Google: Gemini Flash Latest', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 1.5, 7.5, 0.075, 0.083333, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         '~google/gemini-pro-latest' => ['Google: Gemini Pro Latest', Api::OpenAiCompletions, 1_048_576, 943_718, true, true, 2.0, 10.0, 0.1, 0.1875, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
