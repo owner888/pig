@@ -2462,11 +2462,13 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
+      gap: var(--space-3);
       font-family: var(--font-mono);
       font-size: var(--text-sm);
     }
     .selectors-group {
       display: flex;
+      flex: none;
       gap: 8px;
       align-items: center;
     }
@@ -2574,8 +2576,16 @@
     }
     .dropdown-item.disabled { opacity: 0.4; cursor: default; }
 
+    /* One line, cut at the end as the terminal's footer is (`Width::truncate()`), never wrapped
+       under the selectors; the whole line is its tooltip. */
     .status-telemetry {
+      flex: 1;
+      min-width: 0;
       color: var(--color-text-subtle);
+      text-align: right;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     /* The context past 70% and 90%, as the terminal footer colours it. */
     .status-telemetry .telemetry-warning { color: var(--color-warning); }

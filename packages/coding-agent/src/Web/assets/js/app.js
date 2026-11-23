@@ -3439,8 +3439,8 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       if (!s || !active) return;
       const model = s.model || {};
       // The terminal footer's own text (`FooterComponent::usage()`, sent as `footer`), so the two
-      // read the same: the `⚡` reading first, as on the footer's top line, then the counts, the
-      // cache hit rate, the cost and the context, which takes a colour past 70% and 90%.
+      // read the same: the counts, the cache hit rate, the cost and the context, which takes a
+      // colour past 70% and 90%, then the `⚡` reading from the footer's top line.
       const footer = s.footer;
       // A virtual model routes each request; say where the latest response went, as the TUI's
       // footer does (`model → routed-id • level`).
@@ -3448,11 +3448,15 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       // A conversation whose process started before `footer` existed (one still running across
       // `pig update`) has none, and reading it threw out of `refreshState()` — the page then said
       // pig was unreachable and kept reconnecting. Its line is the hooks' alone until it restarts.
-      const usage = !footer ? "" : (footer.tokenSpeed ? escapeHtml(footer.tokenSpeed + " • ") : "")
-        + escapeHtml([...footer.parts, ""].join(" "))
+      // The `⚡` reading last: the line is cut at its end when it does not fit, and the context is
+      // the number that decides whether to start a new session, so it is the one kept.
+      const usage = !footer ? "" : escapeHtml([...footer.parts, ""].join(" "))
         + (footer.level ? `<span class="telemetry-${footer.level}">${escapeHtml(footer.context)}</span>` : escapeHtml(footer.context))
-        + escapeHtml(routed);
+        + escapeHtml(routed)
+        + (footer.tokenSpeed ? escapeHtml(" • " + footer.tokenSpeed) : "");
       telemetryStats.innerHTML = (hookStatus ? `<span class="hook-status">${hookStatus}</span>  ` : "") + usage;
+      // Cut to one line by the stylesheet; the whole of it on hover.
+      telemetryStats.title = telemetryStats.textContent;
 
       if (userIsInteracting) return;
       const provider = model.provider, modelId = model.id, level = s.thinkingLevel;

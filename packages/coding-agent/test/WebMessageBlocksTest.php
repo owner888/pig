@@ -190,7 +190,7 @@ final class WebMessageBlocksTest extends TestCase
         $this->assertSame(0, $code, implode("\n", $out));
         $result = json_decode(implode('', $out), true);
 
-        $this->assertSame('⚡ 2696 tok/s · TTFT 1ms • ↑34k ↓21 $0.069 <span class="telemetry-error">93.0%/1.0M (auto)</span>', $result['drawn']);
+        $this->assertSame('↑34k ↓21 $0.069 <span class="telemetry-error">93.0%/1.0M (auto)</span> • ⚡ 2696 tok/s · TTFT 1ms', $result['drawn'], 'the reading last, so a cut line loses it before the context');
         $this->assertSame('', $result['older'], 'no footer: an empty line, not an error');
     }
 

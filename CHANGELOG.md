@@ -45,6 +45,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Fixed
+
+- Fixed `pig web`'s telemetry line wrapping onto a second line and running into the thinking-level selector once it carried the token-speed reading: it is one line now, cut at its end with `…` as the terminal's footer is cut, with the whole line as its tooltip. The `⚡` reading moved to the end, so a narrow window loses it before the context percentage.
+
 ## [2.0.24] - 2026-11-23
 
 ### Fixed
