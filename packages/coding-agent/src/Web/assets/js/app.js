@@ -87,6 +87,11 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         // about to arrive as a user message — drawn then, and not when it was typed.
         this.queue = { steering: [], followUp: [] };
         this.delivering = [];
+        // Prompts this page sent that started a run and whose user message is still to arrive:
+        // drawn when they were sent, so their `message_start` is not drawn again. Any other user
+        // message that starts a run is someone else's — another device's page on the same
+        // conversation, an extension's `sendUserMessage()` — and is drawn when it arrives.
+        this.echoes = 0;
         this.currentAssistantBlock = null;
         this.currentAssistantText = "";
         this.currentThinkingText = "";
@@ -1584,10 +1589,11 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         // `/template` whose text was expanded on the way in.
         let at = tab.delivering.indexOf(text);
         if (at === -1 && tab.delivering.length > 0) at = 0;
-        if (at !== -1) {
-          tab.delivering.splice(at, 1);
-          appendUserMessage(text, content.filter((c) => c.type === "image").map((c) => ({ mimeType: c.mimeType, data: c.data })));
-        }
+        if (at !== -1) tab.delivering.splice(at, 1);
+        // The child answers a prompt `started` before the run's first message goes out, on the
+        // same connection, so the next user message after that answer is the prompt's own.
+        if (at === -1 && tab.echoes > 0) tab.echoes--;
+        else appendUserMessage(text, content.filter((c) => c.type === "image").map((c) => ({ mimeType: c.mimeType, data: c.data })));
       }
 
       // The telemetry line follows each answer, as the terminal's footer does: `⚡ …` when it
@@ -1647,6 +1653,8 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         if (evt.type === "agent_end") {
           if (tab) {
             tab.delivering = [];
+            // A prompt that started a run which failed before its message went out has no echo.
+            tab.echoes = 0;
             tab.lastFailedAssistantBlock = null;
           }
           tab?.refreshState();
@@ -2266,6 +2274,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         requestId = tab.unsent?.text === text ? tab.unsent.requestId : randomHex();
         tab.unsent = null;
         const { disposition } = await tab.rpc({ type: "prompt", message: text, images, streamingBehavior: followUp ? "followUp" : "steer", requestId });
+        if (disposition === "started") tab.echoes++;
         if (disposition === "duplicate") {
           optimisticBlock?.remove();
           tab.refreshState();

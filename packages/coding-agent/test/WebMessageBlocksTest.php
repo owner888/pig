@@ -291,6 +291,31 @@ final class WebMessageBlocksTest extends TestCase
         $this->assertSame(30, $result['kept']);
     }
 
+    public function testAUserMessageAnotherDeviceSentIsDrawnAndOneThisPageSentIsNotDrawnTwice(): void
+    {
+        // `onEvent()`'s user `message_start` in app.js, run as it is: this page's prompt was drawn
+        // when it was sent (`echoes`), a queued one when delivered, anyone else's when it arrives.
+        $result = $this->runAppJs(<<<'JS'
+            const from = src.indexOf('      if (evt.type === "message_start" && evt.message?.role === "user") {');
+            const block = src.slice(from, src.indexOf('\n      }\n', from) + 8);
+            const drawn = [];
+            const appendUserMessage = (text) => drawn.push(text);
+            const tab = { delivering: [], echoes: 0 };
+            const onUser = new Function('evt', 'tab', 'appendUserMessage', block);
+            const user = (text) => ({ type: 'message_start', message: { role: 'user', content: [{ type: 'text', text }] } });
+            onUser(user('from the Android phone'), tab, appendUserMessage);
+            tab.echoes = 1; // this page's own prompt, answered `started`
+            onUser(user('typed here'), tab, appendUserMessage);
+            tab.delivering.push('queued here');
+            onUser(user('queued here'), tab, appendUserMessage);
+            onUser(user('from an extension'), tab, appendUserMessage);
+            console.log(JSON.stringify({ drawn, echoes: tab.echoes }));
+            JS);
+
+        $this->assertSame(['from the Android phone', 'queued here', 'from an extension'], $result['drawn']);
+        $this->assertSame(0, $result['echoes']);
+    }
+
     /** @return array<string, mixed> what the script printed as JSON, with `src` holding app.js */
     private function runAppJs(string $body): array
     {

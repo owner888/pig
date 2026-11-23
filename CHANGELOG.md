@@ -45,6 +45,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Fixed
+
+- Fixed `pig web` not showing a prompt sent from another device: with the same conversation open on a phone and a laptop, the laptop showed only the agent's answer to what was asked on the phone, never the question. A page used to draw a user message only when it had typed it or when it left the queue; now it draws every one that arrives, except the echo of a prompt it sent itself and already drew. A message an extension sends with `sendUserMessage()` shows up the same way.
+
 ## [2.0.26] - 2026-11-23
 
 ### Changed
