@@ -120,7 +120,7 @@ final class Source
             $tokens = $value['max_output_tokens'];
 
             if (!is_int($tokens) || $tokens < 0) {
-                throw new SourceError('@options field `max_output_tokens` must be a non-negative safe integer');
+                throw new SourceError('@options field `max_output_tokens` must be a non-negative integer');
             }
 
             $options['maxOutputTokens'] = $tokens;

@@ -68,6 +68,173 @@ final class JsonSchema
     }
 
     /**
+     * `$value` as its JSON has to read: every empty PHP array that `$schema` says is an object
+     * becomes a `stdClass`, so it encodes as `{}` rather than `[]`.
+     *
+     * `json_decode(assoc: true)` makes `{}` and `[]` the same `[]`, and `json_encode` writes it back
+     * as `[]` — so arguments a model or a codemode script sent as `{"filter": {}}` would reach a
+     * tool server as `{"filter": []}`, which a server that validates (pydantic, zod) refuses.
+     * The schema is the only thing that knows which was meant. An empty array becomes an object
+     * when some branch of the schema says `object` and none says `array`; one that says neither,
+     * or both, is left as it is. Lists and objects are walked through `items`, `properties`,
+     * `additionalProperties`, `allOf`/`anyOf`/`oneOf`, and — unlike `errors()` — local `$ref`s
+     * (`#/$defs/...`), because that is how pydantic writes a nested model.
+     *
+     * @param array<string, mixed> $schema
+     */
+    public static function objects(array $schema, mixed $value): mixed
+    {
+        return self::shape($schema, $value, $schema);
+    }
+
+    /**
+     * @param array<string, mixed> $schema
+     * @param array<string, mixed> $root
+     */
+    private static function shape(array $schema, mixed $value, array $root): mixed
+    {
+        if (!is_array($value)) {
+            return $value;
+        }
+
+        if ($value === []) {
+            return self::says($schema, 'object', $root) && !self::says($schema, 'array', $root) ? new \stdClass() : $value;
+        }
+
+        $list = array_is_list($value);
+
+        foreach ($value as $key => $each) {
+            $parts = self::parts($schema, $list, $key, $root);
+
+            if ($parts !== []) {
+                $value[$key] = self::shape(count($parts) === 1 ? $parts[0] : ['anyOf' => $parts], $each, $root);
+            }
+        }
+
+        return $value;
+    }
+
+    /**
+     * Whether a branch of `$schema` declares `$type` — by `type`, or for one without a `type`, by
+     * the keywords only that type has.
+     *
+     * @param array<string, mixed> $schema
+     * @param array<string, mixed> $root
+     */
+    private static function says(array $schema, string $type, array $root): bool
+    {
+        foreach (self::branches($schema, $root, []) as $branch) {
+            $declared = $branch['type'] ?? null;
+            $says = match (true) {
+                is_string($declared) => $declared === $type,
+                is_array($declared) => in_array($type, $declared, true),
+                $type === 'object' => isset($branch['properties']) || is_array($branch['additionalProperties'] ?? null) || isset($branch['required']),
+                default => isset($branch['items']),
+            };
+
+            if ($says) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The schemas that describe one member of a list (`$list`) or of an object.
+     *
+     * @param array<string, mixed> $schema
+     * @param array<string, mixed> $root
+     * @return list<array<string, mixed>>
+     */
+    private static function parts(array $schema, bool $list, int|string $key, array $root): array
+    {
+        $parts = [];
+
+        foreach (self::branches($schema, $root, []) as $branch) {
+            if ($list) {
+                $items = $branch['items'] ?? null;
+                $part = is_array($items) && $items !== [] && array_is_list($items) ? ($items[$key] ?? null) : $items;
+            } else {
+                $properties = $branch['properties'] ?? null;
+                $part = is_array($properties) && array_key_exists((string) $key, $properties)
+                    ? $properties[(string) $key]
+                    : ($branch['additionalProperties'] ?? null);
+            }
+
+            if (is_array($part) && $part !== []) {
+                $parts[] = $part;
+            }
+        }
+
+        return $parts;
+    }
+
+    /**
+     * `$schema` and every schema its `allOf`/`anyOf`/`oneOf` and local `$ref`s lead to, each `$ref`
+     * followed once along a path, so a recursive schema ends.
+     *
+     * @param array<string, mixed> $schema
+     * @param array<string, mixed> $root
+     * @param list<string>         $followed
+     * @return list<array<string, mixed>>
+     */
+    private static function branches(array $schema, array $root, array $followed): array
+    {
+        $all = [$schema];
+        $ref = $schema['$ref'] ?? null;
+
+        if (is_string($ref) && !in_array($ref, $followed, true)) {
+            $target = self::resolve($ref, $root);
+
+            if ($target !== null) {
+                $all = [...$all, ...self::branches($target, $root, [...$followed, $ref])];
+            }
+        }
+
+        foreach (['allOf', 'anyOf', 'oneOf'] as $keyword) {
+            foreach (is_array($schema[$keyword] ?? null) ? $schema[$keyword] : [] as $branch) {
+                if (is_array($branch)) {
+                    $all = [...$all, ...self::branches($branch, $root, $followed)];
+                }
+            }
+        }
+
+        return $all;
+    }
+
+    /**
+     * A local reference — `#` or a JSON pointer after it — in `$root`; null for any other.
+     *
+     * @param array<string, mixed> $root
+     * @return array<string, mixed>|null
+     */
+    private static function resolve(string $ref, array $root): ?array
+    {
+        if ($ref === '#') {
+            return $root;
+        }
+
+        if (!str_starts_with($ref, '#/')) {
+            return null;
+        }
+
+        $current = $root;
+
+        foreach (explode('/', substr($ref, 2)) as $segment) {
+            $key = str_replace(['~1', '~0'], ['/', '~'], rawurldecode($segment));
+
+            if (!is_array($current) || !array_key_exists($key, $current)) {
+                return null;
+            }
+
+            $current = $current[$key];
+        }
+
+        return is_array($current) ? $current : null;
+    }
+
+    /**
      * @param array<string, mixed> $schema
      * @param list<string>         $problems
      */

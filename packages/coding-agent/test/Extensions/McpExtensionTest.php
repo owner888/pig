@@ -434,6 +434,43 @@ final class McpExtensionTest extends TestCase
         $this->assertTrue(Loop::get()->isIdle(), 'nothing left running after shutdown');
     }
 
+    /**
+     * Arguments arrive decoded into PHP arrays, where `{}` and `[]` are the same `[]`: the server's
+     * own schema decides which each empty one goes out as (`JsonSchema::objects()`).
+     */
+    public function testAnEmptyObjectArgumentReachesTheServerAsAnObjectAndAnEmptyArrayAsAnArray(): void
+    {
+        file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => [
+            'fixture' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer(), '--raw-arguments'], 'exposure' => 'direct'],
+        ]]));
+
+        $repo = dirname(__DIR__, 4);
+        [$loaded, $errors] = ExtensionLoader::load($this->cwd, cliPaths: [$repo . '/extensions/pig-mcp/index.php'], home: $this->home);
+        $this->assertSame([], $errors);
+        $ext = $loaded[0];
+
+        $set = new CustomToolSet([]);
+        $set->adopt($ext);
+        $extensionRunner = new ExtensionRunner([new LoadedExtension($ext->path, $ext->resolved, $ext->name, $ext->api)], $this->cwd);
+        $extensionRunner->initialize(static fn () => null, ui: new NoticingUi());
+
+        Async::run(function () use ($extensionRunner): void {
+            $extensionRunner->emit(new SessionStartEvent());
+            $extensionRunner->emitBeforeAgentStart(['messageType' => 'user', 'prompt' => 'hi']);
+        });
+
+        $tool = $set->find('mcp__fixture__echo');
+        $this->assertNotNull($tool);
+        $call = static fn (array $params) => Async::run(static fn () => ($tool->execute)('1', $params, null, new \Pig\CodingAgent\Extensions\ExtensionContext('.'), null))->content[0]->text;
+
+        $this->assertSame('{"text":"x","filter":{},"tags":[]}', $call(['text' => 'x', 'filter' => [], 'tags' => []]));
+        $this->assertSame('{"filter":{"a":1},"tags":["b"]}', $call(['filter' => ['a' => 1], 'tags' => ['b']]));
+        $this->assertSame('{}', $call([]), 'no arguments is still an object');
+
+        Async::run(fn () => $extensionRunner->emit(new SessionShutdownEvent()));
+        Loop::get()->tick();
+    }
+
     public function testAServerAnExtensionRegistersIsConnectedAndTakenAwayWhenItUnregisters(): void
     {
         // `mcp.json` names `fixture`, so the registered `fixture` is overridden and only `reg` connects.

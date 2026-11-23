@@ -18,6 +18,8 @@ declare(strict_types=1);
  *   --log-on-call send a `notifications/message` before answering each `tools/call`
  *   --resources   offer resources: two pages of `resources/list`, one template, readable URIs,
  *                 and an MCP App resource that listings leave out
+ *   --raw-arguments  `echo` also takes an object `filter` and an array `tags`, and answers the
+ *                 `arguments` JSON as it arrived, so `{}` and `[]` can be told apart
  */
 
 $options = array_slice($argv, 1);
@@ -78,6 +80,8 @@ while (($line = fgets(STDIN)) !== false) {
 
     $id = $message['id'];
     $params = $message['params'] ?? [];
+    // Decoded again without `assoc`, where `{}` stays an object.
+    $rawArguments = json_encode(json_decode($line)->params->arguments ?? null);
 
     if ($method === 'tools/call' && $flag('--log-on-call')) {
         $reply(['jsonrpc' => '2.0', 'method' => 'notifications/message', 'params' => ['level' => 'warning', 'logger' => 'echo', 'data' => "called with\n" . json_encode($params['arguments'] ?? [])]]);
@@ -90,8 +94,11 @@ while (($line = fgets(STDIN)) !== false) {
             'serverInfo' => ['name' => 'fixture', 'version' => '1.0'],
         ],
         'ping' => new stdClass(),
-        'tools/list' => ['tools' => [['name' => 'echo', 'inputSchema' => ['type' => 'object', 'properties' => ['text' => ['type' => 'string']]]]]],
-        'tools/call' => ['content' => [['type' => 'text', 'text' => 'echo: ' . ($params['arguments']['text'] ?? '')]]],
+        'tools/list' => ['tools' => [['name' => 'echo', 'inputSchema' => ['type' => 'object', 'properties' => [
+            'text' => ['type' => 'string'],
+            ...($flag('--raw-arguments') ? ['filter' => ['type' => 'object'], 'tags' => ['type' => 'array']] : []),
+        ]]]]],
+        'tools/call' => ['content' => [['type' => 'text', 'text' => $flag('--raw-arguments') ? $rawArguments : 'echo: ' . ($params['arguments']['text'] ?? '')]]],
         'resources/list' => !$flag('--resources') ? null : (($params['cursor'] ?? null) === 'page2'
             ? ['resources' => [
                 ['uri' => 'file:///notes.txt', 'name' => 'notes', 'mimeType' => 'text/plain', 'size' => 5, 'icons' => [['src' => 'x']]],

@@ -538,3 +538,44 @@ closes, so the swap does not need to take them.
 - **Two packages that need each other ask, they do not copy.** `pig-gemini-video`'s Antigravity route uses the other package's sign-in, routing and User-Agent through `class_exists()`, and without it has only the Gemini API key. Neither is run through Composer, so neither can require the other.
 - A package's entry file is named after the extension (`extensions/pig-antigravity.php`): pig names an extension by its file, and `disabledExtensions` written while it was bundled still reaches it.
 - Tests: `SelfUpdateTest`, `CodemodeExtensionTest::testAnExtensionProvidersImageModelsAreAvailableToAScriptOnceSignedIn`, `WebPanelsTest::testThePageDrawsWhatAPanelDescribes`, `DoctorTest`; the packages' own suites run against a pig checkout (`PIG_DIR`).
+
+## A codemode tool named `has` ran `$tools->has()` instead
+
+**Symptom**: a tool whose name was `has` (any case), `__call` or `__construct` could not be called
+from a codemode script: `$tools->has(['q' => 1])` answered a boolean.
+
+**Cause**: upstream's `tools` is a JavaScript Proxy, which sees every property name. pig's `$tools`
+reaches tools through `__call`, which PHP calls only for a method the class does not have, and PHP
+method names ignore case — so any tool named like one of `__CodemodeTools`' public methods was
+shadowed by it.
+
+**Rule**: `Identifier::of()` appends `_` to an identifier that matches one of
+`Identifier::TOOLS_METHODS`, case-insensitively (`has` is `$tools->has_()`). A public method added to
+`__CodemodeTools` goes into that list; a test reads the class and fails until it does.
+
+**Test**: `CodemodeTest::testTheReservedIdentifiersAreThePublicMethodsOfTools`,
+`testAToolNamedLikeAMethodOfToolsGetsATrailingUnderscore`,
+`testAToolNamedHasIsCalledAsHasUnderscoreAndHasStillAnswers`.
+
+## An empty object in an MCP tool's arguments went out as `[]`
+
+**Symptom**: a model, or a codemode script, called an MCP tool with `{"filter": {}}`; the server
+received `{"filter": []}`, and one that validates (pydantic, zod) refused it.
+
+**Cause**: arguments are decoded with `assoc: true`, where `{}` and `[]` are the same `[]`, and
+`json_encode` writes that back as `[]`. `McpClient::callTool()` only turned an empty **root** into
+`{}`.
+
+**Rule**: arguments leave for an MCP server through `JsonSchema::objects($schema, $arguments)`
+(`McpTools::define()`): an empty array becomes `stdClass` where a branch of the server's schema says
+`object` and none says `array`; with neither or both it stays `[]`. It follows `properties`,
+`items` (and tuples), `additionalProperties`, `allOf`/`anyOf`/`oneOf` and local `$ref`s, because
+pydantic writes nested models as `$defs` + `$ref`. Provider requests keep their root-only
+`=== [] ? {}` rule (see "An empty arguments list went out as `[]`" in `providers.md`): what goes
+back there is the provider's own earlier call, and no provider has been seen refusing a nested `[]`
+in one; it moves to `objects()` when one does.
+
+**Test**: `JsonSchemaTest::testAnEmptyArrayBecomesAnObjectWhereTheSchemaSaysObjectAndStaysWhereItSaysArray`,
+`testNestedObjectsAreFoundThroughItemsMapsCombinatorsAndLocalReferences`,
+`testARecursiveSchemaEndsAndAReferenceThatLeadsNowhereChangesNothing`,
+`McpExtensionTest::testAnEmptyObjectArgumentReachesTheServerAsAnObjectAndAnEmptyArrayAsAnArray`.

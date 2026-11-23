@@ -10,9 +10,21 @@ namespace Pig\Codemode;
  *
  * A PHP method name allows the same characters as a JavaScript identifier minus `$`, so a `$` in
  * a tool name becomes `_` here where upstream keeps it.
+ *
+ * **One rule upstream does not need.** `$tools` is an object whose tools are reached through
+ * `__call`, and PHP calls `__call` only for a method the class does not have. A tool whose
+ * identifier is one of `__CodemodeTools`' own public methods would run that method instead, and
+ * method names are case-insensitive, so `Has` is caught as well as `has`. Upstream's `tools` is a
+ * Proxy, which sees every name. Those identifiers get a trailing `_`: `has` is `$tools->has_()`.
  */
 final class Identifier
 {
+    /**
+     * The public methods of `__CodemodeTools` in `Runtime/child.php`, lowercased —
+     * `CodemodeTest` checks the two lists agree.
+     */
+    public const array TOOLS_METHODS = ['__construct', '__call', 'has'];
+
     public static function of(string $name): string
     {
         $identifier = '';
@@ -22,6 +34,10 @@ final class Identifier
             $identifier .= $valid ? $char : '_';
         }
 
-        return $identifier === '' ? '_' : $identifier;
+        if ($identifier === '') {
+            return '_';
+        }
+
+        return in_array(strtolower($identifier), self::TOOLS_METHODS, true) ? $identifier . '_' : $identifier;
     }
 }

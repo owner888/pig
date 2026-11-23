@@ -327,10 +327,11 @@ final class McpClient
     }
 
     /**
-     * @param array<string, mixed>|null $arguments
+     * @param array<string, mixed>|\stdClass|null $arguments a `stdClass` is an empty object, as
+     *        `JsonSchema::objects()` makes one
      * @return array<string, mixed> the `tools/call` result, `content` always present
      */
-    public function callTool(string $name, ?array $arguments = null, array $options = []): array
+    public function callTool(string $name, array|\stdClass|null $arguments = null, array $options = []): array
     {
         $params = ['name' => $name];
 

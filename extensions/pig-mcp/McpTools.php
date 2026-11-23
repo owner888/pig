@@ -9,6 +9,7 @@ use Pig\Agent\AgentError;
 use Pig\Agent\AgentToolResult;
 use Pig\Ai\ImageContent;
 use Pig\Ai\TextContent;
+use Pig\Ai\Utils\JsonSchema;
 use Pig\Async\AbortSignal;
 use Pig\CodingAgent\Extensions\ToolDefinition;
 use Pig\CodingAgent\Extensions\ExtensionContext;
@@ -65,14 +66,17 @@ final class McpTools
         $toolName = (string) $tool['name'];
         $title = $tool['title'] ?? ($tool['annotations']['title'] ?? null);
         $description = trim((string) ($tool['description'] ?? ''));
+        $parameters = self::parameters(is_array($tool['inputSchema'] ?? null) ? $tool['inputSchema'] : []);
 
         return new ToolDefinition(
             name: $name,
             label: "{$server}/{$toolName}",
             description: $description !== '' ? $description : (is_string($title) ? $title : "MCP tool {$toolName} from server {$server}"),
-            parameters: self::parameters(is_array($tool['inputSchema'] ?? null) ? $tool['inputSchema'] : []),
-            execute: static function (string $id, array $params, ?Closure $onUpdate, ExtensionContext $ctx, ?AbortSignal $signal) use ($server, $toolName, $connection, $readableResources): AgentToolResult {
-                $result = $connection->callTool($toolName, $params, [
+            parameters: $parameters,
+            execute: static function (string $id, array $params, ?Closure $onUpdate, ExtensionContext $ctx, ?AbortSignal $signal) use ($server, $toolName, $connection, $readableResources, $parameters): AgentToolResult {
+                // The arguments were decoded into PHP arrays, where `{}` and `[]` are one value;
+                // the server's schema says which each empty one was (`JsonSchema::objects()`).
+                $result = $connection->callTool($toolName, JsonSchema::objects($parameters, $params), [
                     'signal' => $signal,
                     'timeout' => $connection->timeout(),
                     'onProgress' => static function (array $progress) use ($onUpdate, $server, $toolName): void {

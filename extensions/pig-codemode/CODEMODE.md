@@ -55,7 +55,8 @@ result, so the model can tell them apart; what `echo` wrote follows everything e
 
 Every tool the session can call is a method of `$tools`, named by its identifier: characters
 that are not valid in a PHP identifier become `_`, so the MCP tool `mcp__dev-radius__search`
-is `$tools->mcp__dev_radius__search([...])`. Each method takes one associative array with the
+is `$tools->mcp__dev_radius__search([...])`. A tool named like a method of `$tools` (`has`) gets a
+trailing `_`: `$tools->has_([...])`. Each method takes one associative array with the
 tool's arguments.
 
 What a call answers depends on the tool:

@@ -45,6 +45,14 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Fixed
+
+- Fixed an MCP tool argument sent as an empty object `{}` reaching the server as `[]`: arguments are PHP arrays once decoded, where the two are one value, so a server that validates (pydantic, zod) refused `{"filter": []}` for an object parameter. The server's input schema now decides which each empty value was (`JsonSchema::objects()`), through `properties`, `items`, `additionalProperties`, `allOf`/`anyOf`/`oneOf` and local `$ref`s — for a direct call and a codemode script alike.
+- Fixed codemode scripts being unable to call a tool named `has` (or `HAS`, `__call`, `__construct`): `$tools->has(...)` ran `$tools`' own `has()` method, because PHP sends only unknown method names to `__call`, and method names ignore case. Such a tool is now `$tools->has_(...)`.
+- Fixed codemode's `@options` error saying "safe integer", a JavaScript term, for `max_output_tokens`; it now says "non-negative integer".
+
 ## [2.0.21] - 2026-11-23
 
 ### Fixed

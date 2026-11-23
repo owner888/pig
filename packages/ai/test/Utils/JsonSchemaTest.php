@@ -536,4 +536,69 @@ final class JsonSchemaTest extends TestCase
             $this->errors(['type' => 'array', 'uniqueItems' => true], [1, 1, 1]),
         );
     }
+
+    // ---- objects(): which empty array was `{}` ----------------------------------------------
+
+    public function testAnEmptyArrayBecomesAnObjectWhereTheSchemaSaysObjectAndStaysWhereItSaysArray(): void
+    {
+        $schema = ['type' => 'object', 'properties' => [
+            'filter' => ['type' => 'object'],
+            'tags' => ['type' => 'array'],
+            'maybe' => ['type' => ['object', 'null']],
+            'either' => ['type' => ['object', 'array']],
+            'untyped' => ['properties' => ['a' => ['type' => 'string']]],
+            'anything' => [],
+        ]];
+        $value = ['filter' => [], 'tags' => [], 'maybe' => [], 'either' => [], 'untyped' => [], 'anything' => [], 'undeclared' => []];
+
+        $this->assertSame(
+            '{"filter":{},"tags":[],"maybe":{},"either":[],"untyped":{},"anything":[],"undeclared":[]}',
+            json_encode(JsonSchema::objects($schema, $value)),
+            'object, or a schema with properties, is {}; array, both, or neither stays []',
+        );
+        $this->assertSame('{}', json_encode(JsonSchema::objects($schema, [])), 'the root too');
+    }
+
+    public function testNestedObjectsAreFoundThroughItemsMapsCombinatorsAndLocalReferences(): void
+    {
+        // The shape pydantic writes for a nested model: `$defs` and `$ref`, `anyOf` with null.
+        $schema = [
+            'type' => 'object',
+            '$defs' => ['Query' => ['type' => 'object', 'properties' => ['where' => ['type' => 'object']]]],
+            'properties' => [
+                'queries' => ['type' => 'array', 'items' => ['$ref' => '#/$defs/Query']],
+                'optional' => ['anyOf' => [['$ref' => '#/$defs/Query'], ['type' => 'null']]],
+                'byName' => ['type' => 'object', 'additionalProperties' => ['type' => 'object']],
+                'pair' => ['type' => 'array', 'items' => [['type' => 'array'], ['type' => 'object']]],
+                'merged' => ['allOf' => [['properties' => ['a' => ['type' => 'object']]], ['properties' => ['b' => ['type' => 'array']]]]],
+            ],
+        ];
+        $value = [
+            'queries' => [['where' => []], ['where' => ['x' => 1]]],
+            'optional' => ['where' => []],
+            'byName' => ['one' => [], 'two' => ['k' => []]],
+            'pair' => [[], []],
+            'merged' => ['a' => [], 'b' => []],
+        ];
+
+        $this->assertSame(
+            '{"queries":[{"where":{}},{"where":{"x":1}}],"optional":{"where":{}},"byName":{"one":{},"two":{"k":[]}},"pair":[[],{}],"merged":{"a":{},"b":[]}}',
+            json_encode(JsonSchema::objects($schema, $value)),
+        );
+    }
+
+    public function testARecursiveSchemaEndsAndAReferenceThatLeadsNowhereChangesNothing(): void
+    {
+        $tree = ['type' => 'object', 'properties' => ['children' => ['type' => 'array', 'items' => ['$ref' => '#']], 'meta' => ['type' => 'object']]];
+        $this->assertSame(
+            '{"children":[{"meta":{},"children":[]}]}',
+            json_encode(JsonSchema::objects($tree, ['children' => [['meta' => [], 'children' => []]]])),
+        );
+
+        $loop = ['anyOf' => [['$ref' => '#'], ['type' => 'object']]];
+        $this->assertSame('{}', json_encode(JsonSchema::objects($loop, [])), 'a reference to itself is followed once');
+
+        $nowhere = ['type' => 'object', 'properties' => ['a' => ['$ref' => '#/$defs/Missing'], 'b' => ['$ref' => 'https://example.com/s.json']]];
+        $this->assertSame('{"a":[],"b":[]}', json_encode(JsonSchema::objects($nowhere, ['a' => [], 'b' => []])));
+    }
 }

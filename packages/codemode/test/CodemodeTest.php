@@ -47,7 +47,7 @@ final class CodemodeTest extends TestCase
         yield 'options not json' => ["// @options: nope\nreturn 1;", 'must be valid JSON'];
         yield 'options not an object' => ["// @options: [1]\nreturn 1;", 'must be a JSON object'];
         yield 'unknown field' => ["// @options: {\"colour\": 1}\nreturn 1;", 'got `colour`'];
-        yield 'negative tokens' => ["// @options: {\"max_output_tokens\": -1}\nreturn 1;", 'non-negative safe integer'];
+        yield 'negative tokens' => ["// @options: {\"max_output_tokens\": -1}\nreturn 1;", 'non-negative integer'];
         yield 'zero timeout' => ["// @options: {\"timeout_ms\": 0}\nreturn 1;", 'positive integer'];
         yield 'float timeout' => ["// @options: {\"timeout_ms\": 1.5}\nreturn 1;", 'positive integer'];
     }
@@ -72,6 +72,33 @@ final class CodemodeTest extends TestCase
         $this->assertSame('_st', Identifier::of('1st'), "upstream's rule: a bad character is replaced, not prefixed");
         $this->assertSame('a_b', Identifier::of('a$b'), 'a dollar is not a method-name character');
         $this->assertSame('_', Identifier::of(''));
+    }
+
+    /**
+     * `__call` sees only names `__CodemodeTools` has no method for, and method names ignore case:
+     * a tool called `has` or `HAS` would run `has()`. Those identifiers get a trailing `_`.
+     */
+    public function testAToolNamedLikeAMethodOfToolsGetsATrailingUnderscore(): void
+    {
+        $this->assertSame('has_', Identifier::of('has'));
+        $this->assertSame('HAS_', Identifier::of('HAS'));
+        $this->assertSame('__call_', Identifier::of('__call'));
+        $this->assertSame('__construct_', Identifier::of('__construct'));
+        $this->assertSame('hash', Identifier::of('hash'), 'only a whole name is taken');
+    }
+
+    public function testTheReservedIdentifiersAreThePublicMethodsOfTools(): void
+    {
+        $child = (string) file_get_contents(dirname(__DIR__) . '/src/Runtime/child.php');
+        $this->assertSame(1, preg_match('/^final class __CodemodeTools\n\{(.*?)^\}/ms', $child, $class), 'the class is in child.php');
+        preg_match_all('/public function (\w+)\(/', $class[1], $methods);
+
+        $actual = array_map(strtolower(...), $methods[1]);
+        sort($actual);
+        $reserved = Identifier::TOOLS_METHODS;
+        sort($reserved);
+
+        $this->assertSame($reserved, $actual, 'a public method added to __CodemodeTools hides a tool of that name: add it to Identifier::TOOLS_METHODS');
     }
 
     public function testASchemaIsRenderedAsAnArrayShape(): void
@@ -496,5 +523,16 @@ final class CodemodeTest extends TestCase
         $result = $this->script('return [$tools->{"my-tool"}([]), $tools->my_tool([])];', [['name' => 'my-tool', 'execute' => static fn (): string => 'hi']]);
 
         $this->assertSame(['hi', 'hi'], $result['value']);
+    }
+
+    public function testAToolNamedHasIsCalledAsHasUnderscoreAndHasStillAnswers(): void
+    {
+        $result = $this->script(
+            'return [$tools->has_(["q" => 1]), $tools->has("has"), $tools->has("nope")];',
+            [['name' => 'has', 'execute' => static fn (array $args): string => 'called with ' . $args['q']]],
+        );
+
+        $this->assertTrue($result['ok'], json_encode($result));
+        $this->assertSame(['called with 1', true, false], $result['value']);
     }
 }

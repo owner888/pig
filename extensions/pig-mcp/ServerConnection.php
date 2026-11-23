@@ -162,10 +162,10 @@ final class ServerConnection
     }
 
     /**
-     * @param array<string, mixed>|null $arguments
+     * @param array<string, mixed>|\stdClass|null $arguments
      * @return array<string, mixed>
      */
-    public function callTool(string $name, ?array $arguments, array $options = []): array
+    public function callTool(string $name, array|\stdClass|null $arguments, array $options = []): array
     {
         return $this->withClient(fn (McpClient $client): array => $client->callTool($name, $arguments, $options));
     }
