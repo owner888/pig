@@ -70,7 +70,7 @@ final class BuiltinCatalog
      * catalog server must be newer than to count (`RemoteCatalog::isNewer()`). `generate-models.php`
      * rewrites it with the rows.
      */
-    public const string GENERATED_AT = '2026-11-23T11:07:12Z';
+    public const string GENERATED_AT = '2026-11-23T13:05:38Z';
 
     /** Upstream's generator `CODEX_BASE_URL`. */
     private const string OPENAI_CODEX_BASE_URL = 'https://chatgpt.com/backend-api';
@@ -2214,7 +2214,7 @@ final class BuiltinCatalog
         'z-ai/glm-5.2' => ['Z.ai: GLM 5.2', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.62, 2.42, 0.14, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'z-ai/glm-5.2:batch' => ['Z.ai: GLM 5.2 (batch)', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.322, 0.989, 0.109, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'z-ai/glm-5.3' => ['Z.ai: GLM 5.3', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.0699, 1.4, 0.0689, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'z-ai/glm-5.3-flash' => ['Z.ai: GLM 5.3 Flash', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.0399, 0.0784, 0.03, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        'z-ai/glm-5.3-flash' => ['Z.ai: GLM 5.3 Flash', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.0399, 0.074, 0.03, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'z-ai/glm-5.3-flash:batch' => ['Z.ai: GLM 5.3 Flash (batch)', Api::OpenAiCompletions, 1_048_575, 943_717, true, true, 0.023, 0.068, 0.009, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'z-ai/glm-5.3-flashx' => ['Z.ai: GLM 5.3 FlashX', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.37, 1.25, 0.075, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'z-ai/glm-5.3-flashx-legal' => ['Z.ai: GLM 5.3 FlashX Legal', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.37, 1.25, 0.075, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
@@ -2238,7 +2238,7 @@ final class BuiltinCatalog
         '~openai/gpt-terra-latest' => ['OpenAI: GPT Terra Latest', Api::OpenAiCompletions, 1_050_000, 128_000, true, true, 1.0, 5.0, 0.05, 1.25, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max'], 'tiers' => [[272_000, 2.0, 7.5, 0.1, 2.5]]],
         '~unbiased/pareto-latest' => ['Pareto Latest', Api::OpenAiCompletions, 1_048_576, 131_072, false, true, 0.8, 3.2, 0.03, 0.0],
         '~x-ai/grok-latest' => ['xAI: Grok Latest', Api::OpenAiCompletions, 500_000, 450_000, true, true, 2.0, 6.0, 0.5, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null], 'tiers' => [[200_000, 4.0, 12.0, 1.0, 0.0]]],
-        '~z-ai/glm-flash-latest' => ['Z.ai: GLM Flash Latest', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.0399, 0.0784, 0.03, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
+        '~z-ai/glm-flash-latest' => ['Z.ai: GLM Flash Latest', Api::OpenAiCompletions, 1_048_576, 131_072, true, true, 0.0399, 0.074, 0.03, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         '~z-ai/glm-latest' => ['Z.ai: GLM Latest', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.0699, 1.4, 0.0689, 0.0, 'thinkingLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         // <<< generated
     ];

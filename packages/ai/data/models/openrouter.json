@@ -15866,7 +15866,7 @@
         ],
         "cost": {
             "input": 0.0399,
-            "output": 0.0784,
+            "output": 0.074,
             "cacheRead": 0.03,
             "cacheWrite": 0.0
         },
@@ -16951,7 +16951,7 @@
         ],
         "cost": {
             "input": 0.0399,
-            "output": 0.0784,
+            "output": 0.074,
             "cacheRead": 0.03,
             "cacheWrite": 0.0
         },
