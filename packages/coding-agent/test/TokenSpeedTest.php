@@ -5,6 +5,16 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Test;
 
 use PHPUnit\Framework\TestCase;
+use Pig\Agent\MessageEndEvent;
+use Pig\Agent\MessageStartEvent;
+use Pig\Agent\MessageUpdateEvent;
+use Pig\Ai\Api;
+use Pig\Ai\AssistantMessage;
+use Pig\Ai\TextDeltaEvent;
+use Pig\Ai\StopReason;
+use Pig\Ai\TextContent;
+use Pig\Ai\Usage;
+use Pig\Ai\UserMessage;
 use Pig\CodingAgent\Interactive\TokenSpeed;
 
 final class TokenSpeedTest extends TestCase
@@ -75,5 +85,33 @@ final class TokenSpeedTest extends TestCase
         $meter->reset();
 
         $this->assertSame('⚡ 50.0 tok/s · TTFT 800ms', $this->answer($meter, 100));
+    }
+
+    /** `observe()`: what the terminal's footer and `RpcMode` both feed it. */
+    public function testObserveReadsAnAnswersEventsAndStartsOverInAnotherSession(): void
+    {
+        $meter = $this->meter();
+        $answer = new AssistantMessage([new TextContent('hi')], Api::AnthropicMessages, 'anthropic', 'm', new Usage(output: 500), StopReason::Stop);
+        $user = new UserMessage('hi');
+
+        $this->assertNull($meter->observe(new MessageStartEvent($user), 'a'), 'a user message has no speed');
+        $this->assertSame(TokenSpeed::WRITING, $meter->observe(new MessageStartEvent($answer), 'a'));
+
+        foreach ([800.0, 1800.0, 2800.0] as $at) {
+            $this->now = $at;
+            $this->assertNull($meter->observe(new MessageUpdateEvent($answer, new TextDeltaEvent(0, 'x', $answer)), 'a'), 'a chunk changes nothing shown');
+        }
+
+        $this->assertSame('⚡ 250 tok/s · TTFT 800ms', $meter->observe(new MessageEndEvent($answer), 'a'));
+
+        // Another session: its first answer has no average of the first session's beside it.
+        $this->now = 10_000.0;
+        $meter->observe(new MessageStartEvent($answer), 'b');
+        $this->now = 10_100.0;
+        $meter->observe(new MessageUpdateEvent($answer, new TextDeltaEvent(0, 'x', $answer)), 'b');
+        $this->now = 10_600.0;
+        $meter->observe(new MessageUpdateEvent($answer, new TextDeltaEvent(0, 'x', $answer)), 'b');
+
+        $this->assertSame('⚡ 1000 tok/s · TTFT 100ms', $meter->observe(new MessageEndEvent($answer), 'b'));
     }
 }

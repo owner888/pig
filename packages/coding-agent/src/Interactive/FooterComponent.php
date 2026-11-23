@@ -314,28 +314,13 @@ final class FooterComponent implements Component
 
     private function status(int $width): string
     {
-        $stats = $this->session->stats();
-        $parts = [];
-
-        foreach ([['↑', $stats->input], ['↓', $stats->output], ['R', $stats->cacheRead], ['W', $stats->cacheWrite]] as [$mark, $count]) {
-            if ($count > 0) {
-                $parts[] = $mark . self::tokens($count);
-            }
-        }
-
-        if (($stats->cacheRead > 0 || $stats->cacheWrite > 0) && ($hitRate = $this->latestCacheHitRate()) !== null) {
-            $parts[] = 'CH' . number_format($hitRate, 1) . '%';
-        }
-
-        // Upstream's condition, and the `||` is the point: on a subscription the interesting
-        // fact is there before any money is, because the number beside it is notional.
-        $subscription = $this->onASubscription();
-
-        if ($stats->cost > 0 || $subscription) {
-            $parts[] = '$' . number_format($stats->cost, 3) . ($subscription ? ' (sub)' : '');
-        }
-
-        $parts[] = $this->context();
+        $usage = self::usage($this->session, $this->settings, $this->auth);
+        $parts = $usage['parts'];
+        $parts[] = match ($usage['level']) {
+            'error' => Themes::theme()->fg('error', $usage['context']),
+            'warning' => Themes::theme()->fg('warning', $usage['context']),
+            default => $usage['context'],
+        };
 
         $left = implode(' ', $parts);
         $right = $this->model();
@@ -385,13 +370,70 @@ final class FooterComponent implements Component
     }
 
     /**
+     * The bottom line's left half as text, without colour: the counts (`↑ ↓ R W`), the cache hit
+     * rate, the cost, and the context — with how loud the context should be. Also the web page's
+     * telemetry line (`RpcMode`'s `get_state`), so the two say the same thing the same way.
+     *
+     * @return array{parts: list<string>, context: string, level: 'warning'|'error'|null}
+     */
+    public static function usage(AgentSession $session, ?Settings $settings, ?Auth $auth): array
+    {
+        $stats = $session->stats();
+        $parts = [];
+
+        foreach ([['↑', $stats->input], ['↓', $stats->output], ['R', $stats->cacheRead], ['W', $stats->cacheWrite]] as [$mark, $count]) {
+            if ($count > 0) {
+                $parts[] = $mark . self::tokens($count);
+            }
+        }
+
+        if (($stats->cacheRead > 0 || $stats->cacheWrite > 0) && ($hitRate = self::latestCacheHitRate($session)) !== null) {
+            $parts[] = 'CH' . number_format($hitRate, 1) . '%';
+        }
+
+        // Upstream's condition, and the `||` is the point: on a subscription the interesting
+        // fact is there before any money is, because the number beside it is notional.
+        // Whether this model is reached with a signed-in account rather than a key is upstream's
+        // `ModelRegistry::isUsingOAuth()`, the same lookup: a model with nothing stored answers
+        // false — it is paid for by an environment variable, or it is not working.
+        $model = $session->model();
+        $subscription = $model !== null && $auth?->kind($model->provider) === 'oauth';
+
+        if ($stats->cost > 0 || $subscription) {
+            $parts[] = '$' . number_format($stats->cost, 3) . ($subscription ? ' (sub)' : '');
+        }
+
+        // Under a virtual model, the window is the physical model's that answered last.
+        $window = ($session->routedModel()?->model ?? $model)?->contextWindow ?? 0;
+        // Upstream's `getContextUsage()`: the last count plus an estimate of what was said since;
+        // null right after a compaction, when nothing has measured the new context yet — shown
+        // as `?` like upstream, not `0.0%`, which reads as the conversation having been emptied.
+        $used = $session->contextUsage()?->tokens;
+        $percent = $used !== null && $window > 0 ? $used / $window * 100 : 0.0;
+
+        // What reaching the top *means*: a pause and a summary, or a request that gets refused.
+        // `/settings` can change it mid-session, so it is read here rather than remembered.
+        $auto = ($settings?->compactionEnabled() ?? true) ? ' (auto)' : '';
+
+        return [
+            'parts' => $parts,
+            'context' => ($used === null ? '?' : number_format($percent, 1) . '%') . '/' . self::tokens($window) . $auto,
+            'level' => match (true) {
+                $percent > self::ALARM_AT => 'error',
+                $percent > self::WARN_AT => 'warning',
+                default => null,
+            },
+        ];
+    }
+
+    /**
      * Cache hit rate of the latest assistant message, as a percentage.
      *
      * Upstream's `latestCacheHitRate` in `components/footer.ts`.
      */
-    private function latestCacheHitRate(): ?float
+    private static function latestCacheHitRate(AgentSession $session): ?float
     {
-        foreach (array_reverse($this->session->messages()) as $message) {
+        foreach (array_reverse($session->messages()) as $message) {
             if (!$message instanceof AssistantMessage || $message->stopReason === StopReason::Aborted) {
                 continue;
             }
@@ -402,43 +444,6 @@ final class FooterComponent implements Component
         }
 
         return null;
-    }
-
-    private function context(): string
-    {
-        // Under a virtual model, the window is the physical model's that answered last.
-        $model = $this->session->routedModel()?->model ?? $this->session->model();
-        $window = $model?->contextWindow ?? 0;
-        // Upstream's `getContextUsage()`: the last count plus an estimate of what was said since;
-        // null right after a compaction, when nothing has measured the new context yet — shown
-        // as `?` like upstream, not `0.0%`, which reads as the conversation having been emptied.
-        $used = $this->session->contextUsage()?->tokens;
-        $percent = $used !== null && $window > 0 ? $used / $window * 100 : 0.0;
-
-        // What reaching the top *means*: a pause and a summary, or a request that gets refused.
-        // `/settings` can change it mid-session, so it is read here rather than remembered.
-        $auto = ($this->settings?->compactionEnabled() ?? true) ? ' (auto)' : '';
-        $display = ($used === null ? '?' : number_format($percent, 1) . '%') . '/' . self::tokens($window) . $auto;
-
-        return match (true) {
-            $percent > self::ALARM_AT => Themes::theme()->fg('error', $display),
-            $percent > self::WARN_AT => Themes::theme()->fg('warning', $display),
-            default => $display,
-        };
-    }
-
-    /**
-     * Whether this model is reached with a signed-in account rather than a key.
-     *
-     * Upstream's `ModelRegistry::isUsingOAuth()`, which is the same lookup: what is stored for
-     * the provider, and whether it is a token or a key. A model with nothing stored answers
-     * false — it is being paid for by an environment variable, or it is not working.
-     */
-    private function onASubscription(): bool
-    {
-        $model = $this->session->model();
-
-        return $model !== null && $this->auth?->kind($model->provider) === 'oauth';
     }
 
     private function model(): string

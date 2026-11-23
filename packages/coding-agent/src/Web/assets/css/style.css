@@ -2577,6 +2577,9 @@
     .status-telemetry {
       color: var(--color-text-subtle);
     }
+    /* The context past 70% and 90%, as the terminal footer colours it. */
+    .status-telemetry .telemetry-warning { color: var(--color-warning); }
+    .status-telemetry .telemetry-error { color: var(--color-error); }
 
     /* Input row matching pi-web */
     .input-box-row {

@@ -47,6 +47,10 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 ## Unreleased
 
+### Changed
+
+- Changed `pig web`'s telemetry line under the prompt to say what the terminal's footer says, the same way: the `⚡` token-speed reading (tok/s, average, time to first token; off with `tokenSpeed.enabled: false`), cache reads and writes and the latest cache hit rate (`R`, `W`, `CH`), `(sub)` on a subscription, `(auto)` when auto-compaction is on, `?` for the context right after a compaction, the context coloured past 70% and 90%, and the terminal's number format (`565k`, not `565.0k`). The page used to build a shorter line of its own; it now draws `get_state`'s new `footer` (`FooterComponent::usage()` and `TokenSpeed`, the terminal's own code), and refreshes it as each answer starts and ends.
+
 ### Fixed
 
 - Fixed an MCP tool argument sent as an empty object `{}` reaching the server as `[]`: arguments are PHP arrays once decoded, where the two are one value, so a server that validates (pydantic, zod) refused `{"filter": []}` for an object parameter. The server's input schema now decides which each empty value was (`JsonSchema::objects()`), through `properties`, `items`, `additionalProperties`, `allOf`/`anyOf`/`oneOf` and local `$ref`s — for a direct call and a codemode script alike.

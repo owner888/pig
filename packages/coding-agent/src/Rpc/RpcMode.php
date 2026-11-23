@@ -24,6 +24,8 @@ use Pig\CodingAgent\Extensions\Events\SessionStartEvent;
 use Pig\CodingAgent\Extensions\ExtensionContext;
 use Pig\CodingAgent\Extensions\ExtensionError;
 use Pig\CodingAgent\Extensions\ExtensionRunner;
+use Pig\CodingAgent\Interactive\FooterComponent;
+use Pig\CodingAgent\Interactive\TokenSpeed;
 use Pig\CodingAgent\Config;
 use Pig\CodingAgent\Extensions\ExtensionDiscovery;
 use Pig\CodingAgent\Prompt\PromptTemplate;
@@ -122,7 +124,16 @@ final class RpcMode
         $this->out = $out ?? STDOUT;
         $this->err = $err ?? STDERR;
         $this->ui = new RpcUi($this->send(...));
+        $this->tokenSpeed = new TokenSpeed();
     }
+
+    /** The `⚡` reading for the web page's telemetry line, measured as the terminal's footer does. */
+    private readonly TokenSpeed $tokenSpeed;
+
+    /** The latest reading and the session it was taken in: another session's speed is not this one's. */
+    private ?string $speed = null;
+
+    private ?string $speedFor = null;
 
     /** SIGTERM / SIGHUP received so far — upstream's `signalCount`. */
     private int $signals = 0;
@@ -727,6 +738,13 @@ final class RpcMode
             // knowing the session format; the child already does.
             'cwd' => $this->session->cwd(),
             'opening' => $this->opening(),
+            // The page's telemetry line, the terminal footer's text (`FooterComponent::usage()`)
+            // so the two cannot drift: `parts` (`↑34k`, `R2.1k`, `CH80.0%`, `$0.069 (sub)`),
+            // `context` (`3.3%/1.0M (auto)`) and its `level`, and the `⚡` reading or null.
+            'footer' => [
+                ...FooterComponent::usage($this->session, $this->settings, $this->auth),
+                'tokenSpeed' => ($this->settings?->tokenSpeedEnabled() ?? true) && $this->speedFor === $this->session->sessionId() ? $this->speed : null,
+            ],
         ];
     }
 
@@ -1524,6 +1542,17 @@ final class RpcMode
 
     private function onAgentEvent(AgentEvent $event): void
     {
+        // Before the event goes out: a page that asks for `get_state` on `message_start` or
+        // `message_end` finds the reading that event set.
+        if ($this->settings?->tokenSpeedEnabled() ?? true) {
+            $shown = $this->tokenSpeed->observe($event, $this->session->sessionId());
+
+            if ($shown !== null) {
+                $this->speed = $shown;
+                $this->speedFor = $this->session->sessionId();
+            }
+        }
+
         $encoded = RpcEvents::encode($event);
 
         if ($encoded !== null) {

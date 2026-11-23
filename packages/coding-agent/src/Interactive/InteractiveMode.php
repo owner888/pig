@@ -252,9 +252,6 @@ final class InteractiveMode
     /** The footer's `⚡` reading, behind `tokenSpeed.enabled`. */
     private readonly TokenSpeed $tokenSpeed;
 
-    /** The session `$tokenSpeed`'s average belongs to; another one starts it over. */
-    private ?string $tokenSpeedFor = null;
-
     /**
      * The status above the prompt — upstream's `activeStatusIndicator`: a `StatusIndicator`
      * whose `kind` says what is showing (`working`, `retry`, `compaction`, `branchSummary`, or
@@ -8155,35 +8152,20 @@ final class InteractiveMode
     }
 
     /**
-     * The footer's `⚡` reading: started when an answer starts, fed its chunks, read off when it
-     * ends. Only answers — a user or hook message has no speed — and set as a status under the key
-     * an extension measuring the same would use, so the two replace each other rather than both
+     * The footer's `⚡` reading (`TokenSpeed::observe()`), set as a status under the key an
+     * extension measuring the same would use, so the two replace each other rather than both
      * showing.
      */
     private function measureTokenSpeed(AgentEvent $event): void
     {
-        $isAnswer = ($event instanceof MessageStartEvent || $event instanceof MessageUpdateEvent || $event instanceof MessageEndEvent)
-            && $event->message instanceof AssistantMessage;
-
-        if (!$isAnswer || !$this->settings->tokenSpeedEnabled()) {
+        if (!$this->settings->tokenSpeedEnabled()) {
             return;
         }
 
-        $session = $this->session->sessionId();
-        if ($session !== $this->tokenSpeedFor) {
-            $this->tokenSpeed->reset();
-            $this->tokenSpeedFor = $session;
-        }
+        $shown = $this->tokenSpeed->observe($event, $this->session->sessionId());
 
-        if ($event instanceof MessageStartEvent) {
-            $this->footer->setStatus(FooterComponent::INLINE_STATUS, $this->tokenSpeed->start());
-        } elseif ($event instanceof MessageUpdateEvent) {
-            $this->tokenSpeed->chunk();
-        } else {
-            $reading = $this->tokenSpeed->end($event->message->usage->output);
-            if ($reading !== null) {
-                $this->footer->setStatus(FooterComponent::INLINE_STATUS, $reading);
-            }
+        if ($shown !== null) {
+            $this->footer->setStatus(FooterComponent::INLINE_STATUS, $shown);
         }
     }
 

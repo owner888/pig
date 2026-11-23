@@ -5,6 +5,11 @@ declare(strict_types=1);
 namespace Pig\CodingAgent\Interactive;
 
 use Closure;
+use Pig\Agent\AgentEvent;
+use Pig\Agent\MessageEndEvent;
+use Pig\Agent\MessageStartEvent;
+use Pig\Agent\MessageUpdateEvent;
+use Pig\Ai\AssistantMessage;
 
 /**
  * How fast the model is writing, for the footer's top line: `⚡ …` while an answer streams, then
@@ -38,6 +43,9 @@ final class TokenSpeed
 
     private int $chunks = 0;
 
+    /** The session the average belongs to; another one starts it over. */
+    private ?string $session = null;
+
     private int $totalTokens = 0;
 
     private float $totalMs = 0.0;
@@ -49,6 +57,41 @@ final class TokenSpeed
     public function __construct(?Closure $now = null)
     {
         $this->now = $now ?? static fn (): float => hrtime(true) / 1e6;
+    }
+
+    /**
+     * One agent event, for whoever shows the reading — the terminal's footer and the web page's,
+     * through `RpcMode`, so both measure the same way. Only answers count: a user or hook message
+     * has no speed.
+     *
+     * @return string|null what to show now — `WRITING` when an answer starts, the reading when it
+     *         ends — or null when what is shown does not change
+     */
+    public function observe(AgentEvent $event, string $session): ?string
+    {
+        $isAnswer = ($event instanceof MessageStartEvent || $event instanceof MessageUpdateEvent || $event instanceof MessageEndEvent)
+            && $event->message instanceof AssistantMessage;
+
+        if (!$isAnswer) {
+            return null;
+        }
+
+        if ($session !== $this->session) {
+            $this->reset();
+            $this->session = $session;
+        }
+
+        if ($event instanceof MessageStartEvent) {
+            return $this->start();
+        }
+
+        if ($event instanceof MessageUpdateEvent) {
+            $this->chunk();
+
+            return null;
+        }
+
+        return $this->end($event->message->usage->output);
     }
 
     /** An answer began. @return string what to show until it ends */

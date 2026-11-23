@@ -42,6 +42,8 @@ use Pig\CodingAgent\Rpc\RpcEvents;
 use Pig\CodingAgent\Rpc\RpcMode;
 use Pig\CodingAgent\Session\AgentSession;
 use Pig\CodingAgent\Session\SessionManager;
+use Pig\CodingAgent\Interactive\FooterComponent;
+use Pig\CodingAgent\Interactive\TokenSpeed;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Theme\Themes;
 use Pig\Tui\Images\TerminalImage;
@@ -688,6 +690,38 @@ final class RpcModeTest extends TestCase
         $this->assertSame('http://127.0.0.1:1', $state['model']['baseUrl']);
         $this->assertSame(['text'], $state['model']['input']);
         $this->assertSame(['input', 'output', 'cacheRead', 'cacheWrite'], array_keys($state['model']['cost']));
+    }
+
+    /**
+     * The web page's telemetry line is the terminal footer's text (`FooterComponent::usage()`),
+     * with the `⚡` reading the same `TokenSpeed` takes from the same events.
+     */
+    public function testGetStateCarriesTheFootersTextAndTheTokenSpeedReading(): void
+    {
+        $this->start(answers: ['hello']);
+        $before = $this->data(['type' => 'get_state'])['footer'];
+
+        $this->assertSame([], $before['parts'], 'nothing spent yet');
+        $this->assertSame('0.0%/200k (auto)', $before['context']);
+        $this->assertNull($before['level']);
+        $this->assertNull($before['tokenSpeed'], 'no answer measured yet');
+
+        $this->send(['type' => 'prompt', 'message' => 'hi']);
+        $after = $this->data(['type' => 'get_state'])['footer'];
+
+        $this->assertSame(FooterComponent::usage($this->session, Settings::inMemory(), null), array_diff_key($after, ['tokenSpeed' => true]));
+        $this->assertStringStartsWith('⚡ ', (string) $after['tokenSpeed']);
+        $this->assertNotSame(TokenSpeed::WRITING, $after['tokenSpeed'], 'the answer ended, so the reading is its own');
+    }
+
+    public function testTheTokenSpeedReadingIsLeftOutWhenTheSettingIsOff(): void
+    {
+        $settings = Settings::inMemory();
+        $settings->setTokenSpeedEnabled(false);
+        $this->start(answers: ['hello'], settings: $settings);
+        $this->send(['type' => 'prompt', 'message' => 'hi']);
+
+        $this->assertNull($this->data(['type' => 'get_state'])['footer']['tokenSpeed']);
     }
 
     public function testGetSessionStatsCountsWhatHappened(): void

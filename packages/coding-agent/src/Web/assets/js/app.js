@@ -79,7 +79,6 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         this.pending = new Map();                 // rpc id -> {resolve, reject, timer}
         this.nextId = 0;
         this.state = null;                        // last get_state answer
-        this.stats = null;
         this.ended = false;                       // the child is gone; next bind restarts it
 
         // Stream state, per tab.
@@ -400,10 +399,9 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         if (this.refreshingState) return this.refreshingState;
         return this.refreshingState = (async () => {
           try {
-            const [s, stats] = await Promise.all([this.rpc({ type: "get_state" }), this.rpc({ type: "get_session_stats" })]);
+            const s = await this.rpc({ type: "get_state" });
             if (this === active) pigReachable();
             this.state = s;
-            this.stats = stats;
             this.isPersisted = (typeof s.isPersisted === "boolean") ? s.isPersisted : !!(s.sessionFile && (s.messageCount > 0));
             if (this.isPersisted && s.sessionFile) {
               this.sessionPath = s.sessionFile;
@@ -1542,6 +1540,12 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           tab.delivering.splice(at, 1);
           appendUserMessage(text, content.filter((c) => c.type === "image").map((c) => ({ mimeType: c.mimeType, data: c.data })));
         }
+      }
+
+      // The telemetry line follows each answer, as the terminal's footer does: `⚡ …` when it
+      // starts, the reading and the new counts when it ends.
+      if ((evt.type === "message_start" || evt.type === "message_end") && evt.message?.role === "assistant") {
+        tab?.refreshState();
       }
 
       if (evt.type === "message_start") {
@@ -3390,18 +3394,18 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     /** `get_state`'s answer, drawn into the chrome. Shape is `RpcMode::state()`'s. */
     function applyState(s) {
       if (!s || !active) return;
-      const cur = active;
       const model = s.model || {};
-      const window_ = model.contextWindow || 0;
-      const tokens = s.contextTokens || 0;
-      const pct = window_ > 0 ? (tokens / window_ * 100).toFixed(1) : "0.0";
-      const windowLabel = window_ >= 1000000 ? (window_ / 1000000).toFixed(1) + "M" : Math.round(window_ / 1000) + "k";
-      const stats = cur.stats || {};
+      // The terminal footer's own text (`FooterComponent::usage()`, sent as `footer`), so the two
+      // read the same: the `⚡` reading first, as on the footer's top line, then the counts, the
+      // cache hit rate, the cost and the context, which takes a colour past 70% and 90%.
+      const footer = s.footer;
       // A virtual model routes each request; say where the latest response went, as the TUI's
       // footer does (`model → routed-id • level`).
       const routed = s.routedModel ? ` → ${s.routedModel.id}${s.routedModel.thinkingLevel ? ` • ${s.routedModel.thinkingLevel}` : ""}` : "";
+      const context = footer.level ? `<span class="telemetry-${footer.level}">${escapeHtml(footer.context)}</span>` : escapeHtml(footer.context);
       telemetryStats.innerHTML = (hookStatus ? `<span class="hook-status">${hookStatus}</span>  ` : "")
-        + escapeHtml(`↑${formatK(stats.tokens?.input || 0)} ↓${formatK(stats.tokens?.output || 0)} $${Number(stats.cost || 0).toFixed(3)} ${pct}%/${windowLabel}${routed}`);
+        + (footer.tokenSpeed ? escapeHtml(footer.tokenSpeed + " • ") : "")
+        + escapeHtml([...footer.parts, ""].join(" ")) + context + escapeHtml(routed);
 
       if (userIsInteracting) return;
       const provider = model.provider, modelId = model.id, level = s.thinkingLevel;
@@ -3418,11 +3422,6 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       }
     }
 
-    function formatK(n) {
-      if (n < 1000) return n;
-      if (n < 1000000) return (n / 1000).toFixed(1) + "k";
-      return (n / 1000000).toFixed(1) + "M";
-    }
 
     // 3-Level Cascading Selectors: Provider -> Model -> Thinking Level
     let keysAsked = false;
