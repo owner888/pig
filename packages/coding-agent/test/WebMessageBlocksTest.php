@@ -194,6 +194,120 @@ final class WebMessageBlocksTest extends TestCase
         $this->assertSame('', $result['older'], 'no footer: an empty line, not an error');
     }
 
+    public function testEachTabKeepsItsOwnInputAndAMessageThatFailsGoesBackToItsOwnTab(): void
+    {
+        // `openTab()` and `putBack()` in app.js, run as they are, against a fake input box.
+        $result = $this->runAppJs(<<<'JS'
+            const grab = (name) => {
+              const from = src.indexOf(`    function ${name}(`);
+              return src.slice(from, src.indexOf('\n    }\n', from) + 7);
+            };
+            const promptInput = { value: '' };
+            let pendingImages = [], pendingFiles = [], uploadingFiles = [], active = null;
+            const tabs = [];
+            const noop = () => {};
+            const [scheduledPages, applyActiveTabToChrome, saveTabs, renderTabs, autoFocus, resizePrompt, renderPendingImages] = [null, noop, noop, noop, noop, noop, noop];
+            const scrollBottomBtn = { style: {} };
+            const tab = () => ({ scroller: { hidden: true, children: [1] }, bound: true, commands: [1], resources: {}, userScrolledUp: true,
+              draft: { text: '', images: [], files: [], uploads: [] } });
+            eval(grab('openTab') + grab('putBack') + '; globalThis.api = { openTab, putBack };');
+            const a = tab(), b = tab();
+            api.openTab(a);
+            promptInput.value = 'typed in A';
+            pendingImages.push('picture in A');
+            api.openTab(b);
+            const inB = { text: promptInput.value, images: pendingImages.length };
+            promptInput.value = 'typed in B';
+            api.openTab(a);
+            const backInA = { text: promptInput.value, images: [...pendingImages] };
+            // A send from B that failed while A is on screen: back in B, not in A's box.
+            api.putBack(b, 'failed in B', ['picture B'], []);
+            const aAfter = promptInput.value;
+            api.openTab(b);
+            console.log(JSON.stringify({ inB, backInA, aAfter, bAfter: promptInput.value, bImages: [...pendingImages] }));
+            JS);
+
+        $this->assertSame(['text' => '', 'images' => 0], $result['inB'], 'a new tab starts empty');
+        $this->assertSame(['text' => 'typed in A', 'images' => ['picture in A']], $result['backInA']);
+        $this->assertSame('typed in A', $result['aAfter']);
+        $this->assertSame('failed in B', $result['bAfter']);
+        $this->assertSame(['picture B'], $result['bImages']);
+    }
+
+    public function testUpBringsBackOnlyThePromptsOfTheConversationTheTabHoldsNow(): void
+    {
+        // `Tab.refreshState()`: the child replacing its session (`newSession()`) starts the history over.
+        $result = $this->runAppJs(<<<'JS'
+            const from = src.indexOf('      refreshState() {');
+            const method = src.slice(from, src.indexOf('\n      }\n', from) + 8);
+            const noop = () => {};
+            const [pigReachable, setRunningState, saveTabs, renderTabs, applyActiveTabToChrome, pigUnreachable] = [noop, noop, noop, noop, noop, noop];
+            const active = null;
+            const Tab = eval('(class {' + method + '})');
+            const tab = new Tab();
+            Object.assign(tab, { bound: true, render: noop, showStoppedMidRun: noop, promptHistory: ['old one'], historyIndex: 0, historyDraft: 'x' });
+            let answer = { sessionId: 's1' };
+            tab.rpc = async () => answer;
+            (async () => {
+              await tab.refreshState();
+              const same = [...tab.promptHistory];
+              answer = { sessionId: 's2' };
+              await tab.refreshState();
+              console.log(JSON.stringify({ same, replaced: tab.promptHistory, index: tab.historyIndex, draft: tab.historyDraft }));
+            })();
+            JS);
+
+        $this->assertSame(['old one'], $result['same'], 'the same conversation keeps it');
+        $this->assertSame([], $result['replaced']);
+        $this->assertSame(-1, $result['index']);
+        $this->assertNull($result['draft']);
+    }
+
+    public function testUpHasTheSamePromptsAfterAReloadKeptPerConversationInThisBrowser(): void
+    {
+        // `storeHistory()`/`storedHistory()` in app.js against a fake localStorage: what a reload
+        // finds is what the tab had, per `sessionId`, none for a private tab, and only the latest 30.
+        $result = $this->runAppJs(<<<'JS'
+            const from = src.indexOf('    const PROMPTS_KEY =');
+            const to = src.indexOf('    /** -1 is Up, to an older prompt');
+            const store = {};
+            const localStorage = { getItem: (k) => store[k] ?? null, setItem: (k, v) => { store[k] = v; } };
+            const location = { host: 'h' };
+            eval(src.slice(from, to) + '; globalThis.api = { storeHistory, storedHistory };');
+            const tab = (id, prompts, incognito = false) => ({ state: { sessionId: id }, promptHistory: prompts, incognito });
+            api.storeHistory(tab('a', ['!ls', '/skill:x go']));
+            api.storeHistory(tab('b', ['in b']));
+            api.storeHistory(tab('p', ['private'], true));
+            const reloaded = { a: api.storedHistory(tab('a', [])), b: api.storedHistory(tab('b', [])), p: api.storedHistory(tab('p', [], true)), none: api.storedHistory(tab('zz', [])) };
+            for (let i = 0; i < 40; i++) api.storeHistory(tab('s' + i, ['p' + i]));
+            const kept = Object.keys(JSON.parse(store['pig-prompt-history:h'])).length;
+            console.log(JSON.stringify({ reloaded, kept }));
+            JS);
+
+        $this->assertSame(['!ls', '/skill:x go'], $result['reloaded']['a'], 'forms the conversation does not keep come back too');
+        $this->assertSame(['in b'], $result['reloaded']['b'], 'each conversation its own');
+        $this->assertSame([], $result['reloaded']['p'], 'nothing kept for a private tab');
+        $this->assertSame([], $result['reloaded']['none']);
+        $this->assertSame(30, $result['kept']);
+    }
+
+    /** @return array<string, mixed> what the script printed as JSON, with `src` holding app.js */
+    private function runAppJs(string $body): array
+    {
+        $node = trim((string) shell_exec('command -v node'));
+        if ($node === '') {
+            $this->markTestSkipped('node is not available to run the browser code');
+        }
+
+        $script = "const src = require('fs').readFileSync(process.argv[1], 'utf8');\n" . $body;
+        $out = [];
+        $code = 0;
+        exec(escapeshellarg($node) . ' -e ' . escapeshellarg($script) . ' ' . escapeshellarg((string) realpath(__DIR__ . '/../src/Web/assets/js/app.js')) . ' 2>&1', $out, $code);
+        $this->assertSame(0, $code, implode("\n", $out));
+
+        return json_decode(implode('', $out), true);
+    }
+
     public function testAfterASleepThePageOpensANewConnectionAndBindsItsTabsAgain(): void
     {
         // `network.js` run as it is, with a browser made of stubs: its socket still says OPEN, as
@@ -675,7 +789,7 @@ final class WebMessageBlocksTest extends TestCase
             };
             const attachBtn = { disabled: false };
             const fn = new Function(
-                'promptInput', 'attachBtn', 'pendingImages', 'pendingFiles', 'renderPendingImages', 'resizePrompt', 'randomHex', 'apiFetch', 'FileReader', 'appendErrorMessage', 't',
+                'promptInput', 'attachBtn', 'pendingImages', 'pendingFiles', 'renderPendingImages', 'resizePrompt', 'randomHex', 'apiFetch', 'FileReader', 'appendErrorMessage', 't', 'active',
                 `${src.slice(filesStart, filesEnd)}\n${src.slice(start, end)}\nreturn { handleFiles, insertPathsAtCursor, splitUploadLines };`,
             );
             const { handleFiles, splitUploadLines } = fn(
@@ -690,6 +804,7 @@ final class WebMessageBlocksTest extends TestCase
                 class { readAsDataURL(f) { this.onload({ target: { result: 'data:image/png;base64,AA==' } }); } },
                 (e) => { throw new Error(e); },
                 (k) => k,
+                null,
             );
 
             (async () => {

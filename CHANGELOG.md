@@ -45,6 +45,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Fixed
+
+- Fixed `pig web`'s tabs sharing one input box: what was typed, the pictures and files attached and the uploads still running now stay with the tab they were added in and come back when it is opened again, and a message that fails to send goes back into its own tab's box even when another is on screen. Up and Down bring back only the prompts of the conversation the tab holds now: when an extension replaces it (`newSession()`, `switchSession()`), the history starts over. And a reload no longer changes what Up brings back: each conversation's prompts are kept in the browser (the 30 used most recently; not for a private tab), with the forms the conversation itself does not keep (`/skill`, `@file`, `!cmd`) and those older than the page it loads with.
+
 ## [2.0.25] - 2026-11-23
 
 ### Fixed

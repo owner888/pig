@@ -103,6 +103,11 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         this.promptHistory = [];        // prompts sent from this tab, newest first (`rememberPrompt()`)
         this.historyIndex = -1;         // -1: not browsing; 0: the newest; 1: the one before …
         this.historyDraft = null;       // what was being typed when browsing began
+        // What is in the input box for this tab: its text while another tab is on screen, and its
+        // attachments always — the page's `pendingImages`/`pendingFiles`/`uploadingFiles` are the
+        // active tab's arrays themselves (`openTab()`), so a picture read or a file uploaded after a
+        // switch still lands in the tab it was added to.
+        this.draft = { text: "", images: [], files: [], uploads: [] };
         this.messagesLoaded = false;    // until the first `get_messages` is drawn, which clears the chat
         this.stale = false;             // events not drawn while away (`catchup.js`): the last page is loaded when seen
         this.liveMessages = 0;          // messages added live since the last page was drawn (`LIVE_CAP`)
@@ -401,6 +406,14 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           try {
             const s = await this.rpc({ type: "get_state" });
             if (this === active) pigReachable();
+            // Up brings back this conversation's prompts, not those of the one the tab held before
+            // (an extension's `newSession()`/`switchSession()` replaces it in place): the history
+            // starts over, and `loadMessages()` fills it from the new conversation.
+            if (this.state && this.state.sessionId !== s.sessionId) {
+              this.promptHistory = [];
+              this.historyIndex = -1;
+              this.historyDraft = null;
+            }
             this.state = s;
             this.isPersisted = (typeof s.isPersisted === "boolean") ? s.isPersisted : !!(s.sessionFile && (s.messageCount > 0));
             if (this.isPersisted && s.sessionFile) {
@@ -487,7 +500,8 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
             // answered, or typed as a form the conversation does not keep (`/skill`, `@file`, `!cmd`) —
             // and goes in front, so Up still brings back the last thing said; the rest is older than the
             // page — drawn afresh after `LIVE_CAP`, or after a reconnect — and is kept behind it.
-            const remembered = this.promptHistory;
+            // After a reload this tab remembers nothing yet: what this browser kept is used.
+            const remembered = this.promptHistory.length > 0 ? this.promptHistory : storedHistory(this);
             this.promptHistory = [];
             for (const m of d.messages || []) {
               if (m.role === "user") rememberPrompt(this, typeof m.content === "string" ? m.content : textOf(m.content));
@@ -501,6 +515,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
               (pastKnown ? older : newer).push(prompt);
             }
             this.promptHistory = [...newer, ...onPage, ...older].slice(0, HISTORY_LIMIT);
+            storeHistory(this);
             this.remoteStart = Number.isInteger(d.start) ? d.start : 0;
             // A `session_start` handler's `notify` arrives before the conversation does, and drawing
             // the conversation clears the chat; the TUI keeps those lines, so they are put back.
@@ -759,6 +774,33 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       if (!trimmed || tab.promptHistory[0] === trimmed) return;
       tab.promptHistory.unshift(trimmed);
       if (tab.promptHistory.length > HISTORY_LIMIT) tab.promptHistory.length = HISTORY_LIMIT;
+    }
+
+    // Kept in this browser per conversation (`sessionId`), so a reload brings back what Up had:
+    // the page a conversation loads with holds only its last messages, and none of the forms it
+    // does not keep (`/skill`, `@file`, `!cmd`). Not for a private tab, and only the conversations
+    // used most recently.
+    const PROMPTS_KEY = "pig-prompt-history:" + location.host;
+    const PROMPTS_KEPT = 30;
+
+    function storedHistory(tab) {
+      const id = tab.state?.sessionId;
+      if (!id || tab.incognito) return [];
+      try {
+        const kept = JSON.parse(localStorage.getItem(PROMPTS_KEY) || "{}")[id];
+        return Array.isArray(kept?.prompts) ? kept.prompts : [];
+      } catch (e) { return []; }
+    }
+
+    function storeHistory(tab) {
+      const id = tab.state?.sessionId;
+      if (!id || tab.incognito) return;
+      try {
+        const all = JSON.parse(localStorage.getItem(PROMPTS_KEY) || "{}");
+        all[id] = { at: Date.now(), prompts: tab.promptHistory };
+        for (const old of Object.keys(all).sort((a, b) => all[b].at - all[a].at).slice(PROMPTS_KEPT)) delete all[old];
+        localStorage.setItem(PROMPTS_KEY, JSON.stringify(all));
+      } catch (e) {}
     }
 
     /** -1 is Up, to an older prompt; 1 is Down. Past either end nothing changes. */
@@ -1071,6 +1113,11 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     }
 
     async function handleFiles(files) {
+      // The tab's own arrays, held for what finishes after a switch (`Tab.draft`).
+      const tab = active;
+      const images = pendingImages;
+      const attached = pendingFiles;
+      const uploading = uploadingFiles;
       const uploads = [];
       for (const f of Array.from(files || [])) {
         const mime = imageMimeOf(f);
@@ -1079,7 +1126,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           reader.onload = (e) => {
             const result = e.target.result;
             const base64 = result.split(",")[1];
-            pendingImages.push({
+            images.push({
               mimeType: mime,
               data: base64,
               url: result,
@@ -1099,10 +1146,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         progress: 0,
         file,
       }));
-      uploadingFiles.push(...entries);
-      attachBtn.disabled = true;
-      attachBtn.classList?.add("uploading");
-      attachBtn.innerHTML = `<span class="upload-spinner"></span>`;
+      uploading.push(...entries);
       renderPendingImages();
       try {
         const paths = [];
@@ -1114,38 +1158,42 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
             });
             if (path) paths.push(path);
           } finally {
-            const idx = uploadingFiles.indexOf(entry);
-            if (idx !== -1) uploadingFiles.splice(idx, 1);
+            const idx = uploading.indexOf(entry);
+            if (idx !== -1) uploading.splice(idx, 1);
             renderPendingImages();
           }
         }
         // A `!` bash line wants the path where the cursor is, quoted; a prompt gets a tile, and
         // the path goes with the message when it is sent.
-        if (promptInput.value.trimStart().startsWith("!")) {
-          insertPathsAtCursor(paths);
+        const typedNow = tab && tab !== active ? tab.draft.text : promptInput.value;
+        if (typedNow.trimStart().startsWith("!")) {
+          if (tab && tab !== active) tab.draft.text = typedNow.trimEnd() + " " + paths.map(quotePathIfNeeded).join(" ");
+          else insertPathsAtCursor(paths);
         } else {
           for (let i = 0; i < paths.length; i++) {
             const entry = entries[i];
             const name = entry?.name || paths[i].split("/").pop();
             const { kind, glyph } = fileKindOf(name);
             const pending = { name, path: paths[i], kind, glyph, file: entry?.file || null, meta: humanSize(entry?.file?.size || 0) };
-            pendingFiles.push(pending);
+            attached.push(pending);
             if (entry?.file) fileMetaOf(entry.file, kind).then((meta) => { pending.meta = meta; renderPendingImages(); });
           }
           renderPendingImages();
         }
       } catch (err) {
         appendErrorMessage(err.message || t("send_failed"));
-      } finally {
-        if (uploadingFiles.length === 0) {
-          attachBtn.disabled = false;
-          attachBtn.classList?.remove("uploading");
-          attachBtn.textContent = "📎";
-        }
       }
     }
 
     function renderPendingImages() {
+      // The paperclip is busy while this tab is uploading, whichever tab started first.
+      const busy = uploadingFiles.length > 0;
+      if (attachBtn.disabled !== busy) {
+        attachBtn.disabled = busy;
+        attachBtn.classList?.toggle("uploading", busy);
+        if (busy) attachBtn.innerHTML = `<span class="upload-spinner"></span>`;
+        else attachBtn.textContent = "📎";
+      }
       if (pendingImages.length === 0 && pendingFiles.length === 0 && uploadingFiles.length === 0) {
         pendingImagesBar.style.display = "none";
         pendingImagesBar.innerHTML = "";
@@ -1990,10 +2038,6 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
 
     /** A new conversation is a new tab — and a new child. */
     async function startNewSession(cwd = null, incognito = false, custom = null) {
-      pendingImages = [];
-      pendingFiles = [];
-      renderPendingImages();
-
       // A cwd passed in (the tab bar's '+') wins; otherwise the active tab's, then the server's.
       const targetCwd = (typeof cwd === "string" && cwd.trim() !== "")
         ? cwd.trim()
@@ -2007,6 +2051,19 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       }
 
       refreshSidebar();
+    }
+
+    /** A message that did not go out, back in the input of the tab it was sent from. */
+    function putBack(tab, typed, images, files) {
+      tab.draft.images.push(...images);
+      tab.draft.files.push(...files);
+      if (tab === active) {
+        promptInput.value = typed;
+        resizePrompt();
+        renderPendingImages();
+      } else {
+        tab.draft.text = typed;
+      }
     }
 
     async function submitMessage(followUp = false) {
@@ -2023,13 +2080,15 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
 
       promptInput.value = "";
       promptInput.style.height = "38px";
-      pendingImages = [];
-      pendingFiles = [];
+      // Emptied in place: they are the tab's own (`Tab.draft`).
+      pendingImages.length = 0;
+      pendingFiles.length = 0;
       renderPendingImages();
 
       if (!active) return;
       const tab = active;
       rememberPrompt(tab, text);
+      storeHistory(tab);
 
       // ---- `!command` / `!!command` ---------------------------------------------------------
       // The TUI's two bash doors, over rpc. `!` runs the command and its output joins the
@@ -2172,10 +2231,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         const until = Date.now() + 10000;
         while (!tab.bound && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
         if (!tab.bound) {
-          promptInput.value = typed;
-          pendingImages = imgsToSend;
-          pendingFiles = filesToSend;
-          renderPendingImages();
+          putBack(tab, typed, imgsToSend, filesToSend);
           appendErrorMessage(t("agent_unreachable"));
           return;
         }
@@ -2223,10 +2279,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         // Refused by the child: nothing was taken, so the next send is a new request.
         if (!err.refused && requestId !== null) tab.unsent = { text, requestId };
         setRunningState(false);
-        promptInput.value = typed;
-        pendingImages = imgsToSend;
-        pendingFiles = filesToSend;
-        renderPendingImages();
+        putBack(tab, typed, imgsToSend, filesToSend);
         appendErrorMessage(err.message || t("send_failed"));
       }
     }
@@ -2252,6 +2305,11 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       try { queued = await tab.rpc({ type: "clear_queue" }); } catch (err) { return; }
       const texts = [...(queued.steering || []), ...(queued.followUp || [])];
       if (texts.length === 0) return;
+      // Into the input of the tab they were queued in, even if another is on screen by now.
+      if (tab !== active) {
+        tab.draft.text = [...texts, tab.draft.text].filter((x) => x.trim() !== "").join("\n\n");
+        return;
+      }
       promptInput.value = [...texts, promptInput.value].filter((x) => x.trim() !== "").join("\n\n");
       promptInput.dispatchEvent(new Event("input"));
       promptInput.focus();
@@ -2480,7 +2538,11 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         if (tab && !tab.messagesLoaded) tab.earlyNotices.push(req); else drawNotify(req);
         return;
       }
-      if (req.method === "set_editor_text") { if (T() === active) promptInput.value = req.text || ""; return; }
+      // The input of the tab whose extension asked, on screen or not (`Tab.draft`).
+      if (req.method === "set_editor_text") {
+        if (T() === active) { promptInput.value = req.text || ""; resizePrompt(); } else T().draft.text = req.text || "";
+        return;
+      }
       // pig's own: an extension's `setTheme()`. The page has one theme, so every tab changes, and
       // `onThemeApplied` tells each tab's child. A name the page does not have changes nothing.
       if (req.method === "setTheme") { if (hasTheme(req.theme)) applyTheme(req.theme); return; }
@@ -3168,7 +3230,19 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     function openTab(tab) {
       scheduledPages?.close();
       if (!tabs.includes(tab)) tabs.push(tab);
-      if (active && active !== tab) active.scroller.hidden = true;
+      if (active && active !== tab) {
+        active.scroller.hidden = true;
+        active.draft.text = promptInput.value;
+      }
+      if (active !== tab) {
+        // Each tab its own input: what was typed and attached in it comes back with it.
+        promptInput.value = tab.draft.text;
+        pendingImages = tab.draft.images;
+        pendingFiles = tab.draft.files;
+        uploadingFiles = tab.draft.uploads;
+        resizePrompt();
+        renderPendingImages();
+      }
       active = tab;
       tab.scroller.hidden = false;
       if (!tab.bound) tab.subscribe();
