@@ -336,6 +336,13 @@ final class CodemodeSandbox
             $result['error']['kind'] = 'memory';
         }
 
+        // `Unclosed '['` at the last line, for a `<<<'NEW'` closed with `OLD,` a hundred lines up:
+        // the label it means, named (`UnclosedHeredoc`).
+        if (($result['ok'] ?? false) === false && ($result['error']['name'] ?? null) === 'ParseError' && ($hint = UnclosedHeredoc::hint($code)) !== null) {
+            $result['error']['message'] .= "\n" . $hint;
+            $result['error']['stack'] = ($result['error']['stack'] ?? '') . "\n" . $hint;
+        }
+
         return $result;
     }
 

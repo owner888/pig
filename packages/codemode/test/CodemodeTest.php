@@ -11,6 +11,7 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\Codemode\Declarations;
 use Pig\Codemode\Identifier;
+use Pig\Codemode\UnclosedHeredoc;
 use Pig\Codemode\CodemodeSandbox;
 use Pig\Codemode\Source;
 use Pig\Codemode\SourceError;
@@ -523,6 +524,47 @@ final class CodemodeTest extends TestCase
         $result = $this->script('return [$tools->{"my-tool"}([]), $tools->my_tool([])];', [['name' => 'my-tool', 'execute' => static fn (): string => 'hi']]);
 
         $this->assertSame(['hi', 'hi'], $result['value']);
+    }
+
+    /** The mistake from a real run: `newText`'s `<<<'NEW'` closed with `OLD,`. */
+    public function testAParseErrorFromANowdocThatNeverClosesNamesItsOpeningLine(): void
+    {
+        $code = <<<'SCRIPT'
+            $tools->edit([
+                'edits' => [
+                    [
+                        'oldText' => <<<'OLD'
+            a
+            OLD,
+                        'newText' => <<<'NEW'
+            b
+            OLD,
+                    ],
+                ],
+            ]);
+            return 1;
+            SCRIPT;
+        $result = $this->script($code, [['name' => 'edit', 'execute' => static fn (): string => 'edited']]);
+
+        $this->assertFalse($result['ok']);
+        $this->assertSame('ParseError', $result['error']['name']);
+        $this->assertStringContainsString("Unclosed '['", $result['error']['stack'], "PHP's own words stay");
+        $this->assertStringContainsString("The nowdoc <<<'NEW' opened on line 7 never closes: no line after it starts with NEW", $result['error']['stack']);
+    }
+
+    public function testOtherParseErrorsAndHeredocsThatCloseGetNoSuchHint(): void
+    {
+        $this->assertNull(UnclosedHeredoc::hint("\$a = <<<'X'\none\nX;\n\$b = <<<Y\ntwo\n  Y . 'z';\nreturn [\$a, \$b];"));
+        $this->assertNull(UnclosedHeredoc::hint('$a = [1, 2'));
+        $this->assertSame(
+            'The heredoc <<<"Q" opened on line 2 never closes: no line after it starts with Q, so it takes in the rest of the script. Close it with a line that starts with Q.',
+            UnclosedHeredoc::hint("<?php\n\$x = 1;\n\$s = <<<\"Q\"\nbody\nQUIT;"),
+            'counted after the <?php the sandbox takes off; QUIT is not Q',
+        );
+
+        $result = $this->script('$a = [1, 2; return $a;');
+        $this->assertSame('ParseError', $result['error']['name']);
+        $this->assertStringNotContainsString('never closes', $result['error']['stack']);
     }
 
     public function testAToolNamedHasIsCalledAsHasUnderscoreAndHasStillAnswers(): void
