@@ -1575,6 +1575,8 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         }
       } else if (evt.type === "agent_start" || evt.type === "turn_start") {
         setRunningState(true);
+        // The retry it was waiting for has started.
+        if (tab === active) hideRetryBanner();
         // A run started — by the button or anyone else — so it is not stopped any more.
         if (tab?.state) tab.state.isStoppedMidRun = false;
         tab?.scroller.querySelector(".msg-stopped")?.remove();
@@ -1670,7 +1672,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         currentAssistantBlock = null;
         currentAssistantText = "";
       } else if (evt.type === "auto_retry_start") {
-        if (tab === active) showStatusBanner(t("retrying_banner", { delay: Math.round((evt.delayMs || 0) / 1000), attempt: evt.attempt, maxAttempts: evt.maxAttempts, error: evt.errorMessage }), "warning");
+        if (tab === active) showRetryBanner(evt);
       } else if (evt.type === "auto_retry_end") {
         if (tab === active) hideStatusBanner();
         if (!evt.success) {
@@ -1691,7 +1693,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         // Upstream's three summarization retry events: a compaction or branch summary hit a
         // transient error and will be tried again — the same banner the turn's own retry uses.
         if (evt.errorMessage) appendErrorMessage(evt.errorMessage);
-        if (tab === active) showStatusBanner(t("retrying_banner", { delay: Math.round((evt.delayMs || 0) / 1000), attempt: evt.attempt, maxAttempts: evt.maxAttempts, error: evt.errorMessage || "" }), "warning");
+        if (tab === active) showRetryBanner(evt);
       } else if (evt.type === "summarization_retry_attempt_start") {
         if (tab === active) showStatusBanner(t(evt.source === "branchSummary" ? "summarising_branch_banner" : "compacting_banner"));
       } else if (evt.type === "summarization_retry_finished") {
@@ -1774,11 +1776,50 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
 
     /** @param {"info"|"warning"|"error"} level how much it needs looking at — the banner's colour */
     function showStatusBanner(text, level = "info") {
+      stopRetryCountdown();
+      retryBannerUp = false;
+      drawStatusBanner(text, level);
+    }
+
+    function drawStatusBanner(text, level) {
       const banner = document.getElementById("status-banner");
       if (banner) {
         banner.innerText = text;
         banner.dataset.level = level;
         banner.style.display = "flex";
+      }
+    }
+
+    // A retry's wait counted down, as the terminal's `RetryStatusIndicator` (upstream's
+    // `CountdownTimer`): the seconds rounded up, one fewer each second until the retry starts.
+    // One countdown at most; another banner, or the banner going away, stops it. And it goes when
+    // the retry starts (`hideRetryBanner()` on `agent_start`), as the terminal's indicator gives
+    // way to `Working`: `auto_retry_end` comes only once the retried request has an answer, which
+    // a request that hangs again makes minutes later, with "retrying in 2s" on screen all along.
+    let retryCountdown = null;
+    let retryBannerUp = false;
+    function showRetryBanner(evt) {
+      let remaining = Math.ceil((evt.delayMs || 0) / 1000);
+      const draw = () => drawStatusBanner(t("retrying_banner", { delay: Math.max(0, remaining), attempt: evt.attempt, maxAttempts: evt.maxAttempts, error: evt.errorMessage || "" }), "warning");
+      stopRetryCountdown();
+      draw();
+      retryBannerUp = true;
+      if (remaining <= 0) return;
+      retryCountdown = setInterval(() => {
+        remaining--;
+        draw();
+        if (remaining <= 0) stopRetryCountdown();
+      }, 1000);
+    }
+
+    function hideRetryBanner() {
+      if (retryBannerUp) hideStatusBanner();
+    }
+
+    function stopRetryCountdown() {
+      if (retryCountdown !== null) {
+        clearInterval(retryCountdown);
+        retryCountdown = null;
       }
     }
 
@@ -1816,6 +1857,8 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     }
 
     function hideStatusBanner() {
+      stopRetryCountdown();
+      retryBannerUp = false;
       const banner = document.getElementById("status-banner");
       if (banner) {
         banner.style.display = "none";

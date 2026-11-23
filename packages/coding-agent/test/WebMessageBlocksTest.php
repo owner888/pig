@@ -106,6 +106,59 @@ final class WebMessageBlocksTest extends TestCase
         $this->assertGreaterThan(80, $result['run'], 'about ten from the end, not back at the prompt');
     }
 
+    public function testARetryBannerCountsDownLikeTheTerminalsAndGoesWhenTheRetryStarts(): void
+    {
+        // `showRetryBanner()` in app.js, run as it is, against a fake clock and banner: upstream's
+        // `CountdownTimer` — the seconds rounded up, one fewer each second, never below 0.
+        $node = trim((string) shell_exec('command -v node'));
+        if ($node === '') {
+            $this->markTestSkipped('node is not available to run the browser code');
+        }
+
+        $script = <<<'JS'
+            const fs = require('fs');
+            const src = fs.readFileSync(process.argv[1], 'utf8');
+            const from = src.indexOf('    function showStatusBanner(text');
+            const to = src.indexOf('\n    }\n', src.indexOf('    function hideStatusBanner()')) + 7;
+            const block = src.slice(from, to).replace(/^    \/\/ A page that cannot reach pig[\s\S]*?(?=    function hideStatusBanner)/m, '');
+            const banner = { innerText: '', dataset: {}, style: {} };
+            const document = { getElementById: () => banner };
+            const t = (key, v) => `${v.delay}s ${v.attempt}/${v.maxAttempts} ${v.error}`;
+            let intervals = [];
+            const setInterval = (fn) => { intervals.push(fn); return intervals.length; };
+            const clearInterval = (id) => { intervals[id - 1] = null; };
+            const tick = () => intervals.forEach((fn) => fn && fn());
+            eval(block + '; globalThis.api = { showRetryBanner, hideRetryBanner, showStatusBanner, hideStatusBanner };');
+            const seen = [];
+            api.showRetryBanner({ delayMs: 1500, attempt: 1, maxAttempts: 3, errorMessage: 'fetch failed' });
+            seen.push(banner.innerText); tick(); seen.push(banner.innerText); tick(); seen.push(banner.innerText); tick(); seen.push(banner.innerText);
+            const stoppedAtZero = intervals.every((fn) => fn === null);
+            api.showRetryBanner({ delayMs: 5000, attempt: 2, maxAttempts: 3, errorMessage: 'x' });
+            api.hideStatusBanner();
+            const stoppedByHide = intervals.every((fn) => fn === null);
+            const hidden = banner.style.display;
+            // The retry starting takes its banner down; another banner it leaves alone.
+            api.showRetryBanner({ delayMs: 2000, attempt: 1, maxAttempts: 3, errorMessage: 'x' });
+            api.hideRetryBanner();
+            const goneWhenRetryStarts = banner.style.display;
+            api.showStatusBanner('compacting', 'info');
+            api.hideRetryBanner();
+            console.log(JSON.stringify({ seen, stoppedAtZero, stoppedByHide, hidden, goneWhenRetryStarts, otherKept: banner.innerText }));
+            JS;
+        $out = [];
+        $code = 0;
+        exec(escapeshellarg($node) . ' -e ' . escapeshellarg($script) . ' ' . escapeshellarg(realpath(__DIR__ . '/../src/Web/assets/js/app.js')) . ' 2>&1', $out, $code);
+        $this->assertSame(0, $code, implode("\n", $out));
+        $result = json_decode(implode('', $out), true);
+
+        $this->assertSame(['2s 1/3 fetch failed', '1s 1/3 fetch failed', '0s 1/3 fetch failed', '0s 1/3 fetch failed'], $result['seen'], '1.5s is 2, rounded up as the terminal does');
+        $this->assertTrue($result['stoppedAtZero'], 'no tick left once it reaches 0');
+        $this->assertTrue($result['stoppedByHide'], 'the banner going away stops its countdown');
+        $this->assertSame('none', $result['hidden']);
+        $this->assertSame('none', $result['goneWhenRetryStarts'], 'the retry starting takes it down, as the terminal\'s Working replaces it');
+        $this->assertSame('compacting', $result['otherKept'], 'and only a retry banner');
+    }
+
     public function testAfterASleepThePageOpensANewConnectionAndBindsItsTabsAgain(): void
     {
         // `network.js` run as it is, with a browser made of stubs: its socket still says OPEN, as
