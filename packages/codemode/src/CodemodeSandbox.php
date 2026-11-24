@@ -36,18 +36,24 @@ final class CodemodeSandbox
     public const int DEFAULT_MEMORY_LIMIT_BYTES = 256 * 1024 * 1024;
 
     /**
-     * Every way out of the process that PHP core and the usual extensions offer. Grouped, so an
-     * addition goes in the right row. `eval` is a language construct and cannot be disabled —
-     * the child uses it to run the script — and `include`/`require` are constructs too, which
-     * is what `open_basedir` is for.
+     * Every way out of the process that PHP core and the usual extensions offer, in groups, so an
+     * addition goes in the right one and the parse of an error can say what to use instead
+     * (`DisabledFunction`). `eval` is a language construct and cannot be disabled — the child uses
+     * it to run the script — and `include`/`require` are constructs too, which is what
+     * `open_basedir` is for.
      */
-    public const array DISABLED_FUNCTIONS = [
-        // processes
+    public const array DISABLED_FUNCTIONS = [...self::PROCESS_FUNCTIONS, ...self::FILE_FUNCTIONS, ...self::NETWORK_FUNCTIONS, ...self::HOST_FUNCTIONS];
+
+    /** Processes. */
+    public const array PROCESS_FUNCTIONS = [
         'exec', 'shell_exec', 'system', 'passthru', 'proc_open', 'proc_close', 'proc_terminate', 'proc_get_status', 'proc_nice',
         'popen', 'pclose', 'pcntl_exec', 'pcntl_fork', 'pcntl_signal', 'pcntl_alarm', 'posix_kill', 'posix_setuid', 'posix_setgid',
         'putenv', 'apache_setenv', 'mail', 'dl', 'ini_set', 'ini_alter', 'ini_restore', 'set_include_path', 'set_time_limit',
         'ignore_user_abort', 'register_tick_function', 'pcntl_async_signals',
-        // files and directories
+    ];
+
+    /** Files and directories. */
+    public const array FILE_FUNCTIONS = [
         'fopen', 'file_get_contents', 'file_put_contents', 'file', 'readfile', 'fpassthru', 'unlink', 'rename', 'copy', 'mkdir', 'rmdir',
         'tempnam', 'tmpfile', 'touch', 'chmod', 'chown', 'chgrp', 'symlink', 'link', 'readlink', 'realpath', 'glob', 'scandir', 'opendir',
         'readdir', 'rewinddir', 'closedir', 'dir', 'chdir', 'chroot', 'getcwd', 'is_file', 'is_dir', 'is_link', 'is_readable', 'is_writable',
@@ -55,7 +61,10 @@ final class CodemodeSandbox
         'filegroup', 'fileinode', 'filetype', 'stat', 'lstat', 'disk_free_space', 'disk_total_space', 'diskfreespace', 'parse_ini_file',
         'highlight_file', 'show_source', 'php_strip_whitespace', 'move_uploaded_file', 'is_uploaded_file', 'fdatasync', 'fsync',
         'ftruncate', 'flock', 'fnmatch', 'umask', 'clearstatcache', 'linkinfo', 'lchown', 'lchgrp',
-        // streams, sockets and the network
+    ];
+
+    /** Streams, sockets and the network. */
+    public const array NETWORK_FUNCTIONS = [
         'fsockopen', 'pfsockopen', 'stream_socket_client', 'stream_socket_server', 'stream_socket_accept', 'stream_socket_pair',
         'stream_select', 'stream_context_create', 'stream_context_set_option', 'stream_context_set_params', 'stream_context_get_default',
         'stream_context_set_default', 'stream_wrapper_register', 'stream_wrapper_restore', 'stream_wrapper_unregister', 'stream_filter_register',
@@ -65,7 +74,10 @@ final class CodemodeSandbox
         'curl_setopt', 'curl_setopt_array', 'curl_copy_handle', 'gethostbyname', 'gethostbynamel', 'gethostbyaddr', 'gethostname',
         'dns_get_record', 'dns_check_record', 'dns_get_mx', 'checkdnsrr', 'getmxrr', 'net_get_interfaces', 'header', 'headers_sent',
         'setcookie', 'setrawcookie', 'http_response_code',
-        // loading code and reading the host
+    ];
+
+    /** Loading code and reading the host. */
+    public const array HOST_FUNCTIONS = [
         'opcache_compile_file', 'opcache_invalidate', 'opcache_reset', 'get_cfg_var', 'php_ini_loaded_file', 'php_ini_scanned_files',
         'getenv', 'phpinfo', 'php_uname', 'getmypid', 'getmyuid', 'getmygid', 'getmyinode', 'getlastmod', 'get_current_user', 'sys_get_temp_dir',
         'posix_getpwuid', 'posix_getpwnam', 'posix_getgrgid', 'posix_getgrnam', 'posix_uname', 'posix_getcwd', 'posix_getlogin', 'posix_ttyname',
@@ -347,6 +359,13 @@ final class CodemodeSandbox
                     $result['error']['stack'] = ($result['error']['stack'] ?? '') . "\n" . $hint;
                 }
             }
+        }
+
+        // `Call to undefined function file_get_contents()` for a function that is there and turned
+        // off: said as such, with the tools that do its job (`DisabledFunction`).
+        if (($result['ok'] ?? false) === false && ($hint = DisabledFunction::hint((string) ($result['error']['message'] ?? ''), array_column($this->tools, 'name'))) !== null) {
+            $result['error']['message'] .= "\n" . $hint;
+            $result['error']['stack'] = ($result['error']['stack'] ?? '') . "\n" . $hint;
         }
 
         return $result;

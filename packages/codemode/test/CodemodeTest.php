@@ -15,6 +15,7 @@ use Pig\Codemode\QuoteInString;
 use Pig\Codemode\ShellPromptVariable;
 use Pig\Codemode\UnclosedHeredoc;
 use Pig\Codemode\CodemodeSandbox;
+use Pig\Codemode\DisabledFunction;
 use Pig\Codemode\Source;
 use Pig\Codemode\SourceError;
 
@@ -623,6 +624,46 @@ final class CodemodeTest extends TestCase
             QuoteInString::hint("<?php\n\$y = 1;\n\$s = 'it's';"),
             'counted after the <?php the sandbox takes off',
         );
+    }
+
+    /** The mistake from a real run: `file_get_contents()` for a file the script meant to edit. */
+    public function testATurnedOffFunctionSaysSoAndNamesTheToolsThatDoItsJob(): void
+    {
+        $result = $this->script("\$content = file_get_contents('docs/manual-checks.md');\nreturn \$content;", [
+            ['name' => 'read', 'execute' => static fn (): string => 'text'],
+            ['name' => 'edit', 'execute' => static fn (): string => 'edited'],
+            ['name' => 'bash', 'execute' => static fn (): string => 'ran'],
+        ]);
+
+        $this->assertFalse($result['ok']);
+        $this->assertStringContainsString('Call to undefined function file_get_contents()', $result['error']['stack'], "PHP's own words stay");
+        $this->assertStringContainsString('file_get_contents() is turned off on purpose in codemode', $result['error']['stack']);
+        $this->assertStringContainsString('Use $tools->read() or $tools->edit() instead.', $result['error']['stack'], 'only the file tools it was given');
+    }
+
+    public function testAFunctionThatIsNotTurnedOffGetsNoSuchHint(): void
+    {
+        $this->assertNull(DisabledFunction::hint('Call to undefined function file_get_contnets()', ['read']), 'misspelt');
+        $this->assertNull(DisabledFunction::hint('Call to undefined method Foo::exec()', ['bash']));
+        $this->assertSame(
+            'exec() is turned off on purpose in codemode: a script reaches files, commands and the network only through $tools, so the session\'s sandbox, permission checks and history see them. Use $tools->bash() instead. ALL_TOOLS lists every tool.',
+            DisabledFunction::hint('Call to undefined function exec()', ['read', 'bash']),
+        );
+        $this->assertSame(
+            'getenv() is turned off on purpose in codemode: a script reaches files, commands and the network only through $tools, so the session\'s sandbox, permission checks and history see them. ALL_TOOLS lists every tool.',
+            DisabledFunction::hint('Call to undefined function getenv()', ['read']),
+            'no tool to name, none named',
+        );
+    }
+
+    public function testTheGroupsAreTheWholeDisabledList(): void
+    {
+        $this->assertSame(
+            [...CodemodeSandbox::PROCESS_FUNCTIONS, ...CodemodeSandbox::FILE_FUNCTIONS, ...CodemodeSandbox::NETWORK_FUNCTIONS, ...CodemodeSandbox::HOST_FUNCTIONS],
+            CodemodeSandbox::DISABLED_FUNCTIONS,
+        );
+        $this->assertContains('file_get_contents', CodemodeSandbox::FILE_FUNCTIONS);
+        $this->assertContains('exec', CodemodeSandbox::PROCESS_FUNCTIONS);
     }
 
     public function testAToolNamedHasIsCalledAsHasUnderscoreAndHasStillAnswers(): void
