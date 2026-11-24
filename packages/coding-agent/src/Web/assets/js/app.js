@@ -15,6 +15,7 @@ import { EmptyState } from "./components/EmptyState.js";
 import { openImageLightbox } from "./components/ImageLightbox.js";
 import { SlashAutocomplete } from "./components/SlashAutocomplete.js";
 import { primeAttention, notifyAway, onPushOpen } from "./attention.js";
+import { onScreenKeyboard, watchKeyboard } from "./keyboard.js";
 import { away, catchUp, overCap, DRAWS_MESSAGES } from "./catchup.js";
 import { createHookState, applyHookRequest, widgetsAt, statusHtml, ansiToHtml, notifyKind, countdownTitle, timeoutSeconds, slashCommandsFrom } from "./hooks.js";
 import { WebTerminal } from "./components/WebTerminal.js";
@@ -869,11 +870,14 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       compositionEndTime = Date.now();
     });
 
+    watchKeyboard();
     promptInput.addEventListener("keydown", (e) => {
       // Enter sends. Shift+Enter and Option/Alt+Enter are left to the textarea, which breaks the
       // line on both. While a turn runs, Enter steers it and Cmd/Ctrl+Enter queues the message
       // for after it — the TUI's keys (`app.message.followUp`), where Alt+Enter is a new line too.
-      const isPlainEnter = e.key === "Enter" && !e.shiftKey && !e.altKey;
+      // On an on-screen keyboard, which has no Shift, Enter breaks the line and the send button
+      // sends (`keyboard.js`); an iPad's hardware keyboard sends as a desktop's does.
+      const isPlainEnter = e.key === "Enter" && !e.shiftKey && !e.altKey && !onScreenKeyboard();
       const isModifierEnter = e.key === "Enter" && (e.metaKey || e.ctrlKey);
 
       if (isPlainEnter || isModifierEnter) {

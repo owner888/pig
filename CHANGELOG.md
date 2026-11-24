@@ -45,6 +45,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Fixed
+
+- Fixed `pig web` on a phone sending the message on Enter, with no way to break a line: an on-screen keyboard has no Shift. Typing on one, Enter now breaks the line and the send button sends; with a hardware keyboard — a desktop's, or an iPad's Magic Keyboard — Enter still sends, as in the terminal.
+
 ## [2.0.27] - 2026-11-23
 
 ### Fixed

@@ -109,6 +109,7 @@ Running `/web` in your terminal automatically launches your default web browser 
 ### 4. Keyboard Shortcuts & Input Experience (100% Aligned with Terminal TUI)
 - **`Enter`**: Submit and send the message directly, fully matching terminal TUI behavior (with IME composition guards so candidate confirmation never accidentally submits).
 - **`Shift+Enter`**: Insert a newline in the multiline input box with dynamic height expansion for composing code or long prompts.
+- **On a phone or tablet's on-screen keyboard**: there is no Shift, so `Enter` inserts a newline and the **➔** button sends. With a hardware keyboard (an iPad's Magic Keyboard, say), `Enter` sends as above.
 - **`Command+Enter` (`⌘+Enter`) or `Ctrl+Enter`**: Also submits and sends the message.
 - **Hold `⌘` for Shortcuts HUD**: Similar to Blink Shell / iPadOS, holding the `⌘` (Command) key on its own for ~0.85s fades in a centered frosted-glass shortcut cheat sheet, which disappears the moment `⌘` is released.
 
