@@ -385,7 +385,7 @@ final class ModelsTest extends TestCase
         // OpenAI's long-context tier (#11949), at Azure's larger window for the ids it names, and no
         // base URL.
         // Less the models models.dev has since retired, plus GPT-6.1 Terra (upstream 363ad78).
-        $this->assertCount(46, self::of(Models::AZURE));
+        $this->assertCount(36, self::of(Models::AZURE));
 
         $gpt = Models::find(Models::AZURE, 'gpt-5.5');
         $this->assertNotNull($gpt);
