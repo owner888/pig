@@ -759,10 +759,14 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     enhanceSelect(modelSelect);
     enhanceSelect(thinkingSelect);
 
-    // Auto-grow textarea
+    // Auto-grow textarea, to its content's height (padding included) up to 160px; it scrolls only
+    // past that. Measured from `auto`, not a fixed 40px: the touch layout's padding makes one line
+    // 42px, and a box 2px short of its content is a scrolling one — Android drew its scrollbar.
     function resizePrompt() {
-      promptInput.style.height = "40px";
-      promptInput.style.height = Math.max(40, Math.min(promptInput.scrollHeight, 160)) + "px";
+      promptInput.style.height = "auto";
+      const full = promptInput.scrollHeight;
+      promptInput.style.height = Math.max(40, Math.min(full, 160)) + "px";
+      promptInput.style.overflowY = full > 160 ? "auto" : "hidden";
     }
 
     // ---- prompt history ------------------------------------------------------------------------

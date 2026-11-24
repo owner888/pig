@@ -50,6 +50,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 ### Fixed
 
 - Fixed `pig web` on a phone sending the message on Enter, with no way to break a line: an on-screen keyboard has no Shift. Typing on one, Enter now breaks the line and the send button sends; with a hardware keyboard — a desktop's, or an iPad's Magic Keyboard — Enter still sends, as in the terminal.
+- Fixed a white scrollbar on the right of `pig web`'s message box on Android: on a touch screen one line with its padding is 42px, the box was sized 40px, and a box 2px short of its content scrolls. It now grows to its content and scrolls only past 160px.
 
 ## [2.0.27] - 2026-11-23
 
