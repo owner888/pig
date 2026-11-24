@@ -116,45 +116,6 @@
     },
     {
         "type": "chat",
-        "id": "alibaba/qwen3-max-thinking",
-        "name": "Qwen 3 Max Thinking",
-        "api": "anthropic-messages",
-        "provider": "vercel-ai-gateway",
-        "baseUrl": "https://ai-gateway.vercel.sh",
-        "reasoning": true,
-        "input": [
-            "text"
-        ],
-        "cost": {
-            "input": 1.2,
-            "output": 6.0,
-            "cacheRead": 0.24,
-            "cacheWrite": 0.0,
-            "tiers": [
-                {
-                    "inputTokensAbove": 32000,
-                    "input": 2.4,
-                    "output": 12.0,
-                    "cacheRead": 0.48,
-                    "cacheWrite": 0.0
-                },
-                {
-                    "inputTokensAbove": 128000,
-                    "input": 3.0,
-                    "output": 15.0,
-                    "cacheRead": 0.6,
-                    "cacheWrite": 0.0
-                }
-            ]
-        },
-        "contextWindow": 256000,
-        "maxTokens": 65536,
-        "compat": {
-            "allowEmptySignature": true
-        }
-    },
-    {
-        "type": "chat",
         "id": "alibaba/qwen3-next-80b-a3b-instruct",
         "name": "Qwen3 Next 80B A3B Instruct",
         "api": "anthropic-messages",
@@ -10558,6 +10519,24 @@
     },
     {
         "type": "classifier",
+        "id": "baseten/bison-1",
+        "name": "Bison-1",
+        "api": "typesafe-system-one",
+        "provider": "vercel-ai-gateway",
+        "baseUrl": "https://ai-gateway.vercel.sh/typesafe/v1",
+        "input": [
+            "text"
+        ],
+        "cost": {
+            "input": 0.1,
+            "output": 0.0,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 131072
+    },
+    {
+        "type": "classifier",
         "id": "baseten/elephant-1",
         "name": "Elephant-1",
         "api": "typesafe-system-one",
@@ -10573,6 +10552,24 @@
             "cacheWrite": 0.0
         },
         "contextWindow": 16384
+    },
+    {
+        "type": "classifier",
+        "id": "baseten/groundhog-1",
+        "name": "Groundhog-1",
+        "api": "typesafe-system-one",
+        "provider": "vercel-ai-gateway",
+        "baseUrl": "https://ai-gateway.vercel.sh/typesafe/v1",
+        "input": [
+            "text"
+        ],
+        "cost": {
+            "input": 0.035,
+            "output": 0.0,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 131072
     },
     {
         "type": "classifier",
@@ -10681,24 +10678,6 @@
             "cacheWrite": 0.0
         },
         "contextWindow": 262144
-    },
-    {
-        "type": "classifier",
-        "id": "liquid/d1-ultra",
-        "name": "Liquid d1 Ultra",
-        "api": "typesafe-system-one",
-        "provider": "vercel-ai-gateway",
-        "baseUrl": "https://ai-gateway.vercel.sh/typesafe/v1",
-        "input": [
-            "text"
-        ],
-        "cost": {
-            "input": 0.042,
-            "output": 0.0,
-            "cacheRead": 0.0,
-            "cacheWrite": 0.0
-        },
-        "contextWindow": 32768
     },
     {
         "type": "classifier",

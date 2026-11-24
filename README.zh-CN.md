@@ -154,6 +154,7 @@ pig
 - **生成期间实时交互与输入快捷键**：
   - **长按 `⌘`（Command）键 ~0.85s**：如同 **Blink Shell / iPadOS** 般在屏幕中央弹出快捷键速查面板（HUD），松开即自动消失，支持 TUI 终端与 Web 界面。
   - 按 **Shift+Enter**：输入框内**换行**（多行自由编写 Prompt 或粘贴代码块，绝不误发）。
+  - 手机 / 平板的**屏幕键盘**（Web UI）没有 Shift：**Enter** 为换行，点 **➔** 按钮发送；接上实体键盘（如 iPad 妙控键盘）时，Enter 仍按下面的方式发送。
   - 空闲时按 **回车（Enter）** 或 **Command+Enter**（`⌘+Enter` / `Ctrl+Enter`）：发送消息（Submit）。
   - 模型生成期间按 **Command+Enter**（或 **Ctrl+Enter**）：**排队追问（Follow-up）**（加入后续队列，等本轮完全结束后再自动处理）。
   - 模型生成期间按 **回车（Enter）**：**抢占转向（Steer）**（当前工具执行完立刻优先处理你的新指令）。

@@ -172,6 +172,7 @@ pig
 - **Interactive Shortcuts & Mid-Turn Controls**:
   - **Hold `⌘` (Command) for ~0.85s**: Pops up an interactive **Blink Shell / iPadOS style** shortcuts cheat sheet (HUD) in the center of the screen, automatically dismissing when released (supported in both TUI and Web UI).
   - Press **Shift+Enter**: Insert a **newline** in the editor (draft multiline prompts or paste code safely without accidental sending).
+  - On a phone or tablet's **on-screen keyboard** (Web UI), which has no Shift: **Enter** inserts a newline and the **➔** button sends; with a hardware keyboard, such as an iPad's Magic Keyboard, Enter sends as below.
   - Press **Enter** or **Command+Enter** (`⌘+Enter` / `Ctrl+Enter`) when idle: Submit message.
   - Press **Command+Enter** (or **Ctrl+Enter**) while the model is answering: **Queue a follow-up** for after the turn ends.
   - Press **Enter** while the model is answering: **Steer** (interrupts right after current tool).

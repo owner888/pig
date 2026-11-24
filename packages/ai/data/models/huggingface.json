@@ -2299,6 +2299,50 @@
     },
     {
         "type": "chat",
+        "id": "thinkingmachines/Inkling-2-Mini",
+        "name": "Inkling 2 Mini",
+        "api": "openai-completions",
+        "provider": "huggingface",
+        "baseUrl": "https://router.huggingface.co/v1",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": "none",
+            "minimal": "minimal",
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": null,
+            "max": "max"
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 0.12,
+            "output": 0.5,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 262144,
+        "maxTokens": 65536,
+        "compat": {
+            "supportsDeveloperRole": false,
+            "supportsStrictMode": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
         "id": "thinkingmachines/Inkling-2-Small",
         "name": "Inkling 2 Small",
         "api": "openai-completions",
