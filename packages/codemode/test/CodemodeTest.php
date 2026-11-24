@@ -578,7 +578,7 @@ final class CodemodeTest extends TestCase
         $this->assertFalse($result['ok']);
         $this->assertSame('ParseError', $result['error']['name']);
         $this->assertStringContainsString('unexpected identifier "dec_src"', $result['error']['stack'], "PHP's own words stay");
-        $this->assertStringContainsString('Line 1 has "$ dec_src", which is how a shell prompt looks, not PHP: a PHP variable has no space after $. Write $dec_src.', $result['error']['stack']);
+        $this->assertStringContainsString('Line 1 starts with "$ dec_src", which is how a shell prompt looks, not PHP: a PHP variable has no space after $. Write $dec_src.', $result['error']['stack']);
     }
 
     public function testADollarInAStringOrAVariableVariableGetsNoShellPromptHint(): void
@@ -586,9 +586,14 @@ final class CodemodeTest extends TestCase
         $this->assertNull(ShellPromptVariable::hint("\$a = '\$ ls';\n\$b = <<<T\n\$ git status\nT;\n\$\$a; \${'b'};\n\$c = [1, 2"));
         $this->assertNull(ShellPromptVariable::hint("\$\nname = 1;"), 'a newline after $ is no prompt');
         $this->assertSame(
-            'Line 2 has "$ x", which is how a shell prompt looks, not PHP: a PHP variable has no space after $. Write $x.',
-            ShellPromptVariable::hint("<?php\n\$y = 1;\n\$ x = 2;"),
-            'counted after the <?php the sandbox takes off',
+            'Line 2 starts with "$ x", which is how a shell prompt looks, not PHP: a PHP variable has no space after $. Write $x.',
+            ShellPromptVariable::hint("<?php\n\$y = 1;\n    \$ x = 2;"),
+            'counted after the <?php the sandbox takes off; indented is still the start',
+        );
+        $this->assertSame(
+            'Line 1 has "$ item": a PHP variable has no space after $. Write $item.',
+            ShellPromptVariable::hint('foreach ($items as $ item) {}'),
+            'mid-line is no prompt',
         );
 
         $result = $this->script('$a = [1, 2; return $a;');

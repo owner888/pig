@@ -45,12 +45,18 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
-## Unreleased
+## [2.0.30] - 2026-11-24
+
+### Changed
+
+- Changed a codemode script's error for a function the sandbox turns off, such as `file_get_contents()`: PHP calls it undefined, and a model told that gave up as if PHP lacked it. The error now says it is turned off on purpose, so files, commands and the network go through `$tools`, and names the tools given that do its job — `$tools->read()`, `$tools->edit()`, `$tools->bash()` (`DisabledFunction`). The disabled list is the same, now in four groups (`CodemodeSandbox::FILE_FUNCTIONS` and the rest).
+- Changed the codemode hint for `$ name` to call it a shell prompt only where it is one, at the start of a line; mid-line (`as $ item`) it says only that a PHP variable has no space after `$`.
+
+## [2.0.29] - 2026-11-24
 
 ### Changed
 
 - Changed a codemode script's parse error to name two more mistakes PHP words only by their symptom, as the heredoc one already was. A script written as a shell prompt, `$ dec_src = ...`, got `unexpected identifier "dec_src", expecting variable`; a `"` inside a `"..."` string, as in an edit's `oldText`, got `unexpected identifier "s"`. Shown those, a model stopped instead of retrying. The error now adds the line and the mistake: no space after `$`, or the quote that closed the string, with a nowdoc as the way to write text that holds quotes (`ShellPromptVariable`, `QuoteInString`).
-- Changed a codemode script's error for a function the sandbox turns off, such as `file_get_contents()`: PHP calls it undefined, and a model told that gave up as if PHP lacked it. The error now says it is turned off on purpose, so files, commands and the network go through `$tools`, and names the tools given that do its job — `$tools->read()`, `$tools->edit()`, `$tools->bash()` (`DisabledFunction`). The disabled list is the same, now in four groups (`CodemodeSandbox::FILE_FUNCTIONS` and the rest).
 
 ## [2.0.28] - 2026-11-24
 
