@@ -11,6 +11,8 @@ use Pig\Async\Async;
 use Pig\Async\Loop;
 use Pig\Codemode\Declarations;
 use Pig\Codemode\Identifier;
+use Pig\Codemode\QuoteInString;
+use Pig\Codemode\ShellPromptVariable;
 use Pig\Codemode\UnclosedHeredoc;
 use Pig\Codemode\CodemodeSandbox;
 use Pig\Codemode\Source;
@@ -565,6 +567,62 @@ final class CodemodeTest extends TestCase
         $result = $this->script('$a = [1, 2; return $a;');
         $this->assertSame('ParseError', $result['error']['name']);
         $this->assertStringNotContainsString('never closes', $result['error']['stack']);
+    }
+
+    /** The mistake from a real run: a script that starts with a variable, written as a shell prompt. */
+    public function testAParseErrorFromAShellPromptDollarNamesTheVariable(): void
+    {
+        $result = $this->script("\$ dec_src = \$tools->read(['path' => 'a']);\nreturn \$dec_src;", [['name' => 'read', 'execute' => static fn (): string => 'text']]);
+
+        $this->assertFalse($result['ok']);
+        $this->assertSame('ParseError', $result['error']['name']);
+        $this->assertStringContainsString('unexpected identifier "dec_src"', $result['error']['stack'], "PHP's own words stay");
+        $this->assertStringContainsString('Line 1 has "$ dec_src", which is how a shell prompt looks, not PHP: a PHP variable has no space after $. Write $dec_src.', $result['error']['stack']);
+    }
+
+    public function testADollarInAStringOrAVariableVariableGetsNoShellPromptHint(): void
+    {
+        $this->assertNull(ShellPromptVariable::hint("\$a = '\$ ls';\n\$b = <<<T\n\$ git status\nT;\n\$\$a; \${'b'};\n\$c = [1, 2"));
+        $this->assertNull(ShellPromptVariable::hint("\$\nname = 1;"), 'a newline after $ is no prompt');
+        $this->assertSame(
+            'Line 2 has "$ x", which is how a shell prompt looks, not PHP: a PHP variable has no space after $. Write $x.',
+            ShellPromptVariable::hint("<?php\n\$y = 1;\n\$ x = 2;"),
+            'counted after the <?php the sandbox takes off',
+        );
+
+        $result = $this->script('$a = [1, 2; return $a;');
+        $this->assertSame('ParseError', $result['error']['name']);
+        $this->assertStringNotContainsString('shell prompt', $result['error']['stack']);
+    }
+
+    /** The mistake from a real run: an edit's text holding `"`, written inside `"..."`. */
+    public function testAParseErrorFromAQuoteInsideAStringNamesTheQuote(): void
+    {
+        $code = <<<'SCRIPT'
+            $tools->edit([
+                'edits' => [[
+                    'oldText' => "check(str_contains(\$script, "s/#define HAVE_MEMFD_CREATE 1/"), 'x');",
+                ]],
+            ]);
+            return 1;
+            SCRIPT;
+        $result = $this->script($code, [['name' => 'edit', 'execute' => static fn (): string => 'edited']]);
+
+        $this->assertFalse($result['ok']);
+        $this->assertSame('ParseError', $result['error']['name']);
+        $this->assertStringContainsString('unexpected identifier "s"', $result['error']['stack'], "PHP's own words stay");
+        $this->assertStringContainsString('Line 3: the string ends at the " before s — a " inside a "..." string closes it.', $result['error']['stack']);
+        $this->assertStringNotContainsString('shell prompt', $result['error']['stack']);
+    }
+
+    public function testStringsThatEndWhereTheyShouldGetNoQuoteHint(): void
+    {
+        $this->assertNull(QuoteInString::hint("\$a = \"x\" . \$b;\n\$d = \"a\" and \"b\";\nforeach (['a'] as \$v) {}\n\$e = \"it's \\\"ok\\\"\";\n\$c = [1, 2"));
+        $this->assertSame(
+            "Line 2: the string ends at the ' before s — a ' inside a '...' string closes it. Put text that holds quotes in a nowdoc (<<<'TEXT' on its own line, the text, then TEXT), which takes it exactly as written.",
+            QuoteInString::hint("<?php\n\$y = 1;\n\$s = 'it's';"),
+            'counted after the <?php the sandbox takes off',
+        );
     }
 
     public function testAToolNamedHasIsCalledAsHasUnderscoreAndHasStillAnswers(): void

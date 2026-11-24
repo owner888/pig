@@ -45,6 +45,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Changed
+
+- Changed a codemode script's parse error to name two more mistakes PHP words only by their symptom, as the heredoc one already was. A script written as a shell prompt, `$ dec_src = ...`, got `unexpected identifier "dec_src", expecting variable`; a `"` inside a `"..."` string, as in an edit's `oldText`, got `unexpected identifier "s"`. Shown those, a model stopped instead of retrying. The error now adds the line and the mistake: no space after `$`, or the quote that closed the string, with a nowdoc as the way to write text that holds quotes (`ShellPromptVariable`, `QuoteInString`).
+
 ## [2.0.28] - 2026-11-24
 
 ### Fixed

@@ -336,11 +336,17 @@ final class CodemodeSandbox
             $result['error']['kind'] = 'memory';
         }
 
-        // `Unclosed '['` at the last line, for a `<<<'NEW'` closed with `OLD,` a hundred lines up:
-        // the label it means, named (`UnclosedHeredoc`).
-        if (($result['ok'] ?? false) === false && ($result['error']['name'] ?? null) === 'ParseError' && ($hint = UnclosedHeredoc::hint($code)) !== null) {
-            $result['error']['message'] .= "\n" . $hint;
-            $result['error']['stack'] = ($result['error']['stack'] ?? '') . "\n" . $hint;
+        // A parse error PHP words after the symptom, said as the mistake: `Unclosed '['` at the last
+        // line, for a `<<<'NEW'` closed with `OLD,` a hundred lines up (`UnclosedHeredoc`);
+        // `unexpected identifier "dec_src"`, for a shell prompt's `$ dec_src` (`ShellPromptVariable`);
+        // `unexpected identifier "s"`, for a `"` inside a `"..."` string (`QuoteInString`).
+        if (($result['ok'] ?? false) === false && ($result['error']['name'] ?? null) === 'ParseError') {
+            foreach ([UnclosedHeredoc::hint($code), ShellPromptVariable::hint($code), QuoteInString::hint($code)] as $hint) {
+                if ($hint !== null) {
+                    $result['error']['message'] .= "\n" . $hint;
+                    $result['error']['stack'] = ($result['error']['stack'] ?? '') . "\n" . $hint;
+                }
+            }
         }
 
         return $result;
