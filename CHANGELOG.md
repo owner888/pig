@@ -45,6 +45,13 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Changed
+
+- Changed the codemode hint for a quote that closed a string early to name the line PHP stops at. A string run straight into a `\` or another string was not counted, so for `'python3 -c '\''...` the hint named a later line than PHP did. When the line has a shell's `'\''`, the hint now also says that is a shell's way to put a `'` inside `'...'`, which PHP lacks: told only of one quote, a model moved that command into a nowdoc and wrote the next one with `'\''` again.
+- Changed the `codemode` tool's description to say that text a tool takes as written — a `command`, an edit's `oldText` and `newText` — goes in a nowdoc, where nothing is escaped and a shell's `'\''` is not PHP. Models kept writing such text inside `'...'` or `"..."` and failing on its quotes; the description test's limit is 1650 characters now, from 1500.
+
 ## [2.0.30] - 2026-11-24
 
 ### Changed

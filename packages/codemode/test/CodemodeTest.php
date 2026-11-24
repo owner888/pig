@@ -621,6 +621,36 @@ final class CodemodeTest extends TestCase
         $this->assertStringNotContainsString('shell prompt', $result['error']['stack']);
     }
 
+    /**
+     * The mistake from two real runs in a row: a shell's `'\''` inside a PHP '...' string. PHP
+     * stops at the `\` on the first line; the hint says that line, and names the habit.
+     */
+    public function testAShellQuoteEscapeInAStringIsNamedAtTheLinePhpStopsAt(): void
+    {
+        $code = <<<'SCRIPT'
+            $r = $tools->bash(['command' => 'python3 -c '\''
+            print("x")
+            '\''', 'timeout' => 10]);
+            return $r;
+            SCRIPT;
+        $result = $this->script($code, [['name' => 'bash', 'execute' => static fn (): string => 'ran']]);
+
+        $this->assertFalse($result['ok']);
+        $this->assertSame('ParseError', $result['error']['name']);
+        $this->assertStringContainsString('unexpected token "\"', $result['error']['stack'], "PHP's own words stay");
+        $this->assertStringContainsString(<<<'HINT'
+            Line 1: the string ends at the ' before \ — a ' inside a '...' string closes it. '\'' is how a shell puts a ' inside '...'; PHP has no such escape.
+            HINT, $result['error']['stack']);
+    }
+
+    public function testAStringRunIntoAnotherStringIsAQuoteThatClosedItEarly(): void
+    {
+        $hint = (string) QuoteInString::hint("\$a = 'a''b';");
+
+        $this->assertStringStartsWith("Line 1: the string ends at the ' before 'b'", $hint);
+        $this->assertStringNotContainsString('shell', $hint, 'no shell escape on the line, none named');
+    }
+
     public function testStringsThatEndWhereTheyShouldGetNoQuoteHint(): void
     {
         $this->assertNull(QuoteInString::hint("\$a = \"x\" . \$b;\n\$d = \"a\" and \"b\";\nforeach (['a'] as \$v) {}\n\$e = \"it's \\\"ok\\\"\";\n\$c = [1, 2"));

@@ -63,7 +63,9 @@ final class CodemodeDescription
 
     /**
      * What the model reads on every request, so it is short — upstream's 1.0 `DESCRIPTION_INTRO`
-     * plus one line per global. The details are in `CODEMODE.md`, which the model reads when it
+     * plus one line per global, and pig's own line on nowdocs: models wrote commands and edit text
+     * holding quotes inside '...' or "...", a shell's `'\''` most of all, and the parse errors
+     * alone did not stop them writing the next one the same way. The details are in `CODEMODE.md`, which the model reads when it
      * needs them; the first version of this spelled every helper out here and cost ~830 tokens
      * of every request against ~300 now.
      */
@@ -71,6 +73,7 @@ final class CodemodeDescription
         Run PHP that calls other tools. The input is raw PHP source (no `<?php`, not JSON, no code fence), run as a function body in a sandboxed `php` process: top-level `return` works and `$tools` is in scope. No shell, file system, network or `include`.
         - `$tools->name([...args])` answers a string, or an array if the tool's declaration says so, and throws on failure. An array-returning tool may answer on failure too; check its fields. A result with pictures in it answers `['text' => ..., 'images' => [block, ...]]`; show one with `image($r['images'][0])`. Calls still running when the script ends are cancelled.
         - Optional first line: `// @options: {"max_output_tokens": 10000, "timeout_ms": 60000}`
+        - Text a tool takes as written (`command`, `oldText`, `newText`) goes in a nowdoc, `<<<'TEXT'`: nothing in it is escaped, and a shell's `'\''` is not PHP.
         TEXT;
 
     private const string GLOBALS = <<<'TEXT'
