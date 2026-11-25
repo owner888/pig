@@ -223,7 +223,7 @@ final class CodemodeExtensionTest extends TestCase
 
         // Upstream's tool keeps one description; `prepareLoadout` is what lists the callable tools.
         $codemode = $started->customTools->find('codemode');
-        $this->assertStringContainsString('## fixture', (string) self::declared($started, 'codemode'), 'the server is a namespace in the catalog');
+        $this->assertStringContainsString('## mcp__fixture', (string) self::declared($started, 'codemode'), "the server is a namespace in the catalog, by upstream's namespace name");
         // Upstream's `codemode` exposure: listed by its namespace only, a script finds it with `search_tools()`.
         $this->assertStringNotContainsString('$tools->mcp__fixture__echo(', (string) self::declared($started, 'codemode'));
 
@@ -362,6 +362,23 @@ PHP);
         $this->assertSame('call-7/2|call-7', file_get_contents($this->home . '/seen-call-id'), 'the last call asked about was the read');
         $this->assertSame('call-7', file_get_contents($this->home . '/seen-result-parent'));
         $this->assertSame('ok', $result->details['calls'][1]['status']);
+        $this->stop($started);
+    }
+
+    /** Upstream's #7121: a call's args preview is cut where a character ends, not through one. */
+    public function testACallsArgsPreviewIsCutAtACharacter(): void
+    {
+        file_put_contents($this->home . '/settings.json', json_encode(['defaultTools' => ['+codemode']]));
+        $started = $this->start();
+        $codemode = $started->customTools->find('codemode');
+
+        $result = Async::run(static fn () => ($codemode->execute)('1', ['code' => 'return parallel_settled([fn () => $tools->read(["path" => str_repeat("搜索记录", 30)])]);'], null, $started->extensionRunner->context(), null));
+
+        $args = $result->details['calls'][0]['args'];
+        $this->assertStringStartsWith('{"path":"搜索记录', $args, 'as upstream\'s JSON.stringify writes it, not as \\u escapes');
+        $this->assertTrue(mb_check_encoding($args, 'UTF-8'), $args);
+        $this->assertStringEndsWith('...', $args);
+        $this->assertLessThanOrEqual(200, strlen($args));
         $this->stop($started);
     }
 

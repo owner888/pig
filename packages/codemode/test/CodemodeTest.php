@@ -180,6 +180,29 @@ final class CodemodeTest extends TestCase
         $this->assertSame([['text' => 'one']], $seen);
     }
 
+    /**
+     * A value JSON cannot carry, refused with the reason: written as it was, `NAN` went out as an
+     * empty line, so a returned one ended the script as "the sandbox exited" and an argument left
+     * the call waiting until the timeout (upstream 1.5.1, #11901, where `NaN` printed as `null`).
+     */
+    public function testANanReturnedOrPassedToAToolIsAScriptErrorThatSaysSo(): void
+    {
+        $returned = $this->script('return [1, NAN];');
+
+        $this->assertFalse($returned['ok']);
+        $this->assertSame("the script's returned value is not JSON-serializable: Inf and NaN cannot be JSON encoded", $returned['error']['message']);
+
+        $called = false;
+        $passed = $this->script("\$n = 1;\nreturn \$tools->read(['limit' => INF]);", [
+            ['name' => 'read', 'execute' => static function () use (&$called): string { $called = true; return 'text'; }],
+        ], 5.0);
+
+        $this->assertFalse($passed['ok']);
+        $this->assertSame('TypeError', $passed['error']['name']);
+        $this->assertStringContainsString('the arguments of $tools->read() are not JSON-serializable: Inf and NaN cannot be JSON encoded in script line 2', $passed['error']['stack']);
+        $this->assertFalse($called, 'the call never left the script');
+    }
+
     public function testParallelRunsTheCallsAtOnceAndKeepsTheirOrder(): void
     {
         $order = [];

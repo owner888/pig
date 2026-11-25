@@ -130,6 +130,18 @@ final class McpConfig
                 continue;
             }
 
+            // Upstream's: "Names that differ only in `-` and `_` would share a namespace."
+            $clash = array_values(array_filter(
+                array_keys($servers),
+                // A key is an int for a server named `123`.
+                static fn (int|string $other): bool => (string) $other !== (string) $name && McpServers::namespace((string) $other) === McpServers::namespace((string) $name),
+            ));
+
+            if ($clash !== []) {
+                $errors[] = "{$path}: server \"{$name}\" conflicts with \"{$clash[0]}\"";
+                continue;
+            }
+
             $servers[(string) $name] = new ServerEntry((string) $name, $validated, $path, $scope);
         }
     }

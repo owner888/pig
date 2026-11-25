@@ -45,11 +45,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
-## Unreleased
+## [2.0.32] - 2026-11-25
 
 ### Fixed
 
 - Fixed a codemode script getting an array from a tool whose text looked like JSON — `$tools->read()` of a `.json` file, a `cat package.json` — where the description promises a string, so a script that echoed it failed. A tool without an output schema now gives its text as one string, as upstream's `toScriptValue()` does; a tool with one still gives its structured content.
+- Fixed a codemode script that returned `NAN` or `INF`, or passed one to a tool, failing as "the sandbox exited" or waiting until its timeout: the value went out as an empty line the host skipped. It is now a script error that says which value JSON cannot carry, as `store()` already said (upstream's #11901).
+- Fixed codemode's preview of a call's arguments and error being cut through a character, which ended a Chinese argument in a replacement character, and its arguments showing as `\u` escapes; they are cut where a character ends and keep their text, as upstream's preview does (#7121).
+- Fixed codemode scripts calling the wrong MCP tool when two names differ only in `-` and `_`, such as `read-file` and `read_file`: both were the identifier `mcp__s__read_file`, which ran whichever was registered first. As upstream, MCP tool names replace every character but letters, digits and `_` with `_` (`mcp__my-server__x` is now `mcp__my_server__x`), every tool of a server whose name then collides gets the hash suffix, a server's namespace is `mcp__my_server` with `my-server` as an alias, and a server name that differs from another only in `-` and `_` is rejected. A `--tools` or `--exclude-tools` pattern that spelled a server name with `-` must use `_` now.
+- Fixed the `mcp_servers` prompt section telling the model to find unlisted servers' tools with `searchTools()`, upstream's JavaScript name; a PHP script calls `search_tools()`.
 
 ## [2.0.31] - 2026-11-25
 

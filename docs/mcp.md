@@ -43,7 +43,7 @@ pig mcp remove docs
 
 Rules that are easy to get wrong:
 
-- Server names may only contain letters, digits, `_`, and `-`. Tools are named `mcp__<server>__<tool>`.
+- Server names may only contain letters, digits, `_`, and `-`. Tools are named `mcp__<server>__<tool>`, with every character other than letters, digits, and `_` replaced by `_`; tools of a server whose names then collide all get a hash suffix. Server names that differ only in `-` and `_` count as the same server: a second one is rejected, and a `mcp.json` server overrides a registered one.
 - `type` is optional: a `command` makes a stdio server and a `url` a streamable HTTP server. When present, it must be `stdio`, `http`, or `streamable-http`. `sse` is rejected; most servers that document an SSE endpoint also serve streamable HTTP, often at `/mcp` instead of `/sse`.
 - `command` is a single executable and `args` its arguments, not one shell string.
 - Keep secrets out of the file: use `${NAME}` for environment variables, as in `"Authorization": "Bearer ${GITHUB_TOKEN}"`, or `!command` to run a command. A command must make up the whole value, so it has to print the header value itself: `"Authorization": "!echo Bearer $(gh auth token)"`.

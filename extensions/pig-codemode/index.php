@@ -284,7 +284,10 @@ return static function (ExtensionApi $pig): void {
 
     // ---- running a script -----------------------------------------------------------------------
 
-    $truncate = static fn (string $text, int $max): string => strlen($text) > $max ? substr($text, 0, $max - 3) . '...' : $text;
+    // Upstream's `truncateText()` for the args and error previews of a call, cut where a character
+    // ends (#7121): `substr()` cut a Chinese argument through a character, and the preview ended
+    // in a replacement character.
+    $truncate = static fn (string $text, int $max): string => strlen($text) > $max ? mb_strcut($text, 0, $max - 3, 'UTF-8') . '...' : $text;
 
     $execute = static function (string $toolCallId, array $params, ?Closure $onUpdate, ExtensionContext $ctx, ?AbortSignal $signal) use (
         $agentTools,
@@ -378,7 +381,7 @@ return static function (ExtensionApi $pig): void {
             return $session === null ? "{$toolCallId}/" . (++$nestedCount) : $session->nestedToolCallId($toolCallId);
         };
         $record = static function (string $name, array $args) use (&$calls, $publish, $truncate, $argsPreviewChars, $nestedId): int {
-            $calls[] = ['id' => $nestedId(), 'name' => $name, 'args' => $truncate((string) json_encode($args, JSON_UNESCAPED_SLASHES), $argsPreviewChars), 'status' => 'running'];
+            $calls[] = ['id' => $nestedId(), 'name' => $name, 'args' => $truncate((string) json_encode($args, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), $argsPreviewChars), 'status' => 'running'];
             $publish();
 
             return count($calls) - 1;

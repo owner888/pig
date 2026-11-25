@@ -58,7 +58,7 @@ final class McpServersSection
             $reaches,
         );
         $omitted = static fn (int $count): array => $count > 0
-            ? ["- … {$count} more server" . ($count === 1 ? '' : 's') . '; find their tools with searchTools()']
+            ? ["- … {$count} more server" . ($count === 1 ? '' : 's') . '; find their tools with search_tools()']
             : [];
         // "Characters of the intro, the first `kept` server lines without descriptions, and the omission line."
         $size = static fn (int $kept): int => self::length(implode("\n", [$intro, ...array_slice($heads, 0, $kept), ...$omitted(count($listed) - $kept)]));

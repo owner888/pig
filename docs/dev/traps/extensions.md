@@ -579,3 +579,38 @@ in one; it moves to `objects()` when one does.
 `testNestedObjectsAreFoundThroughItemsMapsCombinatorsAndLocalReferences`,
 `testARecursiveSchemaEndsAndAReferenceThatLeadsNowhereChangesNothing`,
 `McpExtensionTest::testAnEmptyObjectArgumentReachesTheServerAsAnObjectAndAnEmptyArrayAsAnArray`.
+
+## Two MCP tools that differ in `-` and `_` were one identifier, and a script ran the wrong one
+
+**Symptom**: a server offered `read-file` and `read_file`; a codemode script called
+`$tools->mcp__s__read_file()` and `read-file` ran.
+
+**Cause**: `McpTools::name()` kept `-` (`[^A-Za-z0-9_-]`), so the two tools were registered as
+`mcp__s__read-file` and `mcp__s__read_file`, and `Identifier::of()` makes both `mcp__s__read_file`;
+`__CodemodeTools` keeps the first tool an identifier names. Upstream fixed this in 0.99.2 and pig
+had ported the name from before it.
+
+**Rule**: upstream's `createMcpToolName()` — everything but `[A-Za-z0-9_]` becomes `_`, so a tool's
+name is the identifier a script calls it by; every tool of a server whose name then collides gets
+the hash suffix, whatever the order of the list (`$plain` in `pig-mcp`'s `registerTools`); the
+namespace is `McpServers::namespace()` with the server's name an alias; and `McpConfig` rejects a
+server name that shares another's namespace. A name that reaches a script must be one identifier
+for one tool.
+
+**Test**: `McpExtensionTest::testToolsWhoseNamesSanitizeAlikeAllGetAHashAndEachRunsItself`,
+`testAServerNameThatSharesAnothersNamespaceIsRejected`, `testToolNamesAreSanitizedShortenedAndKeptApart`.
+
+## A codemode script that returned `NAN` ended as "the sandbox exited"
+
+**Symptom**: `return [1, NAN];` failed with `the sandbox exited with code 0`; `$tools->read(['limit'
+=> INF])` waited until the script's timeout.
+
+**Cause**: `__CodemodeBridge::send()` wrote `json_encode(...) . "\n"`, and `json_encode()` answers
+`false` for a value JSON cannot carry, so the message was an empty line, which the host skips: the
+`done` never came, nor did the call.
+
+**Rule**: a message to the host that does not encode is a `TypeError` with `json_last_error_msg()`,
+as `store()` already refused one: an argument fails the call at the script's line, a returned value
+fails the script. Nothing the script hands the bridge may vanish on the way.
+
+**Test**: `CodemodeTest::testANanReturnedOrPassedToAToolIsAScriptErrorThatSaysSo`.

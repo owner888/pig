@@ -276,17 +276,25 @@ return static function (ExtensionApi $pig): void {
      */
     $registerTools = static function (ServerConnection $connection) use ($pig, &$toolOwners, &$serverTools, &$syncResourceTools, $resourcesReadable): void {
         $server = $connection->name();
-        $namespace = ['name' => $server, 'aliases' => [\Pig\CodingAgent\McpServers::namespace($server)], 'description' => $connection->instructions];
+        // Upstream's namespace: `mcp__<server>` with `-` as `_`, the server's own name an alias —
+        // `describe_namespace("docs")` finds `mcp__docs`.
+        $namespace = ['name' => \Pig\CodingAgent\McpServers::namespace($server), 'aliases' => [$server], 'description' => $connection->instructions];
         $current = [];
+        // "Like Codex, all tools whose names sanitize to the same name get the hash suffix, so which
+        // one would keep the plain name does not depend on the order of the list."
+        $plain = array_count_values(array_map(
+            static fn (string $toolName): string => McpTools::name($server, $toolName),
+            array_values(array_unique(array_map(static fn (array $tool): string => (string) $tool['name'], $connection->tools))),
+        ));
 
         foreach ($connection->tools as $tool) {
             $toolName = (string) $tool['name'];
             $owner = "{$server}\0{$toolName}";
             $exposure = McpConfig::here(McpConfig::toolExposure($connection->entry->config, $toolName));
-            $name = McpTools::name($server, $toolName, static function (string $candidate) use (&$toolOwners, $owner, $current): bool {
+            $name = McpTools::name($server, $toolName, static function (string $candidate) use (&$toolOwners, $owner, $current, $plain): bool {
                 $existing = $toolOwners[$candidate] ?? null;
 
-                return ($existing !== null && $existing !== $owner) || in_array($candidate, $current, true);
+                return ($existing !== null && $existing !== $owner) || in_array($candidate, $current, true) || ($plain[$candidate] ?? 0) > 1;
             });
             $toolOwners[$name] = $owner;
             $current[] = $name;

@@ -96,9 +96,21 @@ final class __CodemodeBridge
             : ['kind' => 'text', 'text' => $data, ...($console ? ['console' => true] : [])]]);
     }
 
+    /**
+     * One message to the host, a line of JSON. A value JSON cannot carry (`NAN`, `INF`) is refused
+     * with the reason, as `store()` refuses one: written as it was, `json_encode()`'s `false` went
+     * out as an empty line the host skips, so a call waited for an answer that never came and a
+     * returned value ended the script as "the sandbox exited", neither saying why.
+     */
     public static function send(array $message): void
     {
-        fwrite(self::$out, json_encode($message, JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE) . "\n");
+        $line = json_encode($message, JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+
+        if ($line === false) {
+            throw new TypeError(json_last_error_msg());
+        }
+
+        fwrite(self::$out, $line . "\n");
         fflush(self::$out);
     }
 
@@ -114,7 +126,14 @@ final class __CodemodeBridge
     public static function ask(string $kind, string $name, mixed $args): mixed
     {
         $id = self::$nextId++;
-        self::send([$kind => ['id' => $id, 'name' => $name, 'args' => $args]]);
+
+        try {
+            self::send([$kind => ['id' => $id, 'name' => $name, 'args' => $args]]);
+        } catch (TypeError $error) {
+            $what = $kind === 'call' ? "the arguments of \$tools->{$name}()" : "the arguments of {$name}()";
+
+            throw new TypeError("{$what} are not JSON-serializable: {$error->getMessage()}", 0, $error);
+        }
 
         $result = Fiber::getCurrent() !== null && __CodemodeParallel::driving()
             ? Fiber::suspend($id)
@@ -187,11 +206,19 @@ final class __CodemodeBridge
         }
 
         self::$finished = true;
-        self::send(['done' => [
-            'ok' => $ok,
-            ...($ok ? ['value' => $payload] : ['error' => $payload]),
-            'writes' => ['set' => (object) self::$storeSet, 'delete' => self::$storeDeleted],
-        ]]);
+        $writes = ['set' => (object) self::$storeSet, 'delete' => self::$storeDeleted];
+
+        try {
+            self::send(['done' => ['ok' => $ok, ...($ok ? ['value' => $payload] : ['error' => $payload]), 'writes' => $writes]]);
+        } catch (TypeError $error) {
+            if (!$ok) {
+                throw $error;
+            }
+
+            // A returned value has no line of its own to name.
+            $message = "the script's returned value is not JSON-serializable: {$error->getMessage()}";
+            self::send(['done' => ['ok' => false, 'error' => ['kind' => 'script', 'name' => 'TypeError', 'message' => $message, 'stack' => "TypeError: {$message}"], 'writes' => $writes]]);
+        }
     }
 
     public static function finished(): bool

@@ -246,6 +246,9 @@ final class McpExtensionTest extends TestCase
     {
         $this->assertSame('mcp__fs__read_file', McpTools::name('fs', 'read_file'));
         $this->assertSame('mcp__fs__a_b', McpTools::name('fs', 'a.b'));
+        // Upstream's: everything but `[A-Za-z0-9_]` becomes `_`, `-` too, so the name is the
+        // identifier a script calls it by.
+        $this->assertSame('mcp__my_server__read_file', McpTools::name('my-server', 'read-file'));
 
         $long = McpTools::name('github', str_repeat('very_long_tool_name_', 5));
         $this->assertLessThanOrEqual(64, strlen($long));
@@ -591,7 +594,7 @@ final class McpExtensionTest extends TestCase
         $all = array_column($session->allTools(), null, 'name');
         $this->assertSame('deferred', $all['mcp__fixture__echo']['exposure']);
         $this->assertFalse($all['mcp__fixture__echo']['active']);
-        $this->assertSame('fixture', $all['mcp__fixture__echo']['namespace']['name']);
+        $this->assertSame(['name' => 'mcp__fixture', 'aliases' => ['fixture']], array_intersect_key($all['mcp__fixture__echo']['namespace'], ['name' => 1, 'aliases' => 1]), "upstream's: the namespace, the server's name an alias");
         $this->assertSame(['read'], $session->activeTools(), 'no codemode loaded here, so nothing to activate');
         // And upstream's warning says so, once.
         $warning = 'MCP tools are only reachable from the codemode or tool_search tool, but neither is active; they cannot be called.';
@@ -607,6 +610,49 @@ final class McpExtensionTest extends TestCase
         $this->assertStringContainsString('fixture: connected, 1 tools (codemode)', $this->mcpStatus());
 
         Async::run(fn () => $extensionRunner->emit(new SessionShutdownEvent()));
+    }
+
+    /**
+     * Upstream 0.99.2: `-` becomes `_` in tool and namespace names, and every tool of a server whose
+     * name then collides gets the hash suffix. pig kept `-`, so `read-file` and `read_file` were one
+     * identifier and a script calling `$tools->mcp__s__read_file()` ran whichever came first.
+     */
+    public function testToolsWhoseNamesSanitizeAlikeAllGetAHashAndEachRunsItself(): void
+    {
+        file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => [
+            'fix-ture' => ['command' => PHP_BINARY, 'args' => [self::fixtureServer(), '--colliding'], 'exposure' => 'direct'],
+        ]]));
+
+        [$set, $extensionRunner, $ui, $session] = $this->start();
+        $names = array_values(array_filter(array_column($session->allTools(), 'name'), static fn (string $n): bool => str_starts_with($n, 'mcp__fix_ture__')));
+
+        $this->assertContains('mcp__fix_ture__echo', $names, 'a name that collides with nothing stays plain');
+        $reads = array_values(array_filter($names, static fn (string $n): bool => str_starts_with($n, 'mcp__fix_ture__read_file')));
+        $this->assertCount(2, $reads);
+        $this->assertNotContains('mcp__fix_ture__read_file', $reads, 'neither keeps the plain name, whatever the order');
+
+        $answers = array_map(static fn (string $n): string => Async::run(static fn () => $session->executeTool($n, []))->content[0]->text, $reads);
+        sort($answers);
+        $this->assertSame(['called read-file', 'called read_file'], $answers);
+
+        $namespace = array_column($session->allTools(), null, 'name')['mcp__fix_ture__echo']['namespace'];
+        $this->assertSame(['mcp__fix_ture', ['fix-ture']], [$namespace['name'], $namespace['aliases']]);
+
+        Async::run(fn () => $extensionRunner->emit(new SessionShutdownEvent()));
+    }
+
+    /** Upstream's: "Names that differ only in `-` and `_` would share a namespace." */
+    public function testAServerNameThatSharesAnothersNamespaceIsRejected(): void
+    {
+        file_put_contents($this->home . '/mcp.json', json_encode(['mcpServers' => [
+            'my-server' => ['command' => 'npx'],
+            'my_server' => ['command' => 'uvx'],
+        ]]));
+
+        $config = McpConfig::load($this->home, $this->cwd, projectTrusted: true);
+
+        $this->assertSame(['my-server'], array_map(static fn ($e) => $e->name, $config->servers));
+        $this->assertSame([$this->home . '/mcp.json: server "my_server" conflicts with "my-server"'], $config->errors);
     }
 
     public function testADeferredToolIsDeclaredOnlyOnceToolSearchFindsIt(): void
@@ -736,7 +782,7 @@ final class McpExtensionTest extends TestCase
 
         $this->assertLessThanOrEqual(McpServersSection::MAX_SERVERS_SECTION_CHARS, mb_strlen($section));
         $lines = explode("\n", $section);
-        $this->assertMatchesRegularExpression('/^- … \d+ more servers; find their tools with searchTools\(\)$/u', end($lines));
+        $this->assertMatchesRegularExpression('/^- … \d+ more servers; find their tools with search_tools\(\)$/u', end($lines));
         preg_match('/(\d+) more/', end($lines), $match);
         $this->assertSame(200, count($lines) - 2 + (int) $match[1]);
     }

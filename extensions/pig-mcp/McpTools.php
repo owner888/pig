@@ -33,16 +33,20 @@ final class McpTools
     public const int OUTPUT_MAX_BYTES = 20 * 1024;
 
     /**
-     * `mcp__<server>__<tool>`, sanitized and shortened with a hash suffix when too long.
+     * `mcp__<server>__<tool>`, sanitized and shortened with a hash suffix when too long — upstream's
+     * `createMcpToolName()`: "Like Codex, everything but `[A-Za-z0-9_]` becomes `_`, so the name is
+     * also the identifier code mode scripts call it by." pig kept `-`, so `read-file` and
+     * `read_file` were one identifier and a script calling `$tools->mcp__s__read_file()` ran
+     * whichever was registered first.
      *
-     * `$isTaken` reports names already used by a different MCP tool: sanitizing can map two tools
-     * to one name (`a.b` and `a_b`), and the second then gets the hash suffix too.
+     * `$isTaken` reports names used by a different MCP tool: sanitizing can map two tools to one
+     * name (`a-b` and `a_b`), which then get the hash suffix.
      *
      * @param Closure(string): bool|null $isTaken
      */
     public static function name(string $server, string $tool, ?Closure $isTaken = null): string
     {
-        $name = (string) preg_replace('/[^A-Za-z0-9_-]/', '_', "mcp__{$server}__{$tool}");
+        $name = (string) preg_replace('/[^A-Za-z0-9_]/', '_', "mcp__{$server}__{$tool}");
 
         if (strlen($name) <= self::MAX_TOOL_NAME_LENGTH && ($isTaken === null || !$isTaken($name))) {
             return $name;

@@ -16,6 +16,8 @@ declare(strict_types=1);
  *   --garbage     write a line that is not JSON before the first reply
  *   --ignore-stdin-close  keep running after stdin closes (so SIGTERM has to do it)
  *   --log-on-call send a `notifications/message` before answering each `tools/call`
+ *   --colliding   also offer `read-file` and `read_file`, which sanitize to one name; a call
+ *                 answers the name it was made to
  *   --resources   offer resources: two pages of `resources/list`, one template, readable URIs,
  *                 and an MCP App resource that listings leave out
  *   --raw-arguments  `echo` also takes an object `filter` and an array `tags`, and answers the
@@ -97,8 +99,10 @@ while (($line = fgets(STDIN)) !== false) {
         'tools/list' => ['tools' => [['name' => 'echo', 'inputSchema' => ['type' => 'object', 'properties' => [
             'text' => ['type' => 'string'],
             ...($flag('--raw-arguments') ? ['filter' => ['type' => 'object'], 'tags' => ['type' => 'array']] : []),
-        ]]]]],
-        'tools/call' => ['content' => [['type' => 'text', 'text' => $flag('--raw-arguments') ? $rawArguments : 'echo: ' . ($params['arguments']['text'] ?? '')]]],
+        ]]], ...($flag('--colliding') ? [['name' => 'read-file', 'inputSchema' => ['type' => 'object']], ['name' => 'read_file', 'inputSchema' => ['type' => 'object']]] : [])]],
+        'tools/call' => ['content' => [['type' => 'text', 'text' => $flag('--colliding') && ($params['name'] ?? '') !== 'echo'
+            ? 'called ' . ($params['name'] ?? '')
+            : ($flag('--raw-arguments') ? $rawArguments : 'echo: ' . ($params['arguments']['text'] ?? ''))]]],
         'resources/list' => !$flag('--resources') ? null : (($params['cursor'] ?? null) === 'page2'
             ? ['resources' => [
                 ['uri' => 'file:///notes.txt', 'name' => 'notes', 'mimeType' => 'text/plain', 'size' => 5, 'icons' => [['src' => 'x']]],
