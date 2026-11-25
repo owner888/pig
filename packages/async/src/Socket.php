@@ -112,8 +112,12 @@ final class Socket
         return $socket;
     }
 
-    /** Write all of $data, suspending whenever the kernel buffer is full. */
-    public function write(string $data, float $timeout = 0.0, ?AbortSignal $signal = null): void
+    /**
+     * Write all of $data, suspending whenever the kernel buffer is full.
+     *
+     * @param (Closure(int, int): void)|null $onProgress told (`$sentSoFar`, `$total`) after each chunk goes out
+     */
+    public function write(string $data, float $timeout = 0.0, ?AbortSignal $signal = null, ?Closure $onProgress = null): void
     {
         $this->assertOpen();
         $length = strlen($data);
@@ -180,6 +184,10 @@ final class Socket
             $consecutiveZeros = 0;
             $stallStart = null;
             $offset += $written;
+
+            if ($onProgress !== null) {
+                $onProgress($offset, $length);
+            }
         }
     }
 

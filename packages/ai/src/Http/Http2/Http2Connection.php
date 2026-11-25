@@ -222,7 +222,7 @@ final class Http2Connection
         }
 
         try {
-            $this->sendBody($stream, (string) $request->body, $idleTimeout, $signal);
+            $this->sendBody($stream, (string) $request->body, $idleTimeout, $signal, $request->onUploadProgress);
             $this->wait(
                 static fn (): bool => $stream->status !== null || $stream->error !== null,
                 $idleTimeout,
@@ -399,7 +399,7 @@ final class Http2Connection
     }
 
     /** Write the body as DATA frames, as far as the two send windows allow, waiting for more when they do not. */
-    private function sendBody(Http2Stream $stream, string $body, float $idleTimeout, ?AbortSignal $signal): void
+    private function sendBody(Http2Stream $stream, string $body, float $idleTimeout, ?AbortSignal $signal, ?Closure $onProgress = null): void
     {
         $length = strlen($body);
         $offset = 0;
@@ -443,6 +443,10 @@ final class Http2Connection
             }
 
             $this->send($frames, $signal);
+
+            if ($onProgress !== null) {
+                $onProgress($offset, $length);
+            }
         }
     }
 

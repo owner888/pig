@@ -142,6 +142,7 @@ final class HttpClient implements HttpTransport
                 self::absolute($location, $request->url),
                 $request->headers,
                 $keepMethod ? $request->body : null,
+                $keepMethod ? $request->onUploadProgress : null,
             );
         }
 
@@ -254,7 +255,13 @@ final class HttpClient implements HttpTransport
     private function sendHttp1(Socket $socket, string $origin, Request $request, string $host, int $port, bool $tls, string $target, ?AbortSignal $signal): Response
     {
         try {
-            $socket->write($this->serialize($request, $host, $port, $tls, $target), $this->timeout, $signal);
+            $body = $request->body ?? '';
+            if ($body !== '' && $request->onUploadProgress !== null) {
+                $socket->write($this->serializeHead($request, $host, $port, $tls, $target), $this->timeout, $signal);
+                $socket->write($body, $this->timeout, $signal, $request->onUploadProgress);
+            } else {
+                $socket->write($this->serialize($request, $host, $port, $tls, $target), $this->timeout, $signal);
+            }
             [$head, $rest] = $this->readHead($socket, $signal);
         } catch (Throwable $error) {
             $socket->close();
@@ -330,6 +337,11 @@ final class HttpClient implements HttpTransport
 
     private function serialize(Request $request, string $host, int $port, bool $tls, string $target): string
     {
+        return $this->serializeHead($request, $host, $port, $tls, $target) . ($request->body ?? '');
+    }
+
+    private function serializeHead(Request $request, string $host, int $port, bool $tls, string $target): string
+    {
         $headers = [];
         foreach ($request->headers as $name => $value) {
             $headers[strtolower($name)] = $value;
@@ -350,7 +362,7 @@ final class HttpClient implements HttpTransport
             $lines[] = "{$name}: {$value}";
         }
 
-        return implode("\r\n", $lines) . "\r\n\r\n" . ($request->body ?? '');
+        return implode("\r\n", $lines) . "\r\n\r\n";
     }
 
     /** @return array{0: string, 1: string} the head, and whatever body bytes came with it */

@@ -50,6 +50,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 ### Added
 
 - Fixed `TlsRoots::systemFile()` and `Socket::enableTls()` ignoring `SSL_CERT_FILE` in the environment when PHP has no `openssl.cafile` and its `default_cert_file` does not exist on the machine (a runtime built without a certificate path on a phone, where PHP's `ext/openssl` passes OpenSSL neither).
+- Added optional chunked upload progress callbacks on `Socket::write()` and `Request::$onUploadProgress` for HTTP/1.1 and HTTP/2 request bodies.
 - Added `Loop::turn()`, one iteration of the event loop that never waits — for a host that owns the thread, as a GUI's run loop driving pig's from a timer, where `tick()` sleeping until the next timer would hold the window still.
 - Added decompression of gzip responses in `HttpClient::send()` (`InflatedBody`): a request that sets `accept-encoding: gzip` itself reads the body as it was before the server compressed it, chunk by chunk. Requests that do not set the header still go out with `identity`, so nothing pig sends changes.
 

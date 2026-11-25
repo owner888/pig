@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Http;
 
+use Closure;
+
 /** One outgoing request. */
 final readonly class Request
 {
@@ -17,6 +19,7 @@ final readonly class Request
         public string $url,
         public array $headers = [],
         public ?string $body = null,
+        public ?Closure $onUploadProgress = null,
     ) {
     }
 }
