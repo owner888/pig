@@ -297,6 +297,21 @@ final class Loop
             && $this->timers === [];
     }
 
+    /**
+     * One iteration that does not wait: what is ready now runs, and it returns.
+     *
+     * For a host that owns the thread — a GUI's run loop driving this one from a timer of its own —
+     * where `tick()`, which sleeps until the next timer or stream, would hold the window still.
+     * `nextTimerIn()` and `isWatchingStreams()` say when the host should come back.
+     */
+    public function turn(): void
+    {
+        $this->runQueue();
+        $this->poll(0.0);
+        $this->noticeSleep();
+        $this->runTimers();
+    }
+
     /** One iteration: deferred callbacks, then I/O, then expired timers. */
     public function tick(): void
     {

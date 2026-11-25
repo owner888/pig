@@ -40,6 +40,59 @@ final class HttpClientTest extends TestCase
         Http1Pool::clear();
     }
 
+    public function testAGzippedResponseIsReadAsItWasBeforeTheServerCompressedIt(): void
+    {
+        $plain = str_repeat('{"candle":[1700000000000,"1936.0","1939.0"]}', 400);
+        $gzipped = (string) gzencode($plain, 6);
+        $url = $this->server->start([
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Encoding: gzip\r\nContent-Length: " . strlen($gzipped) . "\r\n\r\n" . $gzipped,
+        ]);
+
+        $result = Async::run(static function () use ($url): array {
+            $response = (new HttpClient())->send(new Request('GET', $url, ['Accept-Encoding' => 'gzip']));
+
+            return [$response->header('content-encoding'), $response->header('content-length'), $response->header('content-type'), $response->body->all()];
+        });
+
+        $this->assertSame([null, null, 'application/json', $plain], $result);
+        $this->assertStringContainsString("accept-encoding: gzip\r\n", strtolower($this->server->received()));
+    }
+
+    public function testARequestThatDoesNotAskForGzipStillAsksForIdentity(): void
+    {
+        $url = $this->server->start(["HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"]);
+
+        $body = Async::run(static fn (): string => (new HttpClient())->send(new Request('GET', $url))->body->all());
+
+        $this->assertSame('ok', $body);
+        $this->assertStringContainsString("accept-encoding: identity\r\n", strtolower($this->server->received()));
+    }
+
+    public function testAGzippedBodyCutShortIsAnErrorNotAShorterBody(): void
+    {
+        $gzipped = substr((string) gzencode(str_repeat('abcdefgh', 4000), 6), 0, 60);
+        $url = $this->server->start([
+            "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: " . strlen($gzipped) . "\r\n\r\n" . $gzipped,
+        ]);
+
+        $this->assertThrows(
+            HttpError::class,
+            static fn () => Async::run(static fn (): string => (new HttpClient())->send(new Request('GET', $url, ['accept-encoding' => 'gzip']))->body->all()),
+            'in the middle of a gzip-compressed body',
+        );
+    }
+
+    public function testBytesThatAreNotGzipAreAnErrorThatSaysSo(): void
+    {
+        $url = $this->server->start(["HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 12\r\n\r\nnot gzip !!!"]);
+
+        $this->assertThrows(
+            HttpError::class,
+            static fn () => Async::run(static fn (): string => (new HttpClient())->send(new Request('GET', $url, ['accept-encoding' => 'gzip']))->body->all()),
+            'not the gzip it says it is',
+        );
+    }
+
     public function testReadsStatusHeadersAndBody(): void
     {
         $url = $this->server->start(["HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 13\r\n\r\n{\"ok\":true}\r\n"]);

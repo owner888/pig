@@ -79,6 +79,55 @@ final class LoopTest extends TestCase
         $this->assertSame(['early', 'late'], $order);
     }
 
+    public function testATurnRunsWhatIsReadyAndDoesNotWaitForATimer(): void
+    {
+        $loop = Loop::get();
+        [$read, $write] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, 0);
+        fwrite($write, 'payload');
+        $seen = [];
+
+        $loop->defer(function () use (&$seen): void {
+            $seen[] = 'deferred';
+        });
+        $watcher = $loop->onReadable($read, function ($stream) use (&$seen, $loop, &$watcher): void {
+            $seen[] = fread($stream, 1024);
+            $loop->cancel($watcher);
+        });
+        // A second away: `tick()` would sleep it out, a host's run loop cannot.
+        $timer = $loop->delay(1.0, function () use (&$seen): void {
+            $seen[] = 'timer';
+        });
+
+        $started = microtime(true);
+        $loop->turn();
+        $took = microtime(true) - $started;
+        $loop->cancel($timer);
+
+        $this->assertSame(['deferred', 'payload'], $seen);
+        $this->assertLessThan(0.5, $took);
+        $this->assertTrue(is_resource($write));
+    }
+
+    public function testATurnWithOnlyATimerPendingReturnsAtOnceAndFiresItOnceDue(): void
+    {
+        $loop = Loop::get();
+        $fired = 0;
+        $loop->delay(0.02, function () use (&$fired): void {
+            $fired++;
+        });
+
+        $started = microtime(true);
+        $loop->turn();
+        $took = microtime(true) - $started;
+        $this->assertSame(0, $fired);
+        $this->assertLessThan(0.015, $took);
+
+        usleep(25_000);
+        $loop->turn();
+        $this->assertSame(1, $fired);
+        $this->assertTrue($loop->isIdle());
+    }
+
     public function testReadableFiresOnTheWatcherThatOwnsTheStream(): void
     {
         $loop = Loop::get();

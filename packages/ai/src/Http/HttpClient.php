@@ -172,8 +172,30 @@ final class HttpClient implements HttpTransport
         return $base . $directory . '/' . $location;
     }
 
-    /** Send the request and return once status and headers are in. */
+    /**
+     * Send the request and return once status and headers are in.
+     *
+     * A response the server gzipped — which it does only for a request that set `accept-encoding`
+     * itself, since one that does not goes out with `identity` — is given uncompressed, and without
+     * the two headers that described the compressed bytes.
+     */
     public function send(Request $request, ?AbortSignal $signal = null): Response
+    {
+        $response = $this->exchange($request, $signal);
+        $encoding = strtolower(trim($response->header('content-encoding') ?? ''));
+
+        if ($encoding !== 'gzip' && $encoding !== 'x-gzip') {
+            return $response;
+        }
+
+        $headers = $response->headers;
+        unset($headers['content-encoding'], $headers['content-length']);
+
+        return new Response($response->status, $response->reason, $headers, new InflatedBody($response->body));
+    }
+
+    /** The request sent on a pooled connection or a new one, HTTP/2 where the server speaks it. */
+    private function exchange(Request $request, ?AbortSignal $signal): Response
     {
         [$host, $port, $tls, $target] = $this->resolve($request->url);
         $direct = $this->proxy === null || $this->proxy->bypasses($host);
