@@ -322,9 +322,11 @@ return static function (ExtensionApi $pig): void {
             array_values(array_filter($result->content, static fn ($b): bool => $b instanceof TextContent)),
         ));
 
-        // What a script receives for a call: a tool with an output schema (an MCP tool) gives
-        // its structured content when there is one, otherwise its text — decoded when it is JSON,
-        // because a PHP script wants an array and not a string it has to decode itself.
+        // What a script receives for a call, upstream's `toScriptValue()`: a tool with an output
+        // schema (an MCP tool) gives its structured content when there is one, otherwise its text,
+        // as one string. Not decoded when it looks like JSON: pig once did, and `read` of a
+        // `myphp.json` handed the script an array where the description promised a string, and the
+        // script failed on it (`$tools->read()` of any `.json`, a `cat package.json` alike).
         //
         // A result that carries **images** — `read` on a PNG, `generate_image` — answers an array
         // with the text under `text` and the pictures under `images`, each an MCP-shaped block
@@ -363,9 +365,7 @@ return static function (ExtensionApi $pig): void {
                 return ['text' => $text, 'images' => $images];
             }
 
-            $decoded = json_decode($text, true);
-
-            return is_array($decoded) && (str_starts_with(ltrim($text), '{') || str_starts_with(ltrim($text), '[')) ? $decoded : $text;
+            return $text;
         };
 
         // A nested call's own id is `<codemode call id>/<n>`, upstream's `NestedToolCallRunner`

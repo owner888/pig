@@ -365,6 +365,26 @@ PHP);
         $this->stop($started);
     }
 
+    /**
+     * The mistake from a real run: `read` of a `myphp.json` came back as an array, because pig
+     * decoded any text that looked like JSON. Upstream's `toScriptValue()` hands a tool without
+     * an output schema its text, as one string — as the description says.
+     */
+    public function testANestedReadOfAJsonFileIsItsTextNotAnArray(): void
+    {
+        file_put_contents($this->home . '/settings.json', json_encode(['defaultTools' => ['+codemode']]));
+        $started = $this->start();
+        $codemode = $started->customTools->find('codemode');
+
+        file_put_contents($this->cwd . '/myphp.json', "{\"name\": \"app\"}\n");
+        $result = Async::run(static fn () => ($codemode->execute)('1', ['code' => '$r = $tools->read(["path" => "myphp.json"]); return [gettype($r), $r];'], null, $started->extensionRunner->context(), null));
+
+        $value = json_decode($result->content[count($result->content) - 1]->text, true);
+        $this->assertSame('string', $value[0]);
+        $this->assertStringContainsString('{"name": "app"}', $value[1]);
+        $this->stop($started);
+    }
+
     public function testANestedCallIsCheckedAgainstTheSchemaReportedUnderItsParentAndBilledToTheScript(): void
     {
         file_put_contents($this->home . '/settings.json', json_encode(['defaultTools' => ['+codemode']]));

@@ -45,6 +45,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Fixed
+
+- Fixed a codemode script getting an array from a tool whose text looked like JSON — `$tools->read()` of a `.json` file, a `cat package.json` — where the description promises a string, so a script that echoed it failed. A tool without an output schema now gives its text as one string, as upstream's `toScriptValue()` does; a tool with one still gives its structured content.
+
 ## [2.0.31] - 2026-11-25
 
 ### Changed
