@@ -29,6 +29,22 @@ final class TlsRootsTest extends TestCase
         $this->assertSame($bundle, TlsRoots::bundleWith(TlsCertificate::file()), 'one bundle per extra file');
     }
 
+    public function testSslCertFileInTheEnvironmentIsTrustedWhenPhpHasNoDefaultFile(): void
+    {
+        $was = getenv('SSL_CERT_FILE');
+        $certificate = TlsCertificate::file();
+        putenv("SSL_CERT_FILE={$certificate}");
+
+        try {
+            $locations = openssl_get_cert_locations();
+            $ini = (string) ($locations['ini_cafile'] ?? '');
+            $expected = $ini !== '' && is_file($ini) ? $ini : $certificate;
+            $this->assertSame($expected, TlsRoots::systemFile());
+        } finally {
+            putenv($was === false ? 'SSL_CERT_FILE' : "SSL_CERT_FILE={$was}");
+        }
+    }
+
     public function testAFileThatCannotBeUsedSaysWhy(): void
     {
         $this->assertThrows(SocketError::class, static fn () => TlsRoots::bundleWith('/nonexistent/ca.pem'), 'Cannot read the extra certificates');

@@ -303,8 +303,10 @@ final class Socket
             stream_context_set_option($this->stream, 'ssl', 'alpn_protocols', implode(',', $alpn));
         }
 
-        if (self::$caFile !== null) {
-            stream_context_set_option($this->stream, 'ssl', 'cafile', self::$caFile);
+        $caFile = self::$caFile ?? TlsRoots::systemFile();
+
+        if ($caFile !== null) {
+            stream_context_set_option($this->stream, 'ssl', 'cafile', $caFile);
         }
 
         // The name to verify against, set here rather than only in `connect()`'s context: a

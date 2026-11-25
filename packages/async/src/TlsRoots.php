@@ -20,14 +20,17 @@ final class TlsRoots
 
     /**
      * The file of certificates this PHP trusts by default: `openssl.cafile` if it names one, else
-     * OpenSSL's own — the order PHP looks in. Null when neither is a file (a system that keeps its
-     * certificates only in a directory).
+     * `SSL_CERT_FILE` in the environment (OpenSSL's own variable, which PHP's `ext/openssl` does not
+     * read when `default_cert_file` is absent, as in a runtime built without a path on a phone), else
+     * OpenSSL's own — the order they should win in. Null when none is a file.
      */
     public static function systemFile(): ?string
     {
         $locations = openssl_get_cert_locations();
+        $envName = (string) ($locations['default_cert_file_env'] ?? 'SSL_CERT_FILE');
+        $envFile = $envName !== '' ? (string) getenv($envName) : '';
 
-        foreach ([$locations['ini_cafile'] ?? '', $locations['default_cert_file'] ?? ''] as $file) {
+        foreach ([$locations['ini_cafile'] ?? '', $envFile, $locations['default_cert_file'] ?? ''] as $file) {
             if ($file !== '' && is_file($file) && is_readable($file)) {
                 return $file;
             }
