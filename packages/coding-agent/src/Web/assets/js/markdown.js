@@ -120,7 +120,7 @@ export function renderMarkdown(rawMd) {
         quoteLines.push(lines[i].replace(/^\s*&gt;\s?/, ""));
         i++;
       }
-      out.push(`<blockquote>${quoteLines.map(renderInline).join("<br>")}</blockquote>`);
+      out.push(`<blockquote><button class="quote-copy-btn" onclick="event.stopPropagation(); copyQuote(this)" title="${escapeHtml(t("copy"))}">📋</button><div class="quote-body">${quoteLines.map(renderInline).join("<br>")}</div></blockquote>`);
       continue;
     }
 
@@ -227,9 +227,32 @@ export function copyCode(btn) {
   });
 }
 
-// Make copyCode available to inline onclick in generated HTML
+export function copyQuote(btn) {
+  const quoteEl = btn.closest("blockquote")?.querySelector(".quote-body");
+  if (!quoteEl) return;
+  const html = quoteEl.innerHTML.replace(/<br\s*\/?>/gi, "\n");
+  const tmp = document.createElement("div");
+  tmp.innerHTML = html;
+  const text = (tmp.textContent || "").trim();
+  if (!text) return;
+  copyText(text).then(() => {
+    btn.classList.add("copied");
+    btn.innerText = "✓";
+    setTimeout(() => {
+      btn.classList.remove("copied");
+      btn.innerText = "📋";
+    }, 1500);
+  }, (error) => {
+    console.error("Copy failed:", error);
+    btn.innerText = "✗";
+    setTimeout(() => { btn.innerText = "📋"; }, 1500);
+  });
+}
+
+// Make copyCode and copyQuote available to inline onclick in generated HTML
 if (typeof window !== "undefined") {
   window.copyCode = copyCode;
+  window.copyQuote = copyQuote;
 }
 
 export function renderDiff(oldText, newText) {

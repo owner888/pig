@@ -3,7 +3,7 @@
  */
 
 import "./viewport.js";
-import { autoFocus, escapeHtml, cleanSessionTitle, formatSessionFilename, openModal, enterModalLayer, leaveModalLayer, apiFetch } from "./utils.js";
+import { autoFocus, escapeHtml, copyText, cleanSessionTitle, formatSessionFilename, openModal, enterModalLayer, leaveModalLayer, apiFetch } from "./utils.js";
 import { t, __t, currentLocale, setLocale, applyI18n, onLocaleChanged, loadExtensionLocales, openLangModal, customLocales, extensionLocales, translateSettings, translateRequest, needsTranslation } from "./i18n.js";
 import { openThemeModal, initTheme, applyTheme, hasTheme, onThemeApplied, currentTheme } from "./theme.js";
 import { clientId, network } from "./network.js";
@@ -1487,26 +1487,52 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
     }
 
     /**
-     * The "Translate messages" setting on one finished answer or question: a Translate button
-     * under the text (`target` is the element holding its markdown), which swaps the text for the
-     * model's translation and back; pressed at once when "Translate entire chats" is on. An
-     * answer whose script says it is in a "Do not translate" language gets no button; one the
-     * script cannot place is asked, and the child answers `text: null` when it was in one.
+     * Action bar under a finished answer or question: a one-tap Copy button (so mobile users
+     * never have to long-press and drag selection handles across a message), and — when
+     * "Translate messages" is on — the Translate button beside it (`target` is the element
+     * holding its markdown), which swaps the text for the model's translation and back; pressed
+     * at once when "Translate entire chats" is on. An answer whose script says it is in a
+     * "Do not translate" language gets no Translate button; one the script cannot place is asked,
+     * and the child answers `text: null` when it was in one.
      */
     function attachTranslate(block, text, target = block) {
-      if (!text.trim() || !needsTranslation(text)) return;
+      if (!text.trim()) return;
       const tab = T();
       const bar = document.createElement("div");
       bar.className = "msg-translate";
+
+      let translated = null;
+      let showing = false;
+
+      const copyBtn = document.createElement("button");
+      copyBtn.className = "mini-btn msg-copy-btn";
+      copyBtn.title = t("copy");
+      copyBtn.textContent = `📋 ${t("copy")}`;
+      copyBtn.addEventListener("click", () => {
+        const current = (showing && translated ? translated : text).trim();
+        copyText(current).then(() => {
+          copyBtn.classList.add("copied");
+          copyBtn.textContent = `✓ ${t("copied")}`;
+          setTimeout(() => {
+            copyBtn.classList.remove("copied");
+            copyBtn.textContent = `📋 ${t("copy")}`;
+          }, 1500);
+        }, () => {
+          copyBtn.textContent = `✗ ${t("copy")}`;
+          setTimeout(() => { copyBtn.textContent = `📋 ${t("copy")}`; }, 1500);
+        });
+      });
+      bar.appendChild(copyBtn);
+      block.appendChild(bar);
+
+      if (!needsTranslation(text)) return;
+
       const btn = document.createElement("button");
       btn.className = "mini-btn";
       btn.dataset.i18n = "translate_btn";
       btn.textContent = t("translate_btn");
       bar.appendChild(btn);
-      block.appendChild(bar);
 
-      let translated = null;
-      let showing = false;
       const show = (markdown) => {
         target.innerHTML = renderMarkdown(markdown);
         if (target === block) block.appendChild(bar);
@@ -2143,11 +2169,15 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           card.className = "tool-card";
           card.innerHTML = `
             <div class="tool-header">
-              <span class="tool-header-title">pig doctor</span>
+              <div class="tool-header-left">
+                <span class="tool-header-chevron expanded">▶</span>
+                <span class="tool-header-title">pig doctor</span>
+              </div>
               <span class="tool-header-status">${escapeHtml(t("doctor_status"))}</span>
             </div>
-            <div class="tool-body"><pre><code>${escapeHtml(data.plain || "")}</code></pre></div>
+            <div class="tool-body expanded"><pre><code>${escapeHtml(data.plain || "")}</code></pre></div>
           `;
+          card.querySelector(".tool-header")?.addEventListener("click", () => ToolCard.setExpanded(card));
           chatScroll.appendChild(card);
         } catch (err) { appendErrorMessage(err.message); }
         scrollToBottomIfNeeded();
@@ -2218,11 +2248,15 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
             card.className = "tool-card";
             card.innerHTML = `
               <div class="tool-header">
-                <span class="tool-header-title">git diff</span>
+                <div class="tool-header-left">
+                  <span class="tool-header-chevron expanded">▶</span>
+                  <span class="tool-header-title">git diff</span>
+                </div>
                 <span class="tool-header-status">${escapeHtml(t("diff_status"))}</span>
               </div>
-              <div class="tool-body">${renderDiffFromUnified(data.diff)}</div>
+              <div class="tool-body expanded">${renderDiffFromUnified(data.diff)}</div>
             `;
+            card.querySelector(".tool-header")?.addEventListener("click", () => ToolCard.setExpanded(card));
             chatScroll.appendChild(card);
           } else {
             const empty = document.createElement("div");
@@ -4560,6 +4594,14 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
       if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
         e.preventDefault();
         openSessionSearch();
+      }
+      if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && (e.key === "o" || e.key === "O")) {
+        const cards = [...chatScroll.querySelectorAll(".tool-card")];
+        if (cards.length > 0) {
+          e.preventDefault();
+          const expandAll = cards.some((c) => !c.querySelector(".tool-body")?.classList.contains("expanded"));
+          for (const c of cards) ToolCard.setExpanded(c, expandAll);
+        }
       }
     });
 

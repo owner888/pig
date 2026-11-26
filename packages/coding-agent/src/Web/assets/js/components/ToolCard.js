@@ -165,12 +165,60 @@ export class ToolCard {
     });
   }
 
-  toggleExpand() {
-    const body = this.element.querySelector(".tool-body");
-    const chevron = this.element.querySelector(".tool-header-chevron");
-    if (!body || !chevron) return;
-    const isExp = body.classList.toggle("expanded");
-    chevron.classList.toggle("expanded", isExp);
+  toggleExpand(force) {
+    ToolCard.setExpanded(this.element, force);
+  }
+
+  /**
+   * Expand or collapse a `.tool-card` element with a height transition measured against its real
+   * content height (`<= 480px`), so a 40px card animates across 40px instead of 480px.
+   */
+  static setExpanded(cardEl, force) {
+    const body = cardEl?.querySelector(".tool-body");
+    const chevron = cardEl?.querySelector(".tool-header-chevron");
+    if (!body) return false;
+    const wasExpanded = body.classList.contains("expanded");
+    const isExp = force === undefined ? !wasExpanded : !!force;
+    if (isExp === wasExpanded) return isExp;
+
+    const canAnimate = typeof window !== "undefined"
+      && typeof window.requestAnimationFrame === "function"
+      && body.scrollHeight > 0;
+    if (canAnimate) {
+      if (isExp) {
+        const target = Math.min(480, body.scrollHeight + 24);
+        body.style.maxHeight = "0px";
+        body.classList.add("expanded");
+        chevron?.classList.add("expanded");
+        window.requestAnimationFrame(() => {
+          body.style.maxHeight = `${target}px`;
+        });
+        const clear = (e) => {
+          if (e && e.target !== body) return;
+          body.removeEventListener("transitionend", clear);
+          if (body.classList.contains("expanded")) body.style.maxHeight = "";
+        };
+        body.addEventListener("transitionend", clear);
+      } else {
+        const current = Math.min(480, body.offsetHeight || body.scrollHeight);
+        body.style.maxHeight = `${current}px`;
+        void body.offsetHeight;
+        body.classList.remove("expanded");
+        chevron?.classList.remove("expanded");
+        body.style.maxHeight = "0px";
+        const clear = (e) => {
+          if (e && e.target !== body) return;
+          body.removeEventListener("transitionend", clear);
+          if (!body.classList.contains("expanded")) body.style.maxHeight = "";
+        };
+        body.addEventListener("transitionend", clear);
+      }
+      return isExp;
+    }
+
+    body.classList.toggle("expanded", isExp);
+    chevron?.classList.toggle("expanded", isExp);
+    return isExp;
   }
 
   updateProgress(output) {
@@ -276,8 +324,7 @@ export class ToolCard {
     if (body) {
       body.innerHTML = bodyCopyButton() + this.formatResultBody();
       if (this.isError) {
-        body.classList.add("expanded");
-        this.element.querySelector(".tool-header-chevron")?.classList.add("expanded");
+        ToolCard.setExpanded(this.element, true);
       }
     }
     // Status and truncation must remain visible even when the output is collapsed.

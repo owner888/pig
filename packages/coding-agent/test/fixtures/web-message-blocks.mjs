@@ -62,7 +62,7 @@ Object.defineProperty(globalThis, 'navigator', { value: { language: 'en', clipbo
 globalThis.requestAnimationFrame = (f) => f();
 globalThis.fetch = async () => ({ ok: true, json: async () => ({ success: true, locales: {} }) });
 
-const { escapeHtml } = await import(`${root}/utils.js`);
+const { escapeHtml, copyText } = await import(`${root}/utils.js`);
 // The page's own translate button and its rules (`attachTranslate()` in app.js), not a stub.
 const { t, needsTranslation, translateSettings, translateRequest } = await import(`${root}/i18n.js`);
 const { renderMarkdown } = await import(`${root}/markdown.js`);
@@ -90,8 +90,8 @@ const start = app.indexOf('function appendSummaryMessage');
 const end = app.indexOf('    // ---- boot', start);
 assert.notEqual(start, -1);
 assert.notEqual(end, -1);
-const factory = new Function('chatScroll', 'promptInput', 'T', 'EmptyState', 'ThinkingBlock', 'ToolCard', 'escapeHtml', 't', 'renderMarkdown', 'openImageLightbox', 'scrollToBottomIfNeeded', 'textOf', 'appendErrorMessage', 'needsTranslation', 'translateSettings', 'translateRequest', `${app.slice(userStart, userEnd)}\n${app.slice(start, end)}\nreturn { appendSummaryMessage, appendHookMessage, appendUserMessage, renderMessages };`);
-const { appendSummaryMessage, appendHookMessage, appendUserMessage, renderMessages } = factory(chatScroll, promptInput, T, EmptyState, ThinkingBlock, ToolCard, escapeHtml, t, renderMarkdown, openImageLightbox, scrollToBottomIfNeeded, textOf, appendErrorMessage, needsTranslation, translateSettings, translateRequest);
+const factory = new Function('chatScroll', 'promptInput', 'T', 'EmptyState', 'ThinkingBlock', 'ToolCard', 'escapeHtml', 'copyText', 't', 'renderMarkdown', 'openImageLightbox', 'scrollToBottomIfNeeded', 'textOf', 'appendErrorMessage', 'needsTranslation', 'translateSettings', 'translateRequest', `${app.slice(userStart, userEnd)}\n${app.slice(start, end)}\nreturn { appendSummaryMessage, appendHookMessage, appendUserMessage, renderMessages };`);
+const { appendSummaryMessage, appendHookMessage, appendUserMessage, renderMessages } = factory(chatScroll, promptInput, T, EmptyState, ThinkingBlock, ToolCard, escapeHtml, copyText, t, renderMarkdown, openImageLightbox, scrollToBottomIfNeeded, textOf, appendErrorMessage, needsTranslation, translateSettings, translateRequest);
 
 renderMessages(fixture.messages);
 const html = chatScroll.children.map((c) => c.innerHTML).join('\n');
@@ -150,6 +150,20 @@ const write = new ToolCard({ toolCallId: 'write1', toolName: 'write', arguments:
 write.result = { content: [{ type: 'text', text: 'Wrote 16 bytes' }] };
 assert.match(write.formatResultBody(), /written contents/);
 
+const readCard = new ToolCard({ toolCallId: 'read-anim', toolName: 'read', arguments: { path: 'a.php' } });
+const readBody = readCard.element.querySelector('.tool-body');
+const readChevron = readCard.element.querySelector('.tool-header-chevron');
+assert.equal(readBody.classList.contains('expanded'), false, 'read card starts collapsed');
+readBody.scrollHeight = 96;
+readCard.toggleExpand();
+assert.equal(readBody.classList.contains('expanded'), true, 'toggleExpand expands a collapsed card');
+assert.equal(readChevron.classList.contains('expanded'), true);
+assert.equal(readBody.style.maxHeight, '120px', 'animates to measured content height + 24px padding');
+readCard.toggleExpand(false);
+assert.equal(readBody.classList.contains('expanded'), false, 'toggleExpand(false) collapses an expanded card');
+assert.equal(readChevron.classList.contains('expanded'), false);
+assert.equal(readBody.style.maxHeight, '0px');
+
 const bash = new ToolCard({ toolCallId: 'bash1', toolName: 'bash', arguments: { command: 'exit 3' } });
 bash.finish({ result: { content: [{ type: 'text', text: '' }], details: { exitCode: 3, fullOutputPath: '/tmp/full.txt' } }, isError: true });
 assert.doesNotMatch(bash.element.querySelector('.tool-details-footer').textContent, /exit 3/, 'the output already says the exit code');
@@ -165,5 +179,6 @@ assert.equal(active.lastScrollTop, chatScroll.scrollTop, 'redrawing messages upd
 assert.equal(renderMarkdown('php set_error_handler 和 go defer 的区别'), '<p>php set_error_handler 和 go defer 的区别</p>');
 assert.equal(renderMarkdown('`set_error_handler` and `a*b*c`'), '<p><code>set_error_handler</code> and <code>a*b*c</code></p>');
 assert.equal(renderMarkdown('_italic_ and __bold__'), '<p><em>italic</em> and <strong>bold</strong></p>');
+assert.match(renderMarkdown('> English Post\n> Line 2'), /quote-copy-btn[\s\S]*<div class="quote-body">English Post<br>Line 2<\/div>/);
 
 console.log('Web message blocks: passed');
