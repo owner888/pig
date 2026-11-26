@@ -154,15 +154,12 @@ const readCard = new ToolCard({ toolCallId: 'read-anim', toolName: 'read', argum
 const readBody = readCard.element.querySelector('.tool-body');
 const readChevron = readCard.element.querySelector('.tool-header-chevron');
 assert.equal(readBody.classList.contains('expanded'), false, 'read card starts collapsed');
-readBody.scrollHeight = 96;
 readCard.toggleExpand();
 assert.equal(readBody.classList.contains('expanded'), true, 'toggleExpand expands a collapsed card');
 assert.equal(readChevron.classList.contains('expanded'), true);
-assert.equal(readBody.style.maxHeight, '120px', 'animates to measured content height + 24px padding');
 readCard.toggleExpand(false);
 assert.equal(readBody.classList.contains('expanded'), false, 'toggleExpand(false) collapses an expanded card');
 assert.equal(readChevron.classList.contains('expanded'), false);
-assert.equal(readBody.style.maxHeight, '0px');
 
 const bash = new ToolCard({ toolCallId: 'bash1', toolName: 'bash', arguments: { command: 'exit 3' } });
 bash.finish({ result: { content: [{ type: 'text', text: '' }], details: { exitCode: 3, fullOutputPath: '/tmp/full.txt' } }, isError: true });

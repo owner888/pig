@@ -170,10 +170,12 @@ export class ToolCard {
   }
 
   /**
-   * Expand or collapse a `.tool-card` element with a height transition measured against its real
-   * content height (`<= 480px`), so a 40px card animates across 40px instead of 480px.
+   * Expand or collapse a `.tool-card` element while pinning its `.tool-header` at the exact same
+   * screen position: when the person clicks a header near the bottom of the conversation,
+   * collapsing its body must not let the chat scroller's `ResizeObserver` pull the whole page
+   * down (which yanked the clicked title down to the bottom of the viewport).
    */
-  static setExpanded(cardEl, force) {
+  static setExpanded(cardEl, force, pinHeader = true) {
     const body = cardEl?.querySelector(".tool-body");
     const chevron = cardEl?.querySelector(".tool-header-chevron");
     if (!body) return false;
@@ -181,43 +183,28 @@ export class ToolCard {
     const isExp = force === undefined ? !wasExpanded : !!force;
     if (isExp === wasExpanded) return isExp;
 
-    const canAnimate = typeof window !== "undefined"
-      && typeof window.requestAnimationFrame === "function"
-      && body.scrollHeight > 0;
-    if (canAnimate) {
-      if (isExp) {
-        const target = Math.min(480, body.scrollHeight + 24);
-        body.style.maxHeight = "0px";
-        body.classList.add("expanded");
-        chevron?.classList.add("expanded");
-        window.requestAnimationFrame(() => {
-          body.style.maxHeight = `${target}px`;
-        });
-        const clear = (e) => {
-          if (e && e.target !== body) return;
-          body.removeEventListener("transitionend", clear);
-          if (body.classList.contains("expanded")) body.style.maxHeight = "";
-        };
-        body.addEventListener("transitionend", clear);
-      } else {
-        const current = Math.min(480, body.offsetHeight || body.scrollHeight);
-        body.style.maxHeight = `${current}px`;
-        void body.offsetHeight;
-        body.classList.remove("expanded");
-        chevron?.classList.remove("expanded");
-        body.style.maxHeight = "0px";
-        const clear = (e) => {
-          if (e && e.target !== body) return;
-          body.removeEventListener("transitionend", clear);
-          if (!body.classList.contains("expanded")) body.style.maxHeight = "";
-        };
-        body.addEventListener("transitionend", clear);
-      }
-      return isExp;
-    }
+    const header = pinHeader ? cardEl?.querySelector(".tool-header") : null;
+    const scroller = header?.closest?.(".chat-scroll");
+    const beforeTop = header && scroller ? header.getBoundingClientRect().top : null;
+    if (scroller) scroller.dataset.userToggling = "1";
 
     body.classList.toggle("expanded", isExp);
     chevron?.classList.toggle("expanded", isExp);
+
+    if (header && scroller && beforeTop !== null) {
+      const afterTop = header.getBoundingClientRect().top;
+      if (afterTop !== beforeTop) {
+        scroller.scrollTop += afterTop - beforeTop;
+      }
+    }
+    if (scroller) {
+      const clear = () => { delete scroller.dataset.userToggling; };
+      if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+        window.requestAnimationFrame(clear);
+      } else {
+        clear();
+      }
+    }
     return isExp;
   }
 
@@ -324,7 +311,7 @@ export class ToolCard {
     if (body) {
       body.innerHTML = bodyCopyButton() + this.formatResultBody();
       if (this.isError) {
-        ToolCard.setExpanded(this.element, true);
+        ToolCard.setExpanded(this.element, true, false);
       }
     }
     // Status and truncation must remain visible even when the output is collapsed.

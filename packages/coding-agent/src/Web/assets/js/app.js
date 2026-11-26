@@ -138,7 +138,13 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           else if (this.remoteStart > 0 && nearTop(this)) fetchOlder(this);
         });
         // A block that grows after it was added (an image decoding, a card filling in) is followed too.
+        // Never when the user just clicked a tool card's header to collapse or expand it: pulling
+        // `scrollTop` to `scrollHeight` on collapse yanks the clicked title down to the bottom.
         this.blockResized = new ResizeObserver(() => {
+          if (this.scroller.dataset?.userToggling) {
+            this.lastScrollTop = this.scroller.scrollTop;
+            return;
+          }
           if (!this.userScrolledUp) {
             this.scroller.scrollTop = this.scroller.scrollHeight;
             this.lastScrollTop = this.scroller.scrollTop;
@@ -4600,7 +4606,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         if (cards.length > 0) {
           e.preventDefault();
           const expandAll = cards.some((c) => !c.querySelector(".tool-body")?.classList.contains("expanded"));
-          for (const c of cards) ToolCard.setExpanded(c, expandAll);
+          for (const c of cards) ToolCard.setExpanded(c, expandAll, false);
         }
       }
     });
