@@ -45,6 +45,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [2.0.36] - 2026-11-26
+
+### Fixed
+
+- Reverted the `pig web` tool-card expand/collapse changes from `2.0.34`–`2.0.35` back to the exact `2.0.32` toggle behavior so collapsing a tool card does not shift the scroll position.
+
 ## [2.0.35] - 2026-11-26
 
 ### Fixed
