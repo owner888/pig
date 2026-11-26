@@ -165,47 +165,12 @@ export class ToolCard {
     });
   }
 
-  toggleExpand(force) {
-    ToolCard.setExpanded(this.element, force);
-  }
-
-  /**
-   * Expand or collapse a `.tool-card` element while pinning its `.tool-header` at the exact same
-   * screen position: when the person clicks a header near the bottom of the conversation,
-   * collapsing its body must not let the chat scroller's `ResizeObserver` pull the whole page
-   * down (which yanked the clicked title down to the bottom of the viewport).
-   */
-  static setExpanded(cardEl, force, pinHeader = true) {
-    const body = cardEl?.querySelector(".tool-body");
-    const chevron = cardEl?.querySelector(".tool-header-chevron");
-    if (!body) return false;
-    const wasExpanded = body.classList.contains("expanded");
-    const isExp = force === undefined ? !wasExpanded : !!force;
-    if (isExp === wasExpanded) return isExp;
-
-    const header = pinHeader ? cardEl?.querySelector(".tool-header") : null;
-    const scroller = header?.closest?.(".chat-scroll");
-    const beforeTop = header && scroller ? header.getBoundingClientRect().top : null;
-    if (scroller) scroller.dataset.userToggling = "1";
-
-    body.classList.toggle("expanded", isExp);
-    chevron?.classList.toggle("expanded", isExp);
-
-    if (header && scroller && beforeTop !== null) {
-      const afterTop = header.getBoundingClientRect().top;
-      if (afterTop !== beforeTop) {
-        scroller.scrollTop += afterTop - beforeTop;
-      }
-    }
-    if (scroller) {
-      const clear = () => { delete scroller.dataset.userToggling; };
-      if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
-        window.requestAnimationFrame(clear);
-      } else {
-        clear();
-      }
-    }
-    return isExp;
+  toggleExpand() {
+    const body = this.element.querySelector(".tool-body");
+    const chevron = this.element.querySelector(".tool-header-chevron");
+    if (!body || !chevron) return;
+    const isExp = body.classList.toggle("expanded");
+    chevron.classList.toggle("expanded", isExp);
   }
 
   updateProgress(output) {
@@ -311,7 +276,8 @@ export class ToolCard {
     if (body) {
       body.innerHTML = bodyCopyButton() + this.formatResultBody();
       if (this.isError) {
-        ToolCard.setExpanded(this.element, true, false);
+        body.classList.add("expanded");
+        this.element.querySelector(".tool-header-chevron")?.classList.add("expanded");
       }
     }
     // Status and truncation must remain visible even when the output is collapsed.

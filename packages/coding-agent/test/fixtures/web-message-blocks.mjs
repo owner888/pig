@@ -150,17 +150,6 @@ const write = new ToolCard({ toolCallId: 'write1', toolName: 'write', arguments:
 write.result = { content: [{ type: 'text', text: 'Wrote 16 bytes' }] };
 assert.match(write.formatResultBody(), /written contents/);
 
-const readCard = new ToolCard({ toolCallId: 'read-anim', toolName: 'read', arguments: { path: 'a.php' } });
-const readBody = readCard.element.querySelector('.tool-body');
-const readChevron = readCard.element.querySelector('.tool-header-chevron');
-assert.equal(readBody.classList.contains('expanded'), false, 'read card starts collapsed');
-readCard.toggleExpand();
-assert.equal(readBody.classList.contains('expanded'), true, 'toggleExpand expands a collapsed card');
-assert.equal(readChevron.classList.contains('expanded'), true);
-readCard.toggleExpand(false);
-assert.equal(readBody.classList.contains('expanded'), false, 'toggleExpand(false) collapses an expanded card');
-assert.equal(readChevron.classList.contains('expanded'), false);
-
 const bash = new ToolCard({ toolCallId: 'bash1', toolName: 'bash', arguments: { command: 'exit 3' } });
 bash.finish({ result: { content: [{ type: 'text', text: '' }], details: { exitCode: 3, fullOutputPath: '/tmp/full.txt' } }, isError: true });
 assert.doesNotMatch(bash.element.querySelector('.tool-details-footer').textContent, /exit 3/, 'the output already says the exit code');

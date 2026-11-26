@@ -138,13 +138,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           else if (this.remoteStart > 0 && nearTop(this)) fetchOlder(this);
         });
         // A block that grows after it was added (an image decoding, a card filling in) is followed too.
-        // Never when the user just clicked a tool card's header to collapse or expand it: pulling
-        // `scrollTop` to `scrollHeight` on collapse yanks the clicked title down to the bottom.
         this.blockResized = new ResizeObserver(() => {
-          if (this.scroller.dataset?.userToggling) {
-            this.lastScrollTop = this.scroller.scrollTop;
-            return;
-          }
           if (!this.userScrolledUp) {
             this.scroller.scrollTop = this.scroller.scrollHeight;
             this.lastScrollTop = this.scroller.scrollTop;
@@ -156,7 +150,6 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
             for (const n of r.removedNodes) if (n.nodeType === Node.ELEMENT_NODE) this.blockResized.unobserve(n);
           }
         });
-        this.blockResized.observe(this.scroller);
         this.scrollerObserver.observe(this.scroller, { childList: true });
         chatArea.appendChild(this.scroller);
       }
@@ -2175,15 +2168,11 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           card.className = "tool-card";
           card.innerHTML = `
             <div class="tool-header">
-              <div class="tool-header-left">
-                <span class="tool-header-chevron expanded">▶</span>
-                <span class="tool-header-title">pig doctor</span>
-              </div>
+              <span class="tool-header-title">pig doctor</span>
               <span class="tool-header-status">${escapeHtml(t("doctor_status"))}</span>
             </div>
-            <div class="tool-body expanded"><pre><code>${escapeHtml(data.plain || "")}</code></pre></div>
+            <div class="tool-body"><pre><code>${escapeHtml(data.plain || "")}</code></pre></div>
           `;
-          card.querySelector(".tool-header")?.addEventListener("click", () => ToolCard.setExpanded(card));
           chatScroll.appendChild(card);
         } catch (err) { appendErrorMessage(err.message); }
         scrollToBottomIfNeeded();
@@ -2254,15 +2243,11 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
             card.className = "tool-card";
             card.innerHTML = `
               <div class="tool-header">
-                <div class="tool-header-left">
-                  <span class="tool-header-chevron expanded">▶</span>
-                  <span class="tool-header-title">git diff</span>
-                </div>
+                <span class="tool-header-title">git diff</span>
                 <span class="tool-header-status">${escapeHtml(t("diff_status"))}</span>
               </div>
-              <div class="tool-body expanded">${renderDiffFromUnified(data.diff)}</div>
+              <div class="tool-body">${renderDiffFromUnified(data.diff)}</div>
             `;
-            card.querySelector(".tool-header")?.addEventListener("click", () => ToolCard.setExpanded(card));
             chatScroll.appendChild(card);
           } else {
             const empty = document.createElement("div");
@@ -4601,14 +4586,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         e.preventDefault();
         openSessionSearch();
       }
-      if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && (e.key === "o" || e.key === "O")) {
-        const cards = [...chatScroll.querySelectorAll(".tool-card")];
-        if (cards.length > 0) {
-          e.preventDefault();
-          const expandAll = cards.some((c) => !c.querySelector(".tool-body")?.classList.contains("expanded"));
-          for (const c of cards) ToolCard.setExpanded(c, expandAll, false);
-        }
-      }
+
     });
 
     onLocaleChanged(() => { refreshSidebar(); loadPanels(); });
