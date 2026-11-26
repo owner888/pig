@@ -6,6 +6,7 @@ namespace Pig\CodingAgent\Test;
 
 use PHPUnit\Framework\TestCase;
 use Pig\Ai\Http\HttpClient;
+use Pig\Ai\Http\InflatedBody;
 use Pig\Ai\Http\Request;
 use Pig\Async\Async;
 use Pig\Async\Loop;
@@ -1753,11 +1754,10 @@ final class WebModeTest extends TestCase
             $this->assertSame('no-cache', $plain->headers['cache-control'] ?? null, 'still asked about every time, so an update is seen at once');
 
             $gzip = $http->send(new Request('GET', $url, ['Accept-Encoding' => 'gzip, deflate, br']));
-            $this->assertSame('gzip', $gzip->headers['content-encoding'] ?? null);
+            $this->assertInstanceOf(InflatedBody::class, $gzip->body);
+            $this->assertArrayNotHasKey('content-encoding', $gzip->headers, 'undone by HttpClient along with the body');
             $this->assertSame('Accept-Encoding', $gzip->headers['vary'] ?? null);
-            $compressed = $gzip->body->all();
-            $this->assertSame($source, gzdecode($compressed));
-            $this->assertLessThan(strlen($source) / 2, strlen($compressed));
+            $this->assertSame($source, $gzip->body->all());
 
             $again = $http->send(new Request('GET', $url, ['If-None-Match' => $etag, 'Accept-Encoding' => 'gzip']));
             $this->assertSame(304, $again->status);
