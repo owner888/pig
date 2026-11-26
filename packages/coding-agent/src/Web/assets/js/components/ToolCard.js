@@ -169,8 +169,39 @@ export class ToolCard {
     const body = this.element.querySelector(".tool-body");
     const chevron = this.element.querySelector(".tool-header-chevron");
     if (!body || !chevron) return;
+
+    const header = this.element.querySelector(".tool-header");
+    const scroller = this.element.closest?.(".chat-scroll");
+    const beforeTop = header && scroller ? header.getBoundingClientRect().top : null;
+    const targetScrollTop = scroller ? scroller.scrollTop : 0;
+
     const isExp = body.classList.toggle("expanded");
     chevron.classList.toggle("expanded", isExp);
+
+    if (header && scroller && beforeTop !== null) {
+      let currentPad = parseFloat(scroller.dataset.collapsePad || "0") || 0;
+      const basePad = Math.max(0, (parseFloat(window.getComputedStyle?.(scroller)?.paddingBottom || "16") || 16) - currentPad);
+      if (isExp && currentPad > 0) {
+        currentPad = 0;
+        delete scroller.dataset.collapsePad;
+        scroller.style.paddingBottom = "";
+      }
+      const afterTop = header.getBoundingClientRect().top;
+      const delta = afterTop - beforeTop;
+      if (Math.abs(delta) > 0.5) {
+        const wanted = scroller.scrollTop + delta;
+        const maxWithoutPad = scroller.scrollHeight - currentPad - scroller.clientHeight;
+        const neededPad = Math.max(0, Math.ceil(wanted - maxWithoutPad));
+        if (neededPad > 0) {
+          scroller.dataset.collapsePad = String(neededPad);
+          scroller.style.paddingBottom = `${basePad + neededPad}px`;
+        } else if (currentPad > 0) {
+          delete scroller.dataset.collapsePad;
+          scroller.style.paddingBottom = "";
+        }
+        scroller.scrollTop = Math.max(0, targetScrollTop);
+      }
+    }
   }
 
   updateProgress(output) {

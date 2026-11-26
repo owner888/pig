@@ -127,6 +127,20 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         this.lastScrollTop = 0;
         this.scroller.addEventListener("scroll", () => {
           const top = this.scroller.scrollTop;
+          // Trim any bottom headroom added when a card near the end was collapsed, as the reader scrolls up.
+          const pad = parseFloat(this.scroller.dataset.collapsePad || "0") || 0;
+          if (pad > 0) {
+            const baseHeight = this.scroller.scrollHeight - pad;
+            const needed = Math.max(0, Math.ceil(top - (baseHeight - this.scroller.clientHeight)));
+            if (needed <= 0) {
+              delete this.scroller.dataset.collapsePad;
+              this.scroller.style.paddingBottom = "";
+            } else if (needed < pad) {
+              const basePad = (parseFloat(window.getComputedStyle(this.scroller).paddingBottom) || 16) - pad;
+              this.scroller.dataset.collapsePad = String(needed);
+              this.scroller.style.paddingBottom = `${basePad + needed}px`;
+            }
+          }
           const d = this.scroller.scrollHeight - top - this.scroller.clientHeight;
           if (d <= 80) this.userScrolledUp = false;
           else if (top < this.lastScrollTop) this.userScrolledUp = true;
@@ -863,6 +877,10 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
 
     function scrollToBottomIfNeeded() {
       if (!userScrolledUp) {
+        if (chatScroll.dataset?.collapsePad) {
+          delete chatScroll.dataset.collapsePad;
+          chatScroll.style.paddingBottom = "";
+        }
         chatScroll.scrollTop = chatScroll.scrollHeight;
         if (T()) T().lastScrollTop = chatScroll.scrollTop;
       }
