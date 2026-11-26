@@ -45,6 +45,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [2.0.35] - 2026-11-26
+
+### Fixed
+
+- Fixed `pig web` tool cards jumping the page and pulling the clicked `.tool-header` title down when expanded or collapsed: removed the height transition on `.tool-body` (which fired the chat scroller's `ResizeObserver` on every animation frame) and pinned `.tool-header`'s viewport position across `ToolCard.setExpanded()` so only the body below the title opens or closes.
+
 ## [2.0.34] - 2026-11-26
 
 ### Added
