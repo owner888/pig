@@ -170,38 +170,86 @@ export class ToolCard {
     const chevron = this.element.querySelector(".tool-header-chevron");
     if (!body || !chevron) return;
 
-    const header = this.element.querySelector(".tool-header");
     const scroller = this.element.closest?.(".chat-scroll");
-    const beforeTop = header && scroller ? header.getBoundingClientRect().top : null;
-    const targetScrollTop = scroller ? scroller.scrollTop : 0;
+    const wasExpanded = body.classList.contains("expanded");
+    const isExp = !wasExpanded;
 
-    const isExp = body.classList.toggle("expanded");
-    chevron.classList.toggle("expanded", isExp);
+    body.getAnimations?.().forEach((a) => a.cancel());
 
-    if (header && scroller && beforeTop !== null) {
-      let currentPad = parseFloat(scroller.dataset.collapsePad || "0") || 0;
-      const basePad = Math.max(0, (parseFloat(window.getComputedStyle?.(scroller)?.paddingBottom || "16") || 16) - currentPad);
-      if (isExp && currentPad > 0) {
-        currentPad = 0;
-        delete scroller.dataset.collapsePad;
-        scroller.style.paddingBottom = "";
-      }
-      const afterTop = header.getBoundingClientRect().top;
-      const delta = afterTop - beforeTop;
-      if (Math.abs(delta) > 0.5) {
-        const wanted = scroller.scrollTop + delta;
-        const maxWithoutPad = scroller.scrollHeight - currentPad - scroller.clientHeight;
-        const neededPad = Math.max(0, Math.ceil(wanted - maxWithoutPad));
-        if (neededPad > 0) {
-          scroller.dataset.collapsePad = String(neededPad);
-          scroller.style.paddingBottom = `${basePad + neededPad}px`;
-        } else if (currentPad > 0) {
-          delete scroller.dataset.collapsePad;
-          scroller.style.paddingBottom = "";
+    const currentPad = scroller ? (parseFloat(scroller.dataset.collapsePad || "0") || 0) : 0;
+    const basePad = scroller
+      ? Math.max(0, (parseFloat(window.getComputedStyle?.(scroller)?.paddingBottom || "16") || 16) - currentPad)
+      : 16;
+
+    // Web Animations API (SwiftUI spring curve `cubic-bezier(0.32, 0.72, 0, 1)`):
+    // Before collapsing, pre-reserve any bottom headroom the scroller will need at height 0 so
+    // `scrollTop` is never clamped on any animation frame and the clicked header stays pinned.
+    if (typeof body.animate === "function") {
+      if (!isExp) {
+        const startHeight = body.offsetHeight;
+        if (scroller && startHeight > 0) {
+          const maxWithoutPadAfter = (scroller.scrollHeight - currentPad - startHeight) - scroller.clientHeight;
+          const neededPad = Math.max(0, Math.ceil(scroller.scrollTop - maxWithoutPadAfter));
+          if (neededPad > currentPad) {
+            scroller.dataset.collapsePad = String(neededPad);
+            scroller.style.paddingBottom = `${basePad + neededPad}px`;
+          }
+          scroller.dataset.userToggling = "1";
         }
-        scroller.scrollTop = Math.max(0, targetScrollTop);
+        chevron.classList.remove("expanded");
+        body.style.overflow = "hidden";
+        const anim = body.animate([
+          { height: `${startHeight}px`, paddingTop: "12px", paddingBottom: "12px", opacity: 1 },
+          { height: "0px", paddingTop: "0px", paddingBottom: "0px", opacity: 0 },
+        ], { duration: 220, easing: "cubic-bezier(0.32, 0.72, 0, 1)" });
+        const finish = (done) => {
+          if (done) body.classList.remove("expanded");
+          body.style.overflow = "";
+          if (scroller) {
+            scroller.lastScrollHeight = scroller.scrollHeight;
+            delete scroller.dataset.userToggling;
+          }
+        };
+        anim.onfinish = () => finish(true);
+        anim.oncancel = () => finish(false);
+        return;
       }
+
+      body.classList.add("expanded");
+      chevron.classList.add("expanded");
+      const endHeight = body.offsetHeight;
+      if (scroller) scroller.dataset.userToggling = "1";
+      body.style.overflow = "hidden";
+      const anim = body.animate([
+        { height: "0px", paddingTop: "0px", paddingBottom: "0px", opacity: 0 },
+        { height: `${endHeight}px`, paddingTop: "12px", paddingBottom: "12px", opacity: 1 },
+      ], { duration: 220, easing: "cubic-bezier(0.32, 0.72, 0, 1)" });
+      const finish = () => {
+        body.style.overflow = "";
+        if (scroller) {
+          if (scroller.dataset.collapsePad) {
+            const p = parseFloat(scroller.dataset.collapsePad || "0") || 0;
+            const maxWithout = (scroller.scrollHeight - p) - scroller.clientHeight;
+            const stillNeeded = Math.max(0, Math.ceil(scroller.scrollTop - maxWithout));
+            if (stillNeeded <= 0) {
+              delete scroller.dataset.collapsePad;
+              scroller.style.paddingBottom = "";
+            } else if (stillNeeded < p) {
+              scroller.dataset.collapsePad = String(stillNeeded);
+              scroller.style.paddingBottom = `${basePad + stillNeeded}px`;
+            }
+          }
+          scroller.lastScrollHeight = scroller.scrollHeight;
+          delete scroller.dataset.userToggling;
+        }
+      };
+      anim.onfinish = finish;
+      anim.oncancel = finish;
+      return;
     }
+
+    body.classList.toggle("expanded", isExp);
+    chevron.classList.toggle("expanded", isExp);
   }
 
   updateProgress(output) {

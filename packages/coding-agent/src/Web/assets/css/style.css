@@ -1274,7 +1274,7 @@
       font-size: var(--text-xs);
       color: var(--color-dim);
       display: inline-block;
-      transition: transform 0.15s ease;
+      transition: transform 0.22s cubic-bezier(0.32, 0.72, 0, 1);
       width: 10px;
       text-align: center;
       flex-shrink: 0;

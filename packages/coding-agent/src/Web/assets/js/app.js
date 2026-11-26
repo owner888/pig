@@ -155,11 +155,16 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
         // Only growth (`scrollHeight > this.lastScrollHeight`) scrolls to the bottom: when the user
         // collapses a tool card or `<details>` block, `scrollHeight` shrinks, and pulling `scrollTop`
         // down to `scrollHeight` would yank the clicked header from the top of the screen to the middle.
-        this.lastScrollHeight = 0;
+        this.scroller.lastScrollHeight = 0;
         this.blockResized = new ResizeObserver(() => {
           const h = this.scroller.scrollHeight;
-          const grew = h > this.lastScrollHeight;
-          this.lastScrollHeight = h;
+          if (this.scroller.dataset?.userToggling) {
+            this.scroller.lastScrollHeight = h;
+            this.lastScrollTop = this.scroller.scrollTop;
+            return;
+          }
+          const grew = h > (this.scroller.lastScrollHeight || 0);
+          this.scroller.lastScrollHeight = h;
           if (grew && !this.userScrolledUp) {
             this.scroller.scrollTop = h;
             this.lastScrollTop = this.scroller.scrollTop;
