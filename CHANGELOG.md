@@ -45,6 +45,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [2.0.37] - 2026-11-26
+
+### Fixed
+
+- Fixed `pig web` jumping a tool card's title from the top of the screen to the middle when collapsed: disabled browser scroll anchoring on `.chat-scroll` (`overflow-anchor: none`, which otherwise anchored to the message below the collapsed card) and gated the chat scroller's `ResizeObserver` so it only auto-scrolls when `scrollHeight` grows, never when a card shrinks.
+
 ## [2.0.36] - 2026-11-26
 
 ### Fixed
