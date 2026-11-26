@@ -1947,49 +1947,6 @@
     },
     {
         "type": "chat",
-        "id": "anthropic/claude-sonnet-4.5-batch",
-        "name": "Claude Sonnet 4.5 (Batch)",
-        "api": "anthropic-messages",
-        "provider": "vercel-ai-gateway",
-        "baseUrl": "https://ai-gateway.vercel.sh",
-        "reasoning": true,
-        "input": [
-            "text",
-            "image"
-        ],
-        "cost": {
-            "input": 1.5,
-            "output": 7.5,
-            "cacheRead": 0.15,
-            "cacheWrite": 1.875,
-            "tiers": [
-                {
-                    "inputTokensAbove": 200000,
-                    "input": 3.0,
-                    "output": 11.25,
-                    "cacheRead": 0.3,
-                    "cacheWrite": 3.75
-                }
-            ]
-        },
-        "contextWindow": 1000000,
-        "maxTokens": 64000,
-        "compat": {
-            "allowEmptySignature": true
-        },
-        "inputLimits": {
-            "images": {
-                "resize": {
-                    "maxWidth": 2000,
-                    "maxHeight": 2000,
-                    "maxBytes": 4718592,
-                    "jpegQuality": 80
-                }
-            }
-        }
-    },
-    {
-        "type": "chat",
         "id": "anthropic/claude-sonnet-4.6",
         "name": "Claude Sonnet 4.6",
         "api": "anthropic-messages",
@@ -3553,6 +3510,40 @@
             "input": 3.0,
             "output": 15.0,
             "cacheRead": 0.15,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 1000000,
+        "maxTokens": 1000000,
+        "compat": {
+            "allowEmptySignature": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
+        "id": "google/gemini-4-neon-fast",
+        "name": "Gemini 4 Neon (Fast)",
+        "api": "anthropic-messages",
+        "provider": "vercel-ai-gateway",
+        "baseUrl": "https://ai-gateway.vercel.sh",
+        "reasoning": true,
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 5.4,
+            "output": 27.0,
+            "cacheRead": 0.27,
             "cacheWrite": 0.0
         },
         "contextWindow": 1000000,
@@ -8708,7 +8699,7 @@
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
-        "maxTokens": 131072,
+        "maxTokens": 1048576,
         "compat": {
             "allowEmptySignature": true
         },
@@ -9790,7 +9781,7 @@
     {
         "type": "chat",
         "id": "tencent/hy4-flash",
-        "name": "Tencent Hy4 Flash",
+        "name": "Hy4 Flash",
         "api": "anthropic-messages",
         "provider": "vercel-ai-gateway",
         "baseUrl": "https://ai-gateway.vercel.sh",
@@ -9864,6 +9855,40 @@
         },
         "contextWindow": 256000,
         "maxTokens": 256000,
+        "compat": {
+            "allowEmptySignature": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
+        "id": "thinkingmachines/inkling-2-mini",
+        "name": "Inkling 2 Mini",
+        "api": "anthropic-messages",
+        "provider": "vercel-ai-gateway",
+        "baseUrl": "https://ai-gateway.vercel.sh",
+        "reasoning": true,
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 0.075,
+            "output": 0.3,
+            "cacheRead": 0.015,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 1048576,
+        "maxTokens": 1000000,
         "compat": {
             "allowEmptySignature": true
         },
@@ -10807,8 +10832,8 @@
     },
     {
         "type": "classifier",
-        "id": "nace-ai/drex-v2.0",
-        "name": "Drex 2.0",
+        "id": "nace-ai/drex-max-v1.2",
+        "name": "Drex Max v1.2",
         "api": "typesafe-system-one",
         "provider": "vercel-ai-gateway",
         "baseUrl": "https://ai-gateway.vercel.sh/typesafe/v1",

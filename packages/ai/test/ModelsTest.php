@@ -345,7 +345,7 @@ final class ModelsTest extends TestCase
     {
         // Pinned from upstream's published catalogue (`amazon-bedrock.json`, pi-ai 1.1.0), as models.dev
         // lists Bedrock at the last `generate-models.php`.
-        $this->assertCount(208, self::of(Models::AMAZON_BEDROCK));
+        $this->assertCount(204, self::of(Models::AMAZON_BEDROCK));
 
         $opus = Models::find(Models::AMAZON_BEDROCK, 'global.anthropic.claude-opus-4-6-v1');
         $this->assertNotNull($opus);
@@ -385,7 +385,7 @@ final class ModelsTest extends TestCase
         // OpenAI's long-context tier (#11949), at Azure's larger window for the ids it names, and no
         // base URL.
         // Less the models models.dev has since retired, plus GPT-6.1 Terra (upstream 363ad78).
-        $this->assertCount(36, self::of(Models::AZURE));
+        $this->assertCount(40, self::of(Models::AZURE));
 
         $gpt = Models::find(Models::AZURE, 'gpt-5.5');
         $this->assertNotNull($gpt);
@@ -573,7 +573,7 @@ final class ModelsTest extends TestCase
         // `OPENCODE_OPENAI_COMPLETIONS_LONG_CACHE_RETENTION_UNSUPPORTED_MODELS`: no
         // `prompt_cache_retention` for these, DeepSeek V4.1 Flash (renamed from V4 Flash, which OpenCode
         // no longer lists) included.
-        foreach (['deepseek-v4.1-flash', 'deepseek-v4-pro', 'kimi-k2.6'] as $id) {
+        foreach (['deepseek-v4.1-flash', 'deepseek-v4-pro', 'minimax-m2.7'] as $id) {
             $compat = Models::find('opencode', $id)?->compat;
             $this->assertInstanceOf(OpenAiCompat::class, $compat, $id);
             $this->assertFalse($compat->supportsLongCacheRetention, $id);
@@ -1106,7 +1106,7 @@ final class ModelsTest extends TestCase
     {
         $sonnet = Models::find(Models::COPILOT, 'claude-sonnet-4.6');
         $haiku = Models::find(Models::COPILOT, 'claude-haiku-4.5');
-        $opus = Models::find(Models::COPILOT, 'claude-opus-5');
+        $opus = Models::find(Models::COPILOT, 'claude-opus-4.8');
 
         $this->assertNotNull($sonnet);
         $this->assertNotNull($haiku);
@@ -1151,7 +1151,7 @@ final class ModelsTest extends TestCase
             [Models::ANTHROPIC, 'claude-haiku-5-5', array_diff_key($whole, ['off' => true])],
             [Models::ANTHROPIC, 'claude-fable-5', ['off' => null, 'xhigh' => 'xhigh', 'max' => 'max']],
             [Models::COPILOT, 'claude-sonnet-4.6', ['max' => 'max', 'minimal' => 'low']],
-            [Models::COPILOT, 'claude-opus-5', ['xhigh' => 'xhigh', 'max' => 'max', 'minimal' => 'low']],
+            [Models::COPILOT, 'claude-opus-4.8', ['xhigh' => 'xhigh', 'max' => 'max', 'minimal' => 'low']],
             [Models::COPILOT, 'claude-sonnet-5.5', ['xhigh' => 'xhigh', 'max' => 'max']],
             [Models::COPILOT, 'claude-opus-5.5', $whole],
         ] as [$provider, $id, $map]) {
@@ -1205,7 +1205,7 @@ final class ModelsTest extends TestCase
             [Models::ANTHROPIC, 'claude-haiku-4-5'], [Models::ANTHROPIC, 'claude-sonnet-4-5'],
             [Models::ANTHROPIC, 'claude-sonnet-4-6'], [Models::ANTHROPIC, 'claude-sonnet-5'],
             [Models::ANTHROPIC, 'claude-opus-4-6'], [Models::ANTHROPIC, 'claude-opus-4-8'],
-            [Models::COPILOT, 'claude-sonnet-4.6'], [Models::COPILOT, 'claude-opus-5'],
+            [Models::COPILOT, 'claude-sonnet-4.6'], [Models::COPILOT, 'claude-opus-4.8'],
             [Models::COPILOT, 'claude-sonnet-5.5'],
             // Managed effort, but they accept disabled thinking (upstream #10753).
             [Models::ANTHROPIC, 'claude-opus-5'], [Models::ANTHROPIC, 'claude-haiku-5-5'],
@@ -1316,7 +1316,7 @@ final class ModelsTest extends TestCase
         // `GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS`: GitHub's 1,000,000 for every id it lists. pig had
         // five of them at models.dev's 1,050,000 — a window past the real one, where compaction
         // fires too late — and the ids not on the list keep the catalogue's figure.
-        foreach (['claude-opus-4.8', 'claude-opus-5', 'claude-sonnet-4.6', 'claude-sonnet-5', 'claude-fable-5', 'claude-opus-5.5', 'gpt-5.3-codex', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna'] as $id) {
+        foreach (['claude-opus-4.8', 'claude-sonnet-4.6', 'claude-sonnet-5', 'claude-fable-5', 'claude-opus-5.5', 'gpt-5.3-codex', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna'] as $id) {
             $this->assertSame(1_000_000, Models::find(Models::COPILOT, $id)?->contextWindow, $id);
         }
 

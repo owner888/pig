@@ -549,7 +549,7 @@
             "cacheWrite": 3.75
         },
         "contextWindow": 1000000,
-        "maxTokens": 64000,
+        "maxTokens": 128000,
         "compat": {
             "forceAdaptiveThinking": true
         },
@@ -2738,84 +2738,6 @@
     },
     {
         "type": "chat",
-        "id": "kimi-k2.5",
-        "name": "Kimi K2.5",
-        "api": "openai-completions",
-        "provider": "opencode",
-        "baseUrl": "https://opencode.ai/inference/openai/v1",
-        "reasoning": true,
-        "input": [
-            "text",
-            "image"
-        ],
-        "cost": {
-            "input": 0.6,
-            "output": 3.0,
-            "cacheRead": 0.1,
-            "cacheWrite": 0.0
-        },
-        "contextWindow": 262144,
-        "maxTokens": 65536,
-        "compat": {
-            "supportsStore": false,
-            "supportsDeveloperRole": false,
-            "maxTokensField": "max_tokens",
-            "supportsStrictMode": true,
-            "supportsLongCacheRetention": false
-        },
-        "inputLimits": {
-            "images": {
-                "resize": {
-                    "maxWidth": 2000,
-                    "maxHeight": 2000,
-                    "maxBytes": 4718592,
-                    "jpegQuality": 80
-                }
-            }
-        }
-    },
-    {
-        "type": "chat",
-        "id": "kimi-k2.6",
-        "name": "Kimi K2.6",
-        "api": "openai-completions",
-        "provider": "opencode",
-        "baseUrl": "https://opencode.ai/inference/openai/v1",
-        "reasoning": true,
-        "input": [
-            "text",
-            "image"
-        ],
-        "cost": {
-            "input": 0.95,
-            "output": 4.0,
-            "cacheRead": 0.16,
-            "cacheWrite": 0.0
-        },
-        "contextWindow": 262144,
-        "maxTokens": 65536,
-        "compat": {
-            "supportsStore": false,
-            "supportsDeveloperRole": false,
-            "supportsReasoningEffort": false,
-            "maxTokensField": "max_tokens",
-            "supportsStrictMode": true,
-            "thinkingFormat": "deepseek",
-            "supportsLongCacheRetention": false
-        },
-        "inputLimits": {
-            "images": {
-                "resize": {
-                    "maxWidth": 2000,
-                    "maxHeight": 2000,
-                    "maxBytes": 4718592,
-                    "jpegQuality": 80
-                }
-            }
-        }
-    },
-    {
-        "type": "chat",
         "id": "kimi-k2.7-code",
         "name": "Kimi K2.7 Code",
         "api": "openai-completions",
@@ -3513,6 +3435,41 @@
                     "jpegQuality": 80
                 }
             }
+        }
+    },
+    {
+        "type": "chat",
+        "id": "seaglass-alpha-free",
+        "name": "Seaglass Alpha Free",
+        "api": "openai-completions",
+        "provider": "opencode",
+        "baseUrl": "https://opencode.ai/inference/openai/v1",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": null,
+            "minimal": "minimal",
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": "xhigh",
+            "max": "max"
+        },
+        "input": [
+            "text"
+        ],
+        "cost": {
+            "input": 0.0,
+            "output": 0.0,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 1048576,
+        "maxTokens": 131072,
+        "compat": {
+            "supportsStore": false,
+            "supportsDeveloperRole": false,
+            "maxTokensField": "max_tokens",
+            "supportsStrictMode": true
         }
     },
     {

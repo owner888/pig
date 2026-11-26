@@ -1178,6 +1178,61 @@
     },
     {
         "type": "chat",
+        "id": "gpt-6-astra-healthcare",
+        "name": "GPT-6 Astra Healthcare",
+        "api": "openai-responses",
+        "provider": "openai",
+        "baseUrl": "https://api.openai.com/v1",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": null,
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": "xhigh",
+            "max": "max"
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 10.0,
+            "output": 50.0,
+            "cacheRead": 1.0,
+            "cacheWrite": 0.0,
+            "tiers": [
+                {
+                    "inputTokensAbove": 272000,
+                    "input": 20.0,
+                    "output": 75.0,
+                    "cacheRead": 2.0,
+                    "cacheWrite": 0.0
+                }
+            ]
+        },
+        "contextWindow": 1050000,
+        "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true,
+            "supportsOpenAIGrammarTools": true
+        },
+        "inputLimits": {
+            "maxRequestBytes": 536870912,
+            "images": {
+                "maxPerRequest": 1500,
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
         "id": "gpt-6-luna",
         "name": "GPT-6 Luna",
         "api": "openai-responses",
@@ -1358,6 +1413,61 @@
     },
     {
         "type": "chat",
+        "id": "gpt-6.1-sol-healthcare",
+        "name": "GPT-6.1 Sol Healthcare",
+        "api": "openai-responses",
+        "provider": "openai",
+        "baseUrl": "https://api.openai.com/v1",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": null,
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": "xhigh",
+            "max": "max"
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 2.0,
+            "output": 10.0,
+            "cacheRead": 0.1,
+            "cacheWrite": 0.0,
+            "tiers": [
+                {
+                    "inputTokensAbove": 272000,
+                    "input": 4.0,
+                    "output": 15.0,
+                    "cacheRead": 0.2,
+                    "cacheWrite": 0.0
+                }
+            ]
+        },
+        "contextWindow": 1050000,
+        "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true,
+            "supportsOpenAIGrammarTools": true
+        },
+        "inputLimits": {
+            "maxRequestBytes": 536870912,
+            "images": {
+                "maxPerRequest": 1500,
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
         "id": "gpt-6.1-terra",
         "name": "GPT-6.1 Terra",
         "api": "openai-responses",
@@ -1474,8 +1584,120 @@
     },
     {
         "type": "chat",
+        "id": "gpt-6.2-astra-healthcare",
+        "name": "GPT-6.2 Astra Healthcare",
+        "api": "openai-responses",
+        "provider": "openai",
+        "baseUrl": "https://api.openai.com/v1",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": null,
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": "xhigh",
+            "max": "max"
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 8.0,
+            "output": 40.0,
+            "cacheRead": 0.4,
+            "cacheWrite": 10.0,
+            "tiers": [
+                {
+                    "inputTokensAbove": 272000,
+                    "input": 16.0,
+                    "output": 60.0,
+                    "cacheRead": 0.8,
+                    "cacheWrite": 20.0
+                }
+            ]
+        },
+        "contextWindow": 1050000,
+        "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true,
+            "supportsOpenAIGrammarTools": true,
+            "supportsExplicitPromptCacheMode": true
+        },
+        "inputLimits": {
+            "maxRequestBytes": 536870912,
+            "images": {
+                "maxPerRequest": 1500,
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
         "id": "gpt-6.2-sol",
         "name": "GPT-6.2 Sol",
+        "api": "openai-responses",
+        "provider": "openai",
+        "baseUrl": "https://api.openai.com/v1",
+        "reasoning": true,
+        "thinkingLevelMap": {
+            "off": null,
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": "xhigh",
+            "max": "max"
+        },
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 2.0,
+            "output": 10.0,
+            "cacheRead": 0.1,
+            "cacheWrite": 2.5,
+            "tiers": [
+                {
+                    "inputTokensAbove": 272000,
+                    "input": 4.0,
+                    "output": 15.0,
+                    "cacheRead": 0.2,
+                    "cacheWrite": 5.0
+                }
+            ]
+        },
+        "contextWindow": 1050000,
+        "maxTokens": 128000,
+        "compat": {
+            "supportsStrictMode": true,
+            "supportsOpenAIGrammarTools": true,
+            "supportsExplicitPromptCacheMode": true
+        },
+        "inputLimits": {
+            "maxRequestBytes": 536870912,
+            "images": {
+                "maxPerRequest": 1500,
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
+        "id": "gpt-6.2-sol-healthcare",
+        "name": "GPT-6.2 Sol Healthcare",
         "api": "openai-responses",
         "provider": "openai",
         "baseUrl": "https://api.openai.com/v1",

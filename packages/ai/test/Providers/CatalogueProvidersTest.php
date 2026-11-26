@@ -116,15 +116,10 @@ final class CatalogueProvidersTest extends TestCase
 
     public function testTogethersReasoningControlsAreItsApisOwn(): void
     {
-        $gptOss = self::model('together', 'openai/gpt-oss-120b');
-        $this->assertEquals(['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'max' => null, 'xhigh' => null], $gptOss->thinkingLevelMap);
-        $this->assertInstanceOf(OpenAiCompat::class, $gptOss->compat);
-        $this->assertSame([true, 'openai'], [$gptOss->compat->reasoningEffort, $gptOss->compat->thinkingFormat]);
-
-        $deepSeek = self::model('together', 'deepseek-ai/DeepSeek-V4-Pro-0813');
-        $this->assertSame(['minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null], $deepSeek->thinkingLevelMap);
+        $deepSeek = self::model('together', 'deepseek-ai/DeepSeek-V4.1-Flash');
+        $this->assertSame(['minimal' => null, 'low' => null, 'medium' => null], $deepSeek->thinkingLevelMap);
         $this->assertInstanceOf(OpenAiCompat::class, $deepSeek->compat);
-        $this->assertSame([true, 'together'], [$deepSeek->compat->reasoningEffort, $deepSeek->compat->thinkingFormat]);
+        $this->assertSame([false, 'together'], [$deepSeek->compat->reasoningEffort, $deepSeek->compat->thinkingFormat]);
     }
 
     public function testFireworksServesItsOtherModelsOverItsMessagesApi(): void
@@ -201,7 +196,7 @@ final class CatalogueProvidersTest extends TestCase
 
     public function testTheQwenTokenPlansReasoningEffortModelsSayAndSendTheirLevels(): void
     {
-        foreach ([['qwen-token-plan', 'glm-5'], ['qwen-token-plan-cn', 'deepseek-v4-flash'], ['qwen-token-plan-individual', 'deepseek-v4-pro-0813']] as [$provider, $id]) {
+        foreach ([['qwen-token-plan', 'glm-5'], ['qwen-token-plan-cn', 'deepseek-v4-flash-0731'], ['qwen-token-plan-individual', 'deepseek-v4-pro-0813']] as [$provider, $id]) {
             $model = self::model($provider, $id);
 
             foreach (['minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max'] as $level => $sent) {

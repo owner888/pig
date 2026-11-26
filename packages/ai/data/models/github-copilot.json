@@ -281,53 +281,6 @@
     },
     {
         "type": "chat",
-        "id": "claude-opus-5",
-        "name": "Claude Opus 5",
-        "api": "anthropic-messages",
-        "provider": "github-copilot",
-        "baseUrl": "https://api.individual.githubcopilot.com",
-        "reasoning": true,
-        "thinkingLevelMap": {
-            "xhigh": "xhigh",
-            "max": "max",
-            "minimal": "low"
-        },
-        "input": [
-            "text",
-            "image"
-        ],
-        "cost": {
-            "input": 5.0,
-            "output": 25.0,
-            "cacheRead": 0.5,
-            "cacheWrite": 6.25
-        },
-        "contextWindow": 1000000,
-        "maxTokens": 64000,
-        "compat": {
-            "forceAdaptiveThinking": true,
-            "supportsTemperature": false,
-            "supportsMidConvoSystemMessages": true
-        },
-        "headers": {
-            "User-Agent": "GitHubCopilotChat/0.35.0",
-            "Editor-Version": "vscode/1.107.0",
-            "Editor-Plugin-Version": "copilot-chat/0.35.0",
-            "Copilot-Integration-Id": "vscode-chat"
-        },
-        "inputLimits": {
-            "images": {
-                "resize": {
-                    "maxWidth": 2000,
-                    "maxHeight": 2000,
-                    "maxBytes": 4718592,
-                    "jpegQuality": 80
-                }
-            }
-        }
-    },
-    {
-        "type": "chat",
         "id": "claude-opus-5.5",
         "name": "Claude Opus 5.5",
         "api": "anthropic-messages",
@@ -917,66 +870,6 @@
                     "output": 30.0,
                     "cacheRead": 0.8,
                     "cacheWrite": 10.0
-                }
-            ]
-        },
-        "contextWindow": 1050000,
-        "maxTokens": 128000,
-        "compat": {
-            "supportsOpenAIGrammarTools": true,
-            "supportsMidConvoSystemMessages": true,
-            "supportsAdditionalTools": true
-        },
-        "headers": {
-            "User-Agent": "GitHubCopilotChat/0.35.0",
-            "Editor-Version": "vscode/1.107.0",
-            "Editor-Plugin-Version": "copilot-chat/0.35.0",
-            "Copilot-Integration-Id": "vscode-chat"
-        },
-        "inputLimits": {
-            "images": {
-                "resize": {
-                    "maxWidth": 2000,
-                    "maxHeight": 2000,
-                    "maxBytes": 4718592,
-                    "jpegQuality": 80
-                }
-            }
-        }
-    },
-    {
-        "type": "chat",
-        "id": "gpt-5.6-terra",
-        "name": "GPT-5.6 Terra",
-        "api": "openai-responses",
-        "provider": "github-copilot",
-        "baseUrl": "https://api.individual.githubcopilot.com",
-        "reasoning": true,
-        "thinkingLevelMap": {
-            "off": null,
-            "minimal": "low",
-            "low": "low",
-            "medium": "medium",
-            "high": "high",
-            "xhigh": "xhigh",
-            "max": "max"
-        },
-        "input": [
-            "text",
-            "image"
-        ],
-        "cost": {
-            "input": 2.0,
-            "output": 12.0,
-            "cacheRead": 0.2,
-            "cacheWrite": 2.5,
-            "tiers": [
-                {
-                    "inputTokensAbove": 272000,
-                    "input": 4.0,
-                    "output": 18.0,
-                    "cacheRead": 0.4,
-                    "cacheWrite": 5.0
                 }
             ]
         },
