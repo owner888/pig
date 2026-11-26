@@ -59,8 +59,12 @@ function fit() {
   const keyboard = covered >= KEYBOARD;
   root.style.setProperty("--app-height", `${Math.round(keyboard ? vv.height : full)}px`);
   // What Safari scrolled to bring the field into view; with the page fitting, nothing needs to be.
-  // First, so the prompt is measured where it will be seen.
-  if (window.scrollY !== 0 || vv.offsetTop !== 0) window.scrollTo(0, 0);
+  // First, so the prompt is measured where it will be seen. `vv.offsetTop` is not `scrollY`, so
+  // `scrollTo` cannot undo it: on a portrait phone (where the shrunk page's prompt still lies inside
+  // the panned visual viewport), `--app-offset` moves the page down to the visual viewport's top
+  // instead of leaving an extra keyboard height of empty space above the keyboard.
+  if (window.scrollY !== 0 || (!keyboard && vv.offsetTop !== 0)) window.scrollTo(0, 0);
+  root.style.setProperty("--app-offset", `${Math.max(0, Math.round(keyboard ? vv.offsetTop : 0))}px`);
   if (!keyboard) {
     const needed = overlap(covered);
     if (needed > kept) {

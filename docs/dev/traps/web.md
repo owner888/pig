@@ -151,7 +151,14 @@ and per frame, then `?lift=N` until it stopped (55 panned, 56 did not: prompt bo
 the page keeps the screen's height, `max(innerHeight, vv.height + vv.offsetTop)`. The prompt is raised
 (`--bar-lift`) until its bottom is `MARGIN` (40) above the visible bottom, measured the first time
 the bar is up and kept in `localStorage` (`pig_bar_lift`), so only that first focus moves anything.
-Do not lower `MARGIN` or let the lift drop back to 0 on blur.
+Do not lower `MARGIN` or let the lift drop back to 0 on blur. When an on-screen keyboard *is* up
+(`covered >= KEYBOARD`), a portrait phone's visual viewport can stay panned down by the keyboard's
+height (`vv.offsetTop > 0`, because the shrunk page's prompt still lies inside `[vv.offsetTop, full]`
+and `scrollTo(0, 0)` cannot undo `vv.offsetTop` — leaving `.top-header` off the top of the screen
+and an extra keyboard height of empty background above the keyboard): `<meta name="viewport">` sets
+`interactive-widget=resizes-content` so Chromium resizes the layout viewport itself, and
+`viewport.js` sets `--app-offset` (`top: var(--app-offset, 0px)` on `body`) to `vv.offsetTop` while
+`keyboard` is true so `body` aligns with `[vv.offsetTop, vv.offsetTop + vv.height]`.
 
 ## `pig web` over Tailscale: a long conversation reconnected every few seconds
 

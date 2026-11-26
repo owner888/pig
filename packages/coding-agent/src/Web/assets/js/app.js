@@ -150,6 +150,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
             for (const n of r.removedNodes) if (n.nodeType === Node.ELEMENT_NODE) this.blockResized.unobserve(n);
           }
         });
+        this.blockResized.observe(this.scroller);
         this.scrollerObserver.observe(this.scroller, { childList: true });
         chatArea.appendChild(this.scroller);
       }

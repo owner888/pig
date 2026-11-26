@@ -117,6 +117,8 @@
       height: 100vh;
       /* What can be seen of the page — less what the keyboard covers (viewport.js). */
       height: var(--app-height, 100dvh);
+      position: relative;
+      top: var(--app-offset, 0px);
       display: flex;
       overflow: hidden;
       -webkit-font-smoothing: antialiased;
@@ -738,7 +740,11 @@
 
     /* Reusable Modal System (Accounts, Session Rename, Delete, etc.) */
     .modal-backdrop {
-      position: fixed; inset: 0;
+      position: fixed;
+      top: var(--app-offset, 0px);
+      left: 0;
+      right: 0;
+      height: var(--app-height, 100dvh);
       background: color-mix(in srgb, var(--color-shadow) 60%, transparent);
       backdrop-filter: blur(8px);
       -webkit-backdrop-filter: blur(8px);
@@ -1696,7 +1702,7 @@
       transform: translateY(0);
     }
     .web-terminal-drawer.maximized {
-      top: 0;
+      top: var(--app-offset, 0px);
       height: var(--app-height, 100dvh) !important;
       max-height: var(--app-height, 100dvh) !important;
       border-top: none;
@@ -2692,8 +2698,8 @@
       /* Sidebar becomes a drawer covering up to 85% of mobile screen width */
       #sidebar {
         position: fixed;
-        top: 0;
-        bottom: 0;
+        top: var(--app-offset, 0px);
+        height: var(--app-height, 100dvh);
         left: 0;
         width: 85vw;
         max-width: 320px;
