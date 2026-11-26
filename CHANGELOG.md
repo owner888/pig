@@ -45,6 +45,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [2.0.39] - 2026-11-26
+
+### Changed
+
+- Added a SwiftUI-style spring expand/collapse animation (`element.animate()` with `cubic-bezier(0.32, 0.72, 0, 1)`, 220ms) to `pig web`'s tool cards that pre-reserves the scroller's bottom headroom before collapsing, so the clicked `.tool-header` stays pinned at the exact same screen coordinate across every frame while the body smoothly slides open or shut below it.
+
 ## [2.0.38] - 2026-11-26
 
 ### Fixed
