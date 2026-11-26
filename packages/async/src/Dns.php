@@ -48,7 +48,7 @@ final class Dns
      */
     public static function resolve(string $host, float $timeout = 30.0, ?AbortSignal $signal = null): string
     {
-        if (self::isLiteral($host) || strtolower($host) === 'localhost' || Fiber::getCurrent() === null) {
+        if (self::isLiteral($host) || strtolower($host) === 'localhost' || Fiber::getCurrent() === null || PHP_BINARY === '' || !function_exists('proc_open')) {
             return $host;
         }
 
@@ -92,6 +92,8 @@ final class Dns
 
         try {
             $process = proc_open([PHP_BINARY, '-n', '-d', 'display_errors=0', '-r', $script, $host], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        } catch (\ValueError) {
+            $process = false;
         } finally {
             restore_error_handler();
         }
