@@ -45,14 +45,18 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
-## Unreleased
+## [2.0.33] - 2026-11-26
 
 ### Added
 
-- Fixed `TlsRoots::systemFile()` and `Socket::enableTls()` ignoring `SSL_CERT_FILE` in the environment when PHP has no `openssl.cafile` and its `default_cert_file` does not exist on the machine (a runtime built without a certificate path on a phone, where PHP's `ext/openssl` passes OpenSSL neither).
 - Added optional chunked upload progress callbacks on `Socket::write()` and `Request::$onUploadProgress` for HTTP/1.1 and HTTP/2 request bodies.
 - Added `Loop::turn()`, one iteration of the event loop that never waits — for a host that owns the thread, as a GUI's run loop driving pig's from a timer, where `tick()` sleeping until the next timer would hold the window still.
 - Added decompression of gzip responses in `HttpClient::send()` (`InflatedBody`): a request that sets `accept-encoding: gzip` itself reads the body as it was before the server compressed it, chunk by chunk. Requests that do not set the header still go out with `identity`, so nothing pig sends changes.
+
+### Fixed
+
+- Fixed `pig web` on a phone shifting the page up by an extra keyboard height when the on-screen keyboard rises — clipping the header off the top of the screen and leaving a keyboard-tall blank gap between the prompt panel and the keyboard: Chromium 108+ defaults to `interactive-widget=resizes-visual` (keeping the layout viewport at full screen height and panning `visualViewport.offsetTop` down by the keyboard height, while `body { overflow: hidden }` stops `window.scrollTo(0, 0)` from resetting `visualViewport.offsetTop`), and on a portrait phone the shrunk `body`'s prompt still fell inside the panned visual viewport so the browser never unpanned it. `index.html` and `login.html` now specify `interactive-widget=resizes-content`, `viewport.js` offsets `body` (and fixed drawers/modals) by `--app-offset` (`visualViewport.offsetTop`) whenever an on-screen keyboard is open, and the chat scroller's `ResizeObserver` now watches the scroller itself so shrinking the viewport keeps the bottom of the conversation in view.
+- Fixed `TlsRoots::systemFile()` and `Socket::enableTls()` ignoring `SSL_CERT_FILE` in the environment when PHP has no `openssl.cafile` and its `default_cert_file` does not exist on the machine (a runtime built without a certificate path on a phone, where PHP's `ext/openssl` passes OpenSSL neither).
 
 ## [2.0.32] - 2026-11-25
 
