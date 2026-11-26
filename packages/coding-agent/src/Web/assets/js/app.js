@@ -138,9 +138,16 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
           else if (this.remoteStart > 0 && nearTop(this)) fetchOlder(this);
         });
         // A block that grows after it was added (an image decoding, a card filling in) is followed too.
+        // Only growth (`scrollHeight > this.lastScrollHeight`) scrolls to the bottom: when the user
+        // collapses a tool card or `<details>` block, `scrollHeight` shrinks, and pulling `scrollTop`
+        // down to `scrollHeight` would yank the clicked header from the top of the screen to the middle.
+        this.lastScrollHeight = 0;
         this.blockResized = new ResizeObserver(() => {
-          if (!this.userScrolledUp) {
-            this.scroller.scrollTop = this.scroller.scrollHeight;
+          const h = this.scroller.scrollHeight;
+          const grew = h > this.lastScrollHeight;
+          this.lastScrollHeight = h;
+          if (grew && !this.userScrolledUp) {
+            this.scroller.scrollTop = h;
             this.lastScrollTop = this.scroller.scrollTop;
           }
         });
