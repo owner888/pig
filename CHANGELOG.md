@@ -45,6 +45,16 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [2.0.34] - 2026-11-26
+
+### Added
+
+- Added one-tap copy buttons to `pig web`'s Markdown `<blockquote>` blocks (`.quote-copy-btn`, floating at the top-right like `.tool-body-copy` and always visible on touch screens) and to every user and assistant message (`.msg-copy-btn` in the message footer beside Translate), so quoted posts and replies can be copied on a phone without dragging text-selection handles.
+
+### Changed
+
+- Changed `pig web`'s collapsible blocks — tool execution cards (`.tool-card`, `/doctor` and `/diff` included), `<details>` blocks (`.thinking-box`, `.compaction-box`, `[skill]` cards, `.sf-advanced`) and schedule confirmation cards (`.sc-card`) — to animate smoothly on expand and collapse (`cubic-bezier(0.16, 1, 0.3, 1)` height, padding and opacity transitions, with `ToolCard.setExpanded()` measuring each card's real content height up to 480px so short outputs do not pause over empty headroom), and wired the `Ctrl + O` shortcut listed in the HUD to expand or collapse all tool cards in the active conversation.
+
 ## [2.0.33] - 2026-11-26
 
 ### Added
