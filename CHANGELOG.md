@@ -45,6 +45,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## [2.0.38] - 2026-11-26
+
+### Fixed
+
+- Fixed `pig web` pulling the last tool card's title from the top of the screen down to the middle when collapsed near the end of a conversation: collapsing a tall `.tool-body` near the bottom reduces `scrollHeight` below `scrollTop + clientHeight`, causing the browser to clamp `scrollTop` down by the height difference. `ToolCard.toggleExpand()` now holds the scroller's bottom headroom (`dataset.collapsePad`) so `scrollTop` is not clamped and the clicked `.tool-header` stays at the exact same screen coordinate (trimmed automatically as the reader scrolls up or new messages arrive).
+
 ## [2.0.37] - 2026-11-26
 
 ### Fixed
