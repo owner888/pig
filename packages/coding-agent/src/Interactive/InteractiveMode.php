@@ -128,6 +128,8 @@ use Pig\CodingAgent\Theme\InteractiveThemeController;
 use Pig\CodingAgent\Theme\Theme;
 use Pig\CodingAgent\Theme\ThemeJson;
 use Pig\CodingAgent\Theme\Themes;
+use Pig\CodingAgent\Usage\UsageSource;
+use Pig\CodingAgent\Usage\UsageView;
 use Pig\CodingAgent\Tools\ExternalTool;
 use Pig\Tui\Autocomplete\CombinedAutocompleteProvider;
 use Pig\Tui\Autocomplete\AutocompleteProvider;
@@ -363,6 +365,9 @@ final class InteractiveMode
     private ?AbortController $compaction = null;
 
     private ?string $commandHudTimer = null;
+
+    /** The footer's usage lines (`registerUsage(status: true)`); null until the screen is up. */
+    private ?UsageStatus $usageStatus = null;
 
     private int $commandPressedMs = 0;
 
@@ -704,6 +709,11 @@ final class InteractiveMode
         $this->running = true;
         $this->extensionRunner?->emit(new SessionStartEvent());
         $this->takeExtensionResources($this->session->discoverResources('startup'));
+        $this->usageStatus = new UsageStatus(function (string $key, ?string $text): void {
+            $this->footer->setStatus($key, $text === null ? null : Themes::theme()->fg('dim', $text));
+            $this->tui->requestRender();
+        });
+        $this->usageStatus->start();
         $this->sayToolProblems($this->customTools?->notify('start') ?? []);
         $this->tui->start();
         $this->programStatus->report();
@@ -944,6 +954,8 @@ final class InteractiveMode
             Loop::get()->cancel($this->commandHudTimer);
             $this->commandHudTimer = null;
         }
+        // Its timers would keep the loop from ever going idle.
+        $this->usageStatus?->stop();
         $this->closeCommandHud();
         // A frame timer outliving the screen it drew on keeps the loop from ever going idle.
         $this->armin?->dispose();
@@ -2594,6 +2606,7 @@ final class InteractiveMode
         ['hotkeys', 'Show all keyboard shortcuts'],
         ['new', 'Forget the conversation and start over'],
         ['session', 'What this session has cost'],
+        ['usage', 'What is left of your plans\' limits, as the extensions report them (/usage [id])'],
         ['model', 'Switch models, or say which one'],
         ['thinking', 'Set thinking level, or choose from a list'],
         ['scoped-models', 'Enable/disable models for Ctrl+P cycling'],
@@ -2700,6 +2713,7 @@ final class InteractiveMode
             'help', 'hotkeys' => $this->sayHotkeys(),
             'new' => $this->newSession(),
             'session' => $this->say($this->sessionSummary()),
+            'usage' => $this->showUsage(trim(substr($text, strlen($name) + 1))),
             'compact' => $this->startCompaction(trim(substr($text, strlen($name) + 1))),
             'model' => $this->showModels(trim(substr($text, strlen($name) + 1))),
             'thinking' => $this->handleThinkingCommand(trim(substr($text, strlen($name) + 1))),
@@ -4474,6 +4488,8 @@ final class InteractiveMode
         // still there register again a line later.
         ProviderRegistry::forget();
         ExtensionApi::forgetHttpRoutes();
+        $this->usageStatus?->stop();
+        ExtensionApi::forgetUsageSources();
         ExtensionApi::forgetWebPanels();
         ExtensionApi::forgetFlags();
         McpServerRegistry::reset();
@@ -4543,6 +4559,7 @@ final class InteractiveMode
         $customTools->onChange(static fn () => $loadout->refresh());
         $extensionRunner->emit(new SessionStartEvent('reload'));
         $this->takeExtensionResources($this->session->discoverResources('reload'));
+        $this->usageStatus?->start();
 
         // Upstream's `this.keybindings.reload()`: the same manager reads `keybindings.json` again,
         // so the editor and the TUI's global registry — which both hold it — answer to the new keys
@@ -8730,6 +8747,53 @@ final class InteractiveMode
     private function say(string|Closure $message): void
     {
         $this->sayThemed(static fn (): string => Themes::theme()->fg('dim', is_string($message) ? $message : $message()));
+    }
+
+    /**
+     * `/usage [id]`: what is left of each plan the extensions report (`registerUsage()`), drawn by
+     * `UsageView` — one look for every extension. Fetched in a fiber, one source after another, so
+     * the editor stays usable while a provider answers; each answer also refreshes its footer line.
+     */
+    private function showUsage(string $id): void
+    {
+        $sources = ExtensionApi::usageSources();
+
+        if ($id !== '') {
+            $source = ExtensionApi::usageSource($id);
+
+            if ($source === null) {
+                $known = array_map(static fn (UsageSource $source): string => $source->id, $sources);
+                $this->sayError("No usage named '{$id}'." . ($known === [] ? '' : ' There is ' . implode(', ', $known) . '.'));
+
+                return;
+            }
+
+            $sources = [$source];
+        }
+
+        if ($sources === []) {
+            $this->say('No extension reports usage. One that does registers it with registerUsage().');
+
+            return;
+        }
+
+        $this->say('Fetching usage…');
+
+        Async::spawn(function () use ($sources): void {
+            foreach ($sources as $source) {
+                try {
+                    $report = $source->fetch();
+                } catch (Throwable $error) {
+                    $this->sayError("{$source->titleFor()}: {$error->getMessage()}");
+
+                    continue;
+                }
+
+                $this->usageStatus?->show($source, $report);
+                $title = count($sources) > 1 || $report->plan === null ? $source->titleFor() : null;
+                $this->sayThemed(static fn (): string => UsageView::text($report, Themes::theme(), $title));
+            }
+        });
     }
 
     /**

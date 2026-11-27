@@ -26,6 +26,8 @@ use Pig\CodingAgent\RegisteredMcpServer;
 use Pig\CodingAgent\Session\CustomMessage;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Theme\Theme;
+use Pig\CodingAgent\Usage\UsagePanel;
+use Pig\CodingAgent\Usage\UsageSource;
 use Pig\CodingAgent\VirtualModelDefinition;
 use Pig\CodingAgent\VirtualModelRegistry;
 use Pig\Tui\Process;
@@ -166,6 +168,9 @@ final class ExtensionApi
 
     /** @var array<string, WebPanel> the web UI's extension panels, by id — see `registerWebPanel()` */
     private static array $webPanels = [];
+
+    /** @var array<string, UsageSource> the plan limits extensions report, by id — see `registerUsage()` */
+    private static array $usageSources = [];
 
     /** @var array<string, array{key: string, handler: Closure, description: string}> */
     private array $shortcuts = [];
@@ -949,6 +954,58 @@ final class ExtensionApi
     public static function forgetWebPanels(): void
     {
         self::$webPanels = [];
+    }
+
+    /**
+     * Report a plan's limits — the 5-hour, weekly, monthly windows a subscription gives — and let
+     * pig draw them: `/usage` in the terminal, a line in the footer with `status: true`, and the
+     * Usage panel in `pig web`. The extension only fetches; every source looks the same, with each
+     * bar showing what is left.
+     *
+     * pig's own, with no upstream counterpart (the developer asked for one way to show usage rather
+     * than one per extension). The same id registered again replaces the source.
+     *
+     * ```php
+     * $pig->registerUsage('opencode-go', 'OpenCode Go', fn (): UsageReport => new UsageReport([
+     *     new UsageGroup([new UsageMeter('Rolling 5h', 0.62, $resetsAt, short: '5h')]),
+     * ]), status: true);
+     * ```
+     *
+     * @param string|array<string, string> $title by locale (`['en' => …, 'zh-CN' => …]`) or one for all
+     * @param Closure(): UsageReport $fetch may make network calls — it runs in a fiber; a failure is
+     *        thrown, and pig says it where the report would have been
+     * @param bool $status a line in the terminal's footer, asked again every `$refreshSeconds`
+     * @param int $refreshSeconds how often the footer's line is asked again; at least 60
+     */
+    public function registerUsage(string $id, string|array $title, Closure $fetch, bool $status = false, int $refreshSeconds = 300): void
+    {
+        self::$usageSources[$id] = new UsageSource($id, $title, $fetch, $status, $refreshSeconds);
+        self::$webPanels[UsagePanel::ID] ??= UsagePanel::webPanel();
+    }
+
+    /**
+     * @return list<UsageSource> in the order they were registered
+     * @internal
+     */
+    public static function usageSources(): array
+    {
+        return array_values(self::$usageSources);
+    }
+
+    /** @internal */
+    public static function usageSource(string $id): ?UsageSource
+    {
+        return self::$usageSources[$id] ?? null;
+    }
+
+    /**
+     * For tests and `/reload`.
+     *
+     * @internal
+     */
+    public static function forgetUsageSources(): void
+    {
+        self::$usageSources = [];
     }
 
     // ---- the session, from an extension's side ------------------------------------------

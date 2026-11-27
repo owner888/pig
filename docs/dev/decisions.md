@@ -603,3 +603,22 @@ The server side is pigagent.dev's `POST /api/shares?days=N` (an `application/oct
 size cap; answers `{id, deleteToken, expiresAt}`), `GET /api/shares/<id>` (the ciphertext, until it
 expires) and `DELETE /api/shares/<id>` with `Authorization: Bearer <deleteToken>`. It keeps a hash
 of the token, not the token.
+
+## Plan usage: `registerUsage()`, drawn by core
+
+pig's own; upstream pi has no usage API. The developer asked for one way to show a subscription's
+limits after pig-antigravity and pig-opencode-go-usage had each grown their own command, status
+line and web panel, in two looks (one said what was left, the other what was used).
+
+- **An extension only fetches** (`Closure(): UsageReport`, thrown on failure); core draws it:
+  `/usage [id]` (`UsageView::text()`), the footer (`Interactive\UsageStatus`, sources registered
+  with `status: true`, every `refreshSeconds`, at least 60), and `pig web`'s Usage panel
+  (`Usage\UsagePanel`, added by core on the first registration, one lazy section per source).
+- **Every bar is what is left** (`UsageMeter::$remaining`, 0–1, refused outside it), coloured
+  success / warning / error at a half and a fifth — the look `/antigravity.usage` had first. A
+  provider that reports what is used passes `1 - used`.
+- **The footer's line is the terminal's only**: the web page draws no status lines and has the
+  panel; a print or JSON run ends before a refresh.
+- The registry is process-wide like web panels (`ExtensionApi::usageSources()`), forgotten and
+  rebuilt on `/reload`.
+

@@ -45,6 +45,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### New Features
+
+- Plan usage in one place for every extension: `registerUsage()` lets an extension report a subscription's limits (5-hour, weekly, monthly…) as groups of meters, and pig draws them — `/usage [id]` in the terminal, an optional dim line per source in the footer refreshed every few minutes (`status: true`), and a Usage panel in `pig web` (the header's ⋯ menu, or `/usage` in the page). Every bar shows what is left and is coloured by it, in the look `/antigravity.usage` had, so a second extension's usage no longer needs its own command, status line and panel.
+
 ## [2.0.40] - 2026-11-27
 
 ### Added
