@@ -45,6 +45,20 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### New Features
+
+- Sign in with ChatGPT for the `openai` provider, as pi has it (`OauthProvider::OpenAi`, `Utils\Oauth\OpenAiChatGpt`, upstream's `openaiChatGPTOAuth`): `/login` → OpenAI (ChatGPT subscription) signs in through OpenAI's open-source flow, which registers a client of this installation's own instead of borrowing the Codex CLI's, and the `openai` models then draw on the ChatGPT plan's usage on the OpenAI API. ChatGPT's settings list the client by name, where it can be capped or disconnected; pig names it `pig` (upstream's hint is `Pi`), as the developer asked, so ChatGPT shows the app that is signed in. The credential keeps the client id OpenAI issued and the scopes it granted, which every renewal sends back. The existing ChatGPT Plus/Pro sign-in for `openai-codex` stays as it is.
+
+### Added
+
+- `deviceId` in the person's `settings.json` (`Settings::getOrCreateDeviceId()`, upstream's): a random UUID made the first time a sign-in needs one — Sign in with ChatGPT sends it as the installation — and never read from a project's settings, so a committed file cannot give every clone the same id. `Auth::login()` takes upstream's `getDeviceId` (`pig auth login` hands it over), and `Uuid::v4()` makes it.
+
+### Changed
+
+- The browser-or-paste wait the OpenAI sign-ins share is `CallbackServer::waitForCallbackOrManualInput()`, where upstream keeps it (`callback-server.ts`), and a callback server can require the client id a registration issues.
+
 ## [2.0.42] - 2026-11-27
 
 ### New Features

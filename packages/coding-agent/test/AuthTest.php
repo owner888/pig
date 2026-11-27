@@ -116,6 +116,40 @@ final class AuthTest extends TestCase
         );
     }
 
+    public function testSignInWithChatGptKeepsItsIssuedClientAndScopesAndNeitherIsASecret(): void
+    {
+        $auth = $this->auth();
+        $auth->setCredentials('openai', new \Pig\Ai\Utils\Oauth\OauthCredentials('rt-0001', 'at-0001', 5, clientId: 'oaiapp_1', scopes: ['openid', 'chatgpt.tokens.use.direct']));
+
+        $read = $this->auth()->credentials(\Pig\Ai\Utils\Oauth\OauthProvider::OpenAi);
+        $this->assertSame(['oaiapp_1', ['openid', 'chatgpt.tokens.use.direct']], [$read?->clientId, $read?->scopes]);
+        $this->assertSame(['rt-0001', 'at-0001'], $this->auth()->storedSecrets());
+        // The access token is the `openai` provider's key, as an API key would be.
+        $this->assertSame('oauth', $this->auth()->kind('openai'));
+    }
+
+    public function testSignInWithChatGptNeedsTheInstallationsIdBeforeAnyBrowser(): void
+    {
+        // No settings and no id handed over: upstream's refusal, before a URL is shown.
+        $shown = false;
+        $error = null;
+
+        try {
+            \Pig\Async\Async::run(fn () => $this->auth()->login(
+                \Pig\Ai\Utils\Oauth\OauthProvider::OpenAi,
+                static function () use (&$shown): void {
+                    $shown = true;
+                },
+                static fn (): ?string => null,
+            ));
+        } catch (\Throwable $problem) {
+            $error = $problem->getMessage();
+        }
+
+        $this->assertSame('Sign in with ChatGPT requires a device ID (UUID) for this installation', $error);
+        $this->assertFalse($shown);
+    }
+
     public function testNoFileIsNoCredentialsAndNoComplaint(): void
     {
         $auth = $this->auth();

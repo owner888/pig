@@ -14,9 +14,11 @@ use Pig\Ai\Timestamp;
  * other, the same way the session file is.
  *
  * `access` is the token that goes on a request and expires in hours; `refresh` is the one that
- * buys a new `access` and lasts until it is revoked. The last four are each for one provider
- * and are null for the rest: a GitHub Enterprise host, a Google Cloud project, the address
- * a token was issued to, the ChatGPT account an OpenAI Codex token belongs to.
+ * buys a new `access` and lasts until it is revoked. The rest are each for one provider and are
+ * null for the others: a GitHub Enterprise host, a Google Cloud project, the address a token was
+ * issued to, the ChatGPT account an OpenAI Codex token belongs to, and — for Sign in with ChatGPT
+ * (`OpenAiChatGpt`) — the client id OpenAI issued at sign-in, which every renewal must send, and
+ * the scopes it granted.
  */
 final readonly class OauthCredentials
 {
@@ -25,6 +27,7 @@ final readonly class OauthCredentials
      *        by the safety margin the flow subtracted — a token that expires while in flight
      *        fails the request it was attached to, so every flow here hands back a moment it
      *        is certainly still good at
+     * @param list<string>|null $scopes
      */
     public function __construct(
         public string $refresh,
@@ -34,6 +37,8 @@ final readonly class OauthCredentials
         public ?string $projectId = null,
         public ?string $email = null,
         public ?string $accountId = null,
+        public ?string $clientId = null,
+        public ?array $scopes = null,
     ) {
     }
 

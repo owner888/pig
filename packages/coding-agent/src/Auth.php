@@ -18,6 +18,7 @@ use Pig\Ai\Utils\Oauth\Anthropic;
 use Pig\Ai\Utils\Oauth\OauthCredentials;
 use Pig\Ai\Utils\Oauth\GithubCopilot;
 use Pig\Ai\Utils\Oauth\OauthError;
+use Pig\Ai\Utils\Oauth\OpenAiChatGpt;
 use Pig\Ai\Utils\Oauth\OpenAiCodex;
 use Pig\Ai\Utils\Oauth\KimiCoding;
 use Pig\Ai\Utils\Oauth\OauthProvider;
@@ -181,11 +182,12 @@ final class Auth
     {
         $secrets = [];
         $walk = static function (mixed $value, string $field) use (&$walk, &$secrets): void {
-            if (is_array($value)) {
+            // The scopes a sign-in was granted are words, not secrets.
+            if (is_array($value) && $field !== 'scopes') {
                 foreach ($value as $key => $inner) {
                     $walk($inner, (string) $key);
                 }
-            } elseif (is_string($value) && !in_array($field, ['type', 'enterpriseUrl', 'projectId', 'email', 'accountId'], true)
+            } elseif (is_string($value) && !in_array($field, ['type', 'enterpriseUrl', 'projectId', 'email', 'accountId', 'clientId'], true)
                 && !str_starts_with($value, '$') && !str_starts_with($value, '!') && preg_match('/\s/', $value) !== 1) {
                 $secrets[] = $value;
             }
@@ -369,6 +371,8 @@ final class Auth
             self::text($entry, 'projectId'),
             self::text($entry, 'email'),
             self::text($entry, 'accountId'),
+            self::text($entry, 'clientId'),
+            is_array($entry['scopes'] ?? null) ? array_values(array_filter($entry['scopes'], is_string(...))) : null,
         );
     }
 
@@ -491,6 +495,8 @@ final class Auth
                 'projectId' => $credentials->projectId,
                 'email' => $credentials->email,
                 'accountId' => $credentials->accountId,
+                'clientId' => $credentials->clientId,
+                'scopes' => $credentials->scopes,
             ],
             static fn (mixed $value): bool => $value !== null,
         );
@@ -649,6 +655,9 @@ final class Auth
      *        Anthropic's flow asks first (browser, or copy the code) and OpenAI's Codex flow too
      *        (browser, or device code). Null means there is no
      *        screen to ask on and the flow takes its default.
+     * @param Closure(): string|null $getDeviceId upstream's `LoginOptions.getDeviceId`: this
+     *        installation's stable UUID, asked only by a flow that needs one (Sign in with ChatGPT).
+     *        Null asks the settings this run started with (`Settings::getOrCreateDeviceId()`).
      */
     public function login(
         OauthProvider|OauthFlow $provider,
@@ -657,6 +666,7 @@ final class Auth
         ?Closure $onProgress = null,
         ?AbortSignal $signal = null,
         ?Closure $onSelect = null,
+        ?Closure $getDeviceId = null,
     ): ?OauthCredentials {
         if ($provider instanceof OauthFlow) {
             $credentials = $provider->login($onAuth, $onPrompt, $onProgress, $signal, $onSelect);
@@ -670,6 +680,13 @@ final class Auth
                 OauthProvider::Anthropic => $this->anthropic($onAuth, $onPrompt, $onProgress, $signal, $onSelect),
                 OauthProvider::GithubCopilot => $this->copilot($onAuth, $onPrompt, $onProgress, $signal),
                 OauthProvider::OpenAiCodex => (new OpenAiCodex())->login($onAuth, $onPrompt, $signal, $onSelect),
+                OauthProvider::OpenAi => (new OpenAiChatGpt())->login(
+                    $onAuth,
+                    $onPrompt,
+                    $onProgress,
+                    $signal,
+                    ($getDeviceId ?? ($this->settings === null ? null : $this->settings->getOrCreateDeviceId(...)))?->__invoke(),
+                ),
                 OauthProvider::KimiCoding => (new KimiCoding())->login($onAuth, $signal),
             };
             $id = $provider->value;

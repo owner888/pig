@@ -170,5 +170,6 @@ The built-in extensions are named `builtin:mcp`, `builtin:llama.cpp`, `builtin:c
 | `selfUpdateCommand` | `string[]` | `[]` | Command argv to update pig itself (e.g. `["mise", "use", "-g", "composer:{packageName}@{version}"]`). Expands `{packageName}`, `{version}`, and `{installSpec}`. |
 | `update.check` | boolean | `true` | Ask Packagist at startup whether a newer pig exists. `--no-update-check` and `--update-check` override it for one run. |
 | `enableInstallTelemetry` | boolean | `true` | Send the provider attribution headers that tell OpenRouter, NVIDIA NIM and OpenCode pig is the client. pig sends no install report. Does not control update checks. |
+| `deviceId` | string | Created when needed | A random UUID naming this installation, written the first time a sign-in needs one: Sign in with ChatGPT sends it to OpenAI as the installation (`urn:uuid:…`). Read from agent-directory settings only, so a project file cannot give every clone the same id. |
 | `sessionShareDestination` | string | `"auto"` | Where `/share` goes: `auto`, pigagent.dev, encrypted with the key only in the link; or `gist`, a secret GitHub gist (needs `gh`). pi's `radius` is read as `auto`. Also a `/settings` row. |
 | `warnings.anthropicExtraUsage` | boolean | `true` | Warn when Anthropic subscription authentication may use paid extra usage. |

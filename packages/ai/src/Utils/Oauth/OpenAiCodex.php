@@ -15,8 +15,6 @@ use Pig\Ai\Timestamp;
 use Pig\Ai\Utils\JsJson;
 use Pig\Async\AbortController;
 use Pig\Async\AbortSignal;
-use Pig\Async\Async;
-use Pig\Async\Deferred;
 use Throwable;
 
 /**
@@ -462,7 +460,7 @@ final class OpenAiCodex
         $onAuth($url, 'A browser window should open. Complete login to finish.');
 
         try {
-            $result = self::waitForCallbackOrManualInput($callback, $onPrompt, $signal, [
+            $result = CallbackServer::waitForCallbackOrManualInput($callback, $onPrompt, $signal, [
                 'message' => 'Complete login in your browser, or paste the authorization code / redirect URL here:',
                 'placeholder' => self::REDIRECT_URI,
             ]);
@@ -472,7 +470,7 @@ final class OpenAiCodex
             }
 
             if ($result['type'] === 'callback') {
-                $code = $result['value'];
+                $code = $result['value']['code'];
             } else {
                 $parsed = self::parseAuthorizationInput($result['input']);
 
@@ -491,89 +489,6 @@ final class OpenAiCodex
         } finally {
             $callback?->close();
         }
-    }
-
-    /**
-     * Upstream's `waitForCallbackOrManualInput()` (`callback-server.ts`): the browser's callback and
-     * the paste box at once, the first to answer winning and the other told to stop. Without a
-     * callback server only the paste box is asked. Null is the box escaped with no callback.
-     *
-     * @param Closure(string, string, bool, ?AbortSignal): ?string $onPrompt
-     * @param array{message: string, placeholder: string} $prompt
-     * @return array{type: 'callback', value: string}|array{type: 'manual', input: string}|null
-     */
-    private static function waitForCallbackOrManualInput(?CallbackServer $callback, Closure $onPrompt, AbortSignal $signal, array $prompt): ?array
-    {
-        $manualAbort = new AbortController();
-        $callbackAbort = new AbortController();
-        $answer = new Deferred();
-
-        $settle = static function (Closure $produce) use ($answer): void {
-            try {
-                $value = $produce();
-            } catch (Throwable $problem) {
-                if (!$answer->isComplete()) {
-                    $answer->error($problem);
-                }
-
-                return;
-            }
-
-            if ($value !== null && !$answer->isComplete()) {
-                $answer->complete($value);
-            }
-        };
-
-        $pending = $callback === null ? 1 : 2;
-        $finishedOne = static function () use (&$pending, $answer): void {
-            if (--$pending === 0 && !$answer->isComplete()) {
-                $answer->complete(null);
-            }
-        };
-
-        $outer = $signal->onAbort(static function () use ($answer): void {
-            if (!$answer->isComplete()) {
-                $answer->error(new OauthError('Login cancelled'));
-            }
-        });
-
-        Async::spawn(static function () use ($settle, $finishedOne, $onPrompt, $prompt, $manualAbort, $callbackAbort): void {
-            $settle(static function () use ($onPrompt, $prompt, $manualAbort, $callbackAbort): ?array {
-                $input = $onPrompt($prompt['message'], $prompt['placeholder'], false, $manualAbort->signal);
-
-                if ($manualAbort->signal->aborted()) {
-                    return null;
-                }
-
-                // `.then((input) => { callback?.cancel(); return input; })`, and an escaped box
-                // (upstream's rejected prompt) stops the callback too — nobody finished.
-                $callbackAbort->abort('manual input');
-
-                return $input === null ? null : ['type' => 'manual', 'input' => $input];
-            });
-            $finishedOne();
-        });
-
-        if ($callback !== null) {
-            Async::spawn(static function () use ($settle, $finishedOne, $callback, $callbackAbort): void {
-                $settle(static function () use ($callback, $callbackAbort): ?array {
-                    $result = $callback->await($callbackAbort->signal);
-
-                    return $result === null ? null : ['type' => 'callback', 'value' => $result['code']];
-                });
-                $finishedOne();
-            });
-        }
-
-        try {
-            $result = $answer->future->await();
-        } finally {
-            $manualAbort->abort('sign-in settled');
-            $callbackAbort->abort('sign-in settled');
-            $signal->removeListener($outer);
-        }
-
-        return is_array($result) ? $result : null;
     }
 
     /** Upstream's `refreshOpenAICodexToken()`. */

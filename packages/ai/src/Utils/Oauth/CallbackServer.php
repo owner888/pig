@@ -4,9 +4,13 @@ declare(strict_types=1);
 
 namespace Pig\Ai\Utils\Oauth;
 
+use Closure;
+use Pig\Async\AbortController;
 use Pig\Async\AbortSignal;
+use Pig\Async\Async;
 use Pig\Async\Deferred;
 use Pig\Async\Loop;
+use Throwable;
 
 /**
  * The one request a browser makes back to this machine at the end of a loopback sign-in.
@@ -70,6 +74,9 @@ final class CallbackServer
      *        state to the caller, which is how the Google and Anthropic flows use it.
      * @param string $host the address to listen on — upstream's `host`, which OpenAI's Codex flow
      *        takes from `PIG_OAUTH_CALLBACK_HOST`. The redirect still names `localhost`.
+     * @param bool $issuesClientId the provider names the client it registered in the callback, as
+     *        Sign in with ChatGPT does (`OpenAiChatGpt`): a callback without a `client_id` is answered
+     *        `400` and the wait goes on, as upstream's server answers it, and the answer carries it
      */
     public function __construct(
         private readonly int $port = self::PORT,
@@ -77,6 +84,7 @@ final class CallbackServer
         private readonly string $who = 'Google',
         private readonly ?string $state = null,
         private readonly string $host = '127.0.0.1',
+        private readonly bool $issuesClientId = false,
     ) {
     }
 
@@ -146,7 +154,7 @@ final class CallbackServer
      * *Cancel* on Google's consent screen — is a refusal rather than a cancellation and comes
      * back as a throw, because something was said and it was "no".
      *
-     * @return array{code: string, state: string}|null
+     * @return array{code: string, state: string, clientId?: string}|null
      */
     public function await(?AbortSignal $signal = null): ?array
     {
@@ -175,6 +183,89 @@ final class CallbackServer
             if ($signal !== null && $listener !== null) {
                 $signal->removeListener($listener);
             }
+        }
+
+        return is_array($result) ? $result : null;
+    }
+
+    /**
+     * Upstream's `waitForCallbackOrManualInput()` (`callback-server.ts`): the browser's callback and
+     * the paste box at once, the first to answer winning and the other told to stop. Without a
+     * callback server only the paste box is asked. Null is the box escaped with no callback.
+     *
+     * @param Closure(string, string, bool, ?AbortSignal): ?string $onPrompt
+     * @param array{message: string, placeholder: string} $prompt
+     * @return array{type: 'callback', value: array{code: string, state: string, clientId?: string}}|array{type: 'manual', input: string}|null
+     */
+    public static function waitForCallbackOrManualInput(?CallbackServer $callback, Closure $onPrompt, AbortSignal $signal, array $prompt): ?array
+    {
+        $manualAbort = new AbortController();
+        $callbackAbort = new AbortController();
+        $answer = new Deferred();
+
+        $settle = static function (Closure $produce) use ($answer): void {
+            try {
+                $value = $produce();
+            } catch (Throwable $problem) {
+                if (!$answer->isComplete()) {
+                    $answer->error($problem);
+                }
+
+                return;
+            }
+
+            if ($value !== null && !$answer->isComplete()) {
+                $answer->complete($value);
+            }
+        };
+
+        $pending = $callback === null ? 1 : 2;
+        $finishedOne = static function () use (&$pending, $answer): void {
+            if (--$pending === 0 && !$answer->isComplete()) {
+                $answer->complete(null);
+            }
+        };
+
+        $outer = $signal->onAbort(static function () use ($answer): void {
+            if (!$answer->isComplete()) {
+                $answer->error(new OauthError('Login cancelled'));
+            }
+        });
+
+        Async::spawn(static function () use ($settle, $finishedOne, $onPrompt, $prompt, $manualAbort, $callbackAbort): void {
+            $settle(static function () use ($onPrompt, $prompt, $manualAbort, $callbackAbort): ?array {
+                $input = $onPrompt($prompt['message'], $prompt['placeholder'], false, $manualAbort->signal);
+
+                if ($manualAbort->signal->aborted()) {
+                    return null;
+                }
+
+                // `.then((input) => { callback?.cancel(); return input; })`, and an escaped box
+                // (upstream's rejected prompt) stops the callback too — nobody finished.
+                $callbackAbort->abort('manual input');
+
+                return $input === null ? null : ['type' => 'manual', 'input' => $input];
+            });
+            $finishedOne();
+        });
+
+        if ($callback !== null) {
+            Async::spawn(static function () use ($settle, $finishedOne, $callback, $callbackAbort): void {
+                $settle(static function () use ($callback, $callbackAbort): ?array {
+                    $result = $callback->await($callbackAbort->signal);
+
+                    return $result === null ? null : ['type' => 'callback', 'value' => $result];
+                });
+                $finishedOne();
+            });
+        }
+
+        try {
+            $result = $answer->future->await();
+        } finally {
+            $manualAbort->abort('sign-in settled');
+            $callbackAbort->abort('sign-in settled');
+            $signal->removeListener($outer);
         }
 
         return is_array($result) ? $result : null;
@@ -299,12 +390,20 @@ final class CallbackServer
             return;
         }
 
+        $clientId = is_string($query['client_id'] ?? null) ? trim($query['client_id']) : '';
+
+        if ($this->issuesClientId && $clientId === '') {
+            $this->reply($id, '400 Bad Request', '<h1>' . OpenAiChatGpt::NO_CLIENT_ID . '</h1>');
+
+            return;
+        }
+
         // Said before the terminal is looked at again, because the browser is where the person
         // is looking right now.
         $this->reply($id, '200 OK', '<h1>Signed in</h1><p>You can close this window and go back to the terminal.</p>');
 
         if ($this->answer !== null && !$this->answer->isComplete()) {
-            $this->answer->complete(['code' => $code, 'state' => $state]);
+            $this->answer->complete(['code' => $code, 'state' => $state] + ($this->issuesClientId ? ['clientId' => $clientId] : []));
         }
     }
 

@@ -937,6 +937,24 @@ final class Settings
         $this->set('lastChangelogVersion', $version);
     }
 
+    /**
+     * Upstream's `getOrCreateDeviceId()`: "Stable ID of this installation, e.g. sent to OpenAI as its
+     * agent host ID. Created on first use. Project settings are ignored so a committed project
+     * settings file cannot give every clone the same ID." A UUID, kept as `deviceId` in the
+     * person's own file.
+     */
+    public function getOrCreateDeviceId(): string
+    {
+        $id = $this->global['deviceId'] ?? null;
+
+        if (!is_string($id) || $id === '') {
+            $id = \Pig\Ai\Utils\Uuid::v4();
+            $this->set('deviceId', $id);
+        }
+
+        return $id;
+    }
+
     /** Upstream's `getExtensionChangelogVersion()`: the last version of a package whose changelog was seen. */
     public function extensionChangelogVersion(string $key): ?string
     {

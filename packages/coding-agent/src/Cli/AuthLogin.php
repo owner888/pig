@@ -52,6 +52,8 @@ final class AuthLogin
      * @param bool $interactive whether there is a terminal to ask on — the prompts need one
      * @param (Closure(string, AbortSignal): ModelsRefreshResult)|null $refresh the provider's
      *        catalog, `ModelRefresh::refresh()` unless a test says otherwise
+     * @param (Closure(): string)|null $getDeviceId this installation's id for a sign-in that names it
+     *        (`Auth::login()`); `pig auth` reads no settings into its `Auth`, so it hands this over
      */
     public function __construct(
         private readonly Auth $auth,
@@ -62,11 +64,16 @@ final class AuthLogin
         private readonly Closure $openUrl,
         private readonly bool $interactive,
         private readonly ?Closure $refresh = null,
+        private readonly ?Closure $getDeviceId = null,
     ) {
     }
 
-    /** Upstream's `createProcessLoginTerminal()`: standard input and output. */
-    public static function forTerminal(Auth $auth): self
+    /**
+     * Upstream's `createProcessLoginTerminal()`: standard input and output.
+     *
+     * @param (Closure(): string)|null $getDeviceId
+     */
+    public static function forTerminal(Auth $auth, ?Closure $getDeviceId = null): self
     {
         return new self(
             $auth,
@@ -86,6 +93,7 @@ final class AuthLogin
                 }, 2.0);
             },
             TerminalQuestion::isTerminal(STDIN) && TerminalQuestion::isTerminal(STDOUT),
+            getDeviceId: $getDeviceId,
         );
     }
 
@@ -143,6 +151,7 @@ final class AuthLogin
                     },
                     $signal,
                     $this->onSelect($request['browser'], $signal),
+                    $this->getDeviceId,
                 )
                 : $this->auth->loginApiKey(
                     $provider['id'],

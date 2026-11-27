@@ -8,7 +8,7 @@ use Pig\Ai\Timestamp;
 use RangeException;
 
 /**
- * Upstream's `utils/uuid.ts`: time-ordered UUIDv7s. Within a process each id sorts after the last
+ * Upstream's `utils/uuid.ts`: time-ordered UUIDv7s, and Node's `crypto.randomUUID()` (`v4()`). Within a process each id sorts after the last
  * — a counter seeded at random fills the bits after the millisecond, and the clock is never let
  * run backwards — so two made in the same millisecond still come out in order.
  */
@@ -21,6 +21,17 @@ final class Uuid
     private static int $lastOrdinaryTimestamp = -1;
 
     private static ?int $sequence = null;
+
+    /** Node's `crypto.randomUUID()`: a random version 4 UUID, for an id nothing sorts by. */
+    public static function v4(): string
+    {
+        $bytes = random_bytes(16);
+        $bytes[6] = chr((ord($bytes[6]) & 0x0F) | 0x40);
+        $bytes[8] = chr((ord($bytes[8]) & 0x3F) | 0x80);
+        $hex = bin2hex($bytes);
+
+        return substr($hex, 0, 8) . '-' . substr($hex, 8, 4) . '-' . substr($hex, 12, 4) . '-' . substr($hex, 16, 4) . '-' . substr($hex, 20);
+    }
 
     /** Upstream's `uuidv7(timestampMs?)`. A timestamp given is kept as it is, "for follower ids". */
     public static function v7(?int $timestampMs = null): string

@@ -188,7 +188,7 @@ if (($argv[1] ?? '') === 'auth') {
             pcntl_signal(SIGINT, static fn () => $controller->abort('Login cancelled'));
         }
 
-        exit((int) Async::run(static fn (): int => \Pig\CodingAgent\Cli\AuthLogin::forTerminal($auth)->run($rest, $controller->signal)));
+        exit((int) Async::run(static fn (): int => \Pig\CodingAgent\Cli\AuthLogin::forTerminal($auth, $loginSettings->getOrCreateDeviceId(...))->run($rest, $controller->signal)));
     }
 
     exit((new AuthCommand(
