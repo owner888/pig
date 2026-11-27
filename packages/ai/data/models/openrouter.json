@@ -1763,10 +1763,10 @@
         "baseUrl": "https://openrouter.ai/api/v1",
         "reasoning": true,
         "thinkingLevelMap": {
-            "off": null,
+            "off": "none",
             "minimal": null,
-            "low": null,
-            "medium": null,
+            "low": "low",
+            "medium": "medium",
             "high": "high",
             "xhigh": null,
             "max": null
@@ -2354,13 +2354,13 @@
             "text"
         ],
         "cost": {
-            "input": 0.06,
-            "output": 0.18,
-            "cacheRead": 0.015,
+            "input": 0.047,
+            "output": 0.3,
+            "cacheRead": 0.035,
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
-        "maxTokens": 384000,
+        "maxTokens": 943718,
         "compat": {
             "supportsDeveloperRole": false,
             "requiresReasoningContentOnAssistantMessages": true,
@@ -2427,13 +2427,13 @@
             "image"
         ],
         "cost": {
-            "input": 0.44,
-            "output": 1.32,
-            "cacheRead": 0.028,
+            "input": 0.2156,
+            "output": 0.6468,
+            "cacheRead": 0.00686,
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
-        "maxTokens": 393216,
+        "maxTokens": 262144,
         "compat": {
             "supportsDeveloperRole": false,
             "requiresReasoningContentOnAssistantMessages": true,
@@ -2509,13 +2509,13 @@
             "text"
         ],
         "cost": {
-            "input": 0.111,
-            "output": 4.44,
-            "cacheRead": 0.097,
+            "input": 0.0999,
+            "output": 5.0,
+            "cacheRead": 0.0999,
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
-        "maxTokens": 943718,
+        "maxTokens": 393216,
         "compat": {
             "supportsDeveloperRole": false,
             "requiresReasoningContentOnAssistantMessages": true,
@@ -2593,9 +2593,9 @@
             "image"
         ],
         "cost": {
-            "input": 0.3,
-            "output": 1.2,
-            "cacheRead": 0.006,
+            "input": 0.15,
+            "output": 0.6,
+            "cacheRead": 0.003,
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
@@ -4687,6 +4687,43 @@
     },
     {
         "type": "chat",
+        "id": "inclusionai/lingsante-3.1-air-vl",
+        "name": "inclusionAI: LingSante 3.1 Air VL",
+        "api": "openai-completions",
+        "provider": "openrouter",
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "reasoning": true,
+        "input": [
+            "text",
+            "image"
+        ],
+        "cost": {
+            "input": 0.06,
+            "output": 0.18,
+            "cacheRead": 0.012,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 131072,
+        "maxTokens": 32768,
+        "compat": {
+            "supportsDeveloperRole": false,
+            "supportsStrictMode": true,
+            "thinkingFormat": "openrouter",
+            "sendSessionAffinityHeaders": true
+        },
+        "inputLimits": {
+            "images": {
+                "resize": {
+                    "maxWidth": 2000,
+                    "maxHeight": 2000,
+                    "maxBytes": 4718592,
+                    "jpegQuality": 80
+                }
+            }
+        }
+    },
+    {
+        "type": "chat",
         "id": "kt/midm-k-3.0-pro",
         "name": "KT: Mi:dm K 3.0 Pro",
         "api": "openai-completions",
@@ -4862,13 +4899,13 @@
             "text"
         ],
         "cost": {
-            "input": 0.71,
-            "output": 0.71,
-            "cacheRead": 0.71,
+            "input": 0.59,
+            "output": 0.79,
+            "cacheRead": 0.295,
             "cacheWrite": 0.0
         },
-        "contextWindow": 128000,
-        "maxTokens": 115200,
+        "contextWindow": 131072,
+        "maxTokens": 32768,
         "compat": {
             "supportsDeveloperRole": false,
             "supportsStrictMode": true,
@@ -5018,13 +5055,13 @@
             "image"
         ],
         "cost": {
-            "input": 0.35,
-            "output": 1.5,
+            "input": 0.3,
+            "output": 1.2,
             "cacheRead": 0.04,
             "cacheWrite": 0.0
         },
         "contextWindow": 131072,
-        "maxTokens": 117964,
+        "maxTokens": 16384,
         "compat": {
             "supportsDeveloperRole": false,
             "supportsStrictMode": true,
@@ -6341,6 +6378,58 @@
         },
         "contextWindow": 32768,
         "maxTokens": 26214,
+        "compat": {
+            "supportsDeveloperRole": false,
+            "supportsStrictMode": true,
+            "thinkingFormat": "openrouter",
+            "sendSessionAffinityHeaders": true
+        }
+    },
+    {
+        "type": "chat",
+        "id": "moonshotai/kimi-k2",
+        "name": "MoonshotAI: Kimi K2 0711",
+        "api": "openai-completions",
+        "provider": "openrouter",
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "reasoning": false,
+        "input": [
+            "text"
+        ],
+        "cost": {
+            "input": 0.57,
+            "output": 2.3,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 131072,
+        "maxTokens": 98304,
+        "compat": {
+            "supportsDeveloperRole": false,
+            "supportsStrictMode": true,
+            "thinkingFormat": "openrouter",
+            "sendSessionAffinityHeaders": true
+        }
+    },
+    {
+        "type": "chat",
+        "id": "moonshotai/kimi-k2-0905",
+        "name": "MoonshotAI: Kimi K2 0905",
+        "api": "openai-completions",
+        "provider": "openrouter",
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "reasoning": false,
+        "input": [
+            "text"
+        ],
+        "cost": {
+            "input": 0.6,
+            "output": 2.5,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 262144,
+        "maxTokens": 98304,
         "compat": {
             "supportsDeveloperRole": false,
             "supportsStrictMode": true,
@@ -12014,7 +12103,7 @@
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
-        "maxTokens": 131072,
+        "maxTokens": 943718,
         "compat": {
             "supportsDeveloperRole": false,
             "supportsStrictMode": true,
@@ -12060,7 +12149,7 @@
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
-        "maxTokens": 131072,
+        "maxTokens": 943718,
         "compat": {
             "supportsDeveloperRole": false,
             "supportsStrictMode": true,
@@ -13383,13 +13472,13 @@
             "image"
         ],
         "cost": {
-            "input": 0.035,
-            "output": 1.5,
-            "cacheRead": 0.0175,
+            "input": 0.06,
+            "output": 1.96,
+            "cacheRead": 0.059,
             "cacheWrite": 0.0
         },
         "contextWindow": 262144,
-        "maxTokens": 131072,
+        "maxTokens": 235929,
         "compat": {
             "supportsDeveloperRole": false,
             "supportsStrictMode": true,
@@ -14425,9 +14514,9 @@
             "image"
         ],
         "cost": {
-            "input": 0.075,
-            "output": 0.3,
-            "cacheRead": 0.015,
+            "input": 0.06,
+            "output": 0.24,
+            "cacheRead": 0.012,
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
@@ -16269,13 +16358,13 @@
             "text"
         ],
         "cost": {
-            "input": 0.111,
-            "output": 4.44,
-            "cacheRead": 0.097,
+            "input": 0.0999,
+            "output": 5.0,
+            "cacheRead": 0.0999,
             "cacheWrite": 0.0
         },
         "contextWindow": 1048576,
-        "maxTokens": 943718,
+        "maxTokens": 393216,
         "compat": {
             "supportsDeveloperRole": false,
             "supportsStrictMode": true,
@@ -16857,6 +16946,28 @@
             "supportsStrictMode": true,
             "thinkingFormat": "openrouter",
             "sendSessionAffinityHeaders": true
+        }
+    },
+    {
+        "type": "classifier",
+        "id": "antdigital/lingdt-decision-fast-1.0:free",
+        "name": "Ant Digital: LingDT Decision Fast 1.0 (free)",
+        "api": "typesafe-system-one",
+        "provider": "openrouter",
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "input": [
+            "text"
+        ],
+        "cost": {
+            "input": 0.0,
+            "output": 0.0,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+        },
+        "contextWindow": 32768,
+        "compat": {
+            "imageInput": "state-image-urls",
+            "sendImageOptInHeader": false
         }
     },
     {
