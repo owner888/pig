@@ -45,6 +45,21 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### New Features
+
+- A Packages panel in `pig web` (the header's `⋯` menu, or `/packages` in the page): the installed packages with their source, what each brings, its git tag or commit and its scope, and Install…, Update, Update all and Remove buttons, like DeepSeek Harness's plugin manager. Two tabs, Installed and Market: the market is the GitHub repositories with the topic `pig-package` (the list pigagent.dev/packages is built from), most stars first, each with Install, asked of GitHub only when its tab is opened. The buttons run `pig install`, `pig update` and `pig remove` as child processes (`Web\PackagesPanel`), so the page does exactly what the commands do and a slow clone does not hold it up. Admin-only with several accounts, like every panel.
+
+### Added
+
+- A `tabs` block for web panels (`WebPanel`, `panels.js`): `['type' => 'tabs', 'tabs' => [['label' => …, 'blocks' => […]], …]]`, drawn like the SSH workbench's sub-tabs. A lazy section in a tab is fetched when the tab is opened, and the chosen tab survives the redraw after an action.
+
+### Changed
+
+- `pig web`'s ⋯ menu no longer has a separate 🧩 Extensions entry, which only listed the panels to open or move: every panel is already in the ⋯ menu or the sidebar, and next to the new 🧩 Packages entry two 🧩 entries for different things were one too many. A panel now moves between the ⋯ menu and the sidebar from its own window (the button beside Refresh).
+- `pig remove` takes back everything the package left in the settings: its `packages` entry, the `packages` key once it is empty (upstream keeps `[]`), and its extensions' names in `disabledExtensions`, which nothing used to clear (`PackageManager::removeAndPersist()`, `Settings::forgetDisabledExtensions()`). All of it on the decoded settings, written back with `json_encode()`; an emptied settings file is `{}`, not `[]`.
+
 ## [2.0.41] - 2026-11-27
 
 ### New Features

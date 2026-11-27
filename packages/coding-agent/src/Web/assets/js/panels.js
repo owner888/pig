@@ -2,9 +2,11 @@
  * The extensions' panels (`ExtensionApi::registerWebPanel()`): an entry each in the sidebar's
  * Extensions group or in the header's ⋯ menu — the extension's `placement`, unless the person moved
  * it (`placementOf()`, kept in this browser) — and a window drawn from the blocks the extension's
- * `render` returns — see `WebPanel` for them. The ⋯ menu's Extensions entry lists them all, to open
- * or move. Nothing of the extension runs here: it describes, the page draws, in the
- * page's own components and theme.
+ * `render` returns — see `WebPanel` for them. A panel is moved to the other place from its own
+ * window (the button beside Refresh); the ⋯ menu's separate Extensions list that did only that
+ * went when the Packages panel came, two 🧩 entries for different things being one too many.
+ * Nothing of the extension runs here: it describes, the page draws, in the page's own components
+ * and theme.
  *
  * `blocksToHtml()` is the drawing and needs no page, so it can be run under Node.
  */
@@ -63,6 +65,15 @@ function blockHtml(b) {
         </div>`;
     case "actions":
       return `<div class="panel-actions">${actionsHtml(b.actions)}</div>`;
+    case "tabs": {
+      // The first tab shown; `open()` switches them and keeps the choice across a redraw.
+      const tabs = Array.isArray(b.tabs) ? b.tabs.filter((tab) => tab && typeof tab === "object") : [];
+      if (tabs.length === 0) return "";
+      return `<div class="panel-tabs">
+          <div class="panel-tabs-bar" role="tablist">${tabs.map((tab, i) => `<button class="panel-tab${i === 0 ? " active" : ""}" role="tab" data-tab="${i}">${escapeText(tab.label)}</button>`).join("")}</div>
+          ${tabs.map((tab, i) => `<div class="panel-tab-pane" data-tab="${i}"${i === 0 ? "" : " hidden"}>${blocksToHtml(tab.blocks)}</div>`).join("")}
+        </div>`;
+    }
     case "lazy":
       return typeof b.section === "string" && b.section !== ""
         ? `<div class="panel-lazy" data-section="${escapeText(b.section)}"><div class="panel-text tone-muted">${escapeText(b.placeholder ?? "…")}</div></div>`
@@ -129,7 +140,6 @@ export function createPanels({ openModal, t, locale, act, onChanged = () => {} }
   const group = document.getElementById("sidebar-panels");
   const list = document.getElementById("sidebar-panels-list");
   const header = document.getElementById("header-panels");
-  const listButtons = [document.getElementById("panels-btn"), document.getElementById("more-panels-btn")];
 
   async function load() {
     try {
@@ -164,7 +174,6 @@ export function createPanels({ openModal, t, locale, act, onChanged = () => {} }
     for (const el of [list, header]) {
       el?.querySelectorAll("[data-panel]").forEach((b) => b.addEventListener("click", () => open(b.dataset.panel)));
     }
-    for (const button of listButtons) if (button) button.hidden = panels.length === 0;
   }
 
   /** Put a panel in the header or the sidebar, for this browser. */
@@ -174,47 +183,6 @@ export function createPanels({ openModal, t, locale, act, onChanged = () => {} }
     draw();
   }
 
-  /** Every panel, wherever it is: open it, or move it to the other place. */
-  function openList() {
-    const rows = () => panels.map((p) => {
-      const there = placementOf(p, overrides);
-      const other = there === "header" ? "sidebar" : "header";
-      return `
-        <div class="panel-list-row">
-          <span class="sidebar-nav-icon">${escapeText(p.icon || "▣")}</span>
-          <span class="panel-item-main"><span class="panel-item-title">${escapeText(p.title)}</span>
-            <span class="panel-item-detail">${escapeText(t(there === "header" ? "panel_in_header" : "panel_in_sidebar"))}</span></span>
-          <button class="mini-btn" data-move="${escapeText(p.id)}" data-to="${other}">${escapeText(t(other === "header" ? "panel_move_header" : "panel_move_sidebar"))}</button>
-          <button class="mini-btn" data-open="${escapeText(p.id)}">${escapeText(t("panel_open"))}</button>
-        </div>`;
-    }).join("");
-
-    openModal({
-      title: t("panels_title"),
-      hideFooter: true,
-      width: "480px",
-      bodyHtml: `<div class="panel-list-body">${rows()}</div>`,
-      onOpen: (modalEl, close) => {
-        const body = modalEl.querySelector(".panel-list-body");
-        body.addEventListener("click", (e) => {
-          const moving = e.target.closest("[data-move]");
-          if (moving) {
-            move(moving.dataset.move, moving.dataset.to);
-            body.innerHTML = rows();
-            return;
-          }
-          const opening = e.target.closest("[data-open]");
-          if (opening) {
-            close();
-            open(opening.dataset.open);
-          }
-        });
-      },
-    });
-  }
-
-  for (const button of listButtons) button?.addEventListener("click", openList);
-
   function open(id) {
     const panel = panels.find((p) => p.id === id);
     if (!panel) return;
@@ -223,16 +191,33 @@ export function createPanels({ openModal, t, locale, act, onChanged = () => {} }
 
     // What the last action said with `notify()`, kept above the panel until the next one.
     let notices = [];
+    // The tab chosen in each `tabs` block, by its place in the panel, so a redraw after an action
+    // (a package installed) stays on the tab the person was looking at.
+    let chosenTabs = [];
+
+    // A tab's pane shown and its lazy sections asked for — only now: a tab nobody opens costs
+    // nothing (the Packages panel's market is a GitHub search).
+    const showTab = (group, index) => {
+      group.querySelectorAll(":scope > .panel-tabs-bar > .panel-tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === String(index)));
+      group.querySelectorAll(":scope > .panel-tab-pane").forEach((pane) => {
+        pane.hidden = pane.dataset.tab !== String(index);
+        if (!pane.hidden) pane.querySelectorAll(".panel-lazy:not([data-filled])").forEach(fill);
+      });
+    };
     const noticeHtml = (n) => `<div class="panel-text${tone(n.notifyType)}">${escapeText(n.message)}</div>`;
 
     const draw = (blocks, error) => {
       if (!body) return;
       body.innerHTML = notices.map(noticeHtml).join("")
         + (error ? `<div class="panel-text tone-error">${escapeText(error)}</div>` : "") + blocksToHtml(blocks);
-      body.querySelectorAll(".panel-lazy").forEach(fill);
+      body.querySelectorAll(".panel-tabs").forEach((group, i) => {
+        if (chosenTabs[i] !== undefined && group.querySelector(`:scope > .panel-tabs-bar > [data-tab="${chosenTabs[i]}"]`)) showTab(group, chosenTabs[i]);
+      });
+      body.querySelectorAll(".panel-lazy").forEach((el) => { if (!el.closest("[hidden]") && !el.dataset.filled) fill(el); });
     };
 
     const fill = async (el) => {
+      el.dataset.filled = "1";
       try {
         const res = await apiFetch(`${url}?locale=${encodeURIComponent(locale())}&section=${encodeURIComponent(el.dataset.section)}`);
         const d = await res.json();
@@ -288,12 +273,29 @@ export function createPanels({ openModal, t, locale, act, onChanged = () => {} }
       title: panel.title,
       hideFooter: true,
       width: "520px",
-      headerExtraHtml: `<button class="mini-btn panel-refresh" title="${escapeText(t("panel_refresh"))}">${escapeText(t("panel_refresh"))}</button>`,
+      headerExtraHtml: `<button class="mini-btn panel-move"></button><button class="mini-btn panel-refresh" title="${escapeText(t("panel_refresh"))}">${escapeText(t("panel_refresh"))}</button>`,
       bodyHtml: `<div class="panel-body"><div class="panel-text tone-muted">${escapeText(t("loading_session"))}</div></div>`,
       onOpen: (modalEl) => {
         body = modalEl.querySelector(".panel-body");
         modalEl.querySelector(".panel-refresh")?.addEventListener("click", refresh);
+        // To the other place, for this browser: the ⋯ menu or the sidebar.
+        const mover = modalEl.querySelector(".panel-move");
+        const label = () => {
+          if (mover) mover.textContent = t(placementOf(panel, overrides) === "header" ? "panel_move_sidebar" : "panel_move_header");
+        };
+        label();
+        mover?.addEventListener("click", () => {
+          move(id, placementOf(panel, overrides) === "header" ? "sidebar" : "header");
+          label();
+        });
         body.addEventListener("click", (e) => {
+          const tab = e.target.closest(".panel-tab");
+          if (tab) {
+            const group = tab.closest(".panel-tabs");
+            chosenTabs[[...body.querySelectorAll(".panel-tabs")].indexOf(group)] = Number(tab.dataset.tab);
+            showTab(group, tab.dataset.tab);
+            return;
+          }
           const button = e.target.closest(".panel-action");
           if (button && !button.disabled) run(button);
         });
@@ -305,7 +307,6 @@ export function createPanels({ openModal, t, locale, act, onChanged = () => {} }
   return {
     load,
     open,
-    openList,
     /** Open the panel `text` is the command of, and say whether there was one. */
     openForCommand(text) {
       const panel = panelForCommand(panels, text);

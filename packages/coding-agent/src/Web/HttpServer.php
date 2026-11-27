@@ -332,6 +332,9 @@ final class HttpServer
             fwrite(STDERR, "extension {$problem->toText()}\n");
         }
 
+        // pig's own panel, after the extensions': installing, updating and removing packages.
+        ExtensionApi::putWebPanel((new PackagesPanel($this->cwd))->webPanel());
+
         $address = "tcp://{$this->host}:{$this->port}";
         $errno = 0;
         $errstr = '';

@@ -230,6 +230,34 @@ final class PackageManagerTest extends TestCase
         $this->assertFalse($manager->removeAndPersist('./local'), 'nothing left to remove');
     }
 
+    public function testRemovingAPackageTakesBackWhatItsInstallAndItsSwitchesWroteToTheSettings(): void
+    {
+        $this->package('local', ['extensions/a.php' => '<?php', 'extensions/b/index.php' => '<?php']);
+        $manager = $this->manager(['theme' => 'dark', 'disabledExtensions' => ['a', 'other'], 'yw123' => ['userId' => '7']]);
+
+        $manager->installAndPersist('./local');
+        $this->assertSame(['a', 'b'], $manager->extensionNamesOf('./local', 'user'));
+        $this->assertTrue($manager->removeAndPersist('./local'));
+
+        // The entry, the emptied key and the package's own name in `disabledExtensions` are gone;
+        // everything the install did not write is as it was, in its order.
+        $this->assertSame(
+            ['theme' => 'dark', 'disabledExtensions' => ['other'], 'yw123' => ['userId' => '7']],
+            json_decode((string) file_get_contents("{$this->home}/settings.json"), true),
+        );
+    }
+
+    public function testTheLastDisabledNameTakesTheKeyWithIt(): void
+    {
+        $this->package('local', ['extensions/a.php' => '<?php']);
+        $manager = $this->manager(['disabledExtensions' => ['a']]);
+
+        $manager->installAndPersist('./local');
+        $manager->removeAndPersist('./local');
+
+        $this->assertSame([], json_decode((string) file_get_contents("{$this->home}/settings.json"), true));
+    }
+
     public function testInstallingAPathThatDoesNotExistIsRefused(): void
     {
         $this->expectException(PackageError::class);

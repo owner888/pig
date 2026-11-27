@@ -22,6 +22,9 @@ use Closure;
  * - `['type' => 'meter', 'label' => …, 'value' => 0.0–1.0, 'detail' => …]` — a bar, as quota is drawn
  * - `['type' => 'card', 'title' => …, 'blocks' => [block, …]]` — blocks grouped under a title
  * - `['type' => 'actions', 'actions' => [action, …]]` — a row of buttons
+ * - `['type' => 'tabs', 'tabs' => [['label' => …, 'blocks' => [block, …]], …]]` — the first shown;
+ *   a lazy section inside another tab is asked for when that tab is opened, and the chosen tab
+ *   survives the redraw after an action
  * - `['type' => 'lazy', 'section' => …, 'placeholder' => …]` — drawn later, from `render` asked
  *   again with that `section`: what needs a network call does not hold the rest of the panel up
  *

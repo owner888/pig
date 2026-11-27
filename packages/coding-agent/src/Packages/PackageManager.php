@@ -6,6 +6,7 @@ namespace Pig\CodingAgent\Packages;
 
 use Closure;
 use Pig\CodingAgent\Config;
+use Pig\CodingAgent\Extensions\ExtensionLoader;
 use Pig\CodingAgent\Settings;
 use Pig\CodingAgent\Tools\Paths;
 use Pig\CodingAgent\Version;
@@ -721,11 +722,45 @@ final class PackageManager
         });
     }
 
+    /**
+     * Upstream's `remove` with its settings write — and pig's: what the package left in the
+     * settings goes with it. Its entry in `packages` (the key too, once empty — `Settings::setPackages()`)
+     * and its extensions' names in `disabledExtensions`, which `/settings` and `pig web` write by
+     * name and nothing would ever clear. Read before the checkout is deleted, since the names
+     * come from its files. Always on the decoded settings, never on the file's text.
+     */
     public function removeAndPersist(string $source, bool $local = false): bool
     {
+        $names = $this->extensionNamesOf($source, $local ? 'project' : 'user');
         $this->remove($source, $local);
 
-        return $this->removeSourceFromSettings($source, $local);
+        if (!$this->removeSourceFromSettings($source, $local)) {
+            return false;
+        }
+
+        $this->settings->forgetDisabledExtensions($names);
+
+        return true;
+    }
+
+    /**
+     * The names its extensions load under (`ExtensionLoader::nameOf()`), the names
+     * `disabledExtensions` lists them by.
+     *
+     * @param 'user'|'project' $scope
+     * @return list<string>
+     */
+    public function extensionNamesOf(string $source, string $scope): array
+    {
+        $names = [];
+
+        foreach ($this->resolve(static fn (): string => 'skip')->of('extensions') as $resource) {
+            if ($resource->metadata->scope === $scope && $this->sourcesMatch($resource->metadata->source, $source, $scope)) {
+                $names[] = ExtensionLoader::nameOf($resource->path);
+            }
+        }
+
+        return array_values(array_unique($names));
     }
 
     /**

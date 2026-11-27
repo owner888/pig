@@ -780,7 +780,10 @@ final class WebModeTest extends TestCase
                 $http = new HttpClient();
                 $get = fn (string $path): array => json_decode($http->send(new Request('GET', "http://127.0.0.1:{$port}{$path}"))->body->all(), true);
 
-                $this->assertSame([['id' => 'probe.panel', 'title' => '探针', 'label' => '探针', 'icon' => '', 'commands' => ['probe'], 'placement' => 'sidebar']], $get('/api/panels?locale=zh-CN')['panels']);
+                // The extension's, and pig's own Packages panel, which the server adds as it starts.
+                $panels = array_column($get('/api/panels?locale=zh-CN')['panels'], null, 'id');
+                $this->assertSame(['id' => 'probe.panel', 'title' => '探针', 'label' => '探针', 'icon' => '', 'commands' => ['probe'], 'placement' => 'sidebar'], $panels['probe.panel']);
+                $this->assertSame(['id' => 'packages', 'title' => '插件', 'label' => '插件', 'icon' => '🧩', 'commands' => ['packages'], 'placement' => 'header'], $panels['packages']);
                 $this->assertSame([['type' => 'text', 'text' => 'zh-CN:main']], $get('/api/panels/probe.panel?locale=zh-CN')['blocks']);
                 $this->assertSame([['type' => 'text', 'text' => 'en:slow']], $get('/api/panels/probe.panel?locale=en&section=slow')['blocks']);
 

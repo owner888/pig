@@ -291,15 +291,59 @@ final class Settings
      */
     public function setPackages(array $packages, string $scope = 'user'): void
     {
+        // An empty list takes the key out, so removing the last package leaves the file as it was
+        // before the first was installed (the developer's ask: what an install wrote, a removal
+        // takes back). Upstream keeps `"packages": []`; nothing reads the difference.
         if ($scope === 'project') {
-            $this->project['packages'] = array_values($packages);
+            $this->project = self::withList($this->project, 'packages', $packages);
             $this->saveProject();
 
             return;
         }
 
-        $this->global['packages'] = array_values($packages);
+        $this->global = self::withList($this->global, 'packages', $packages);
         $this->save();
+    }
+
+    /**
+     * Take names out of the person's `disabledExtensions` — a removed package's extensions, which
+     * would otherwise stay listed as switched off long after the package is gone. Done on the
+     * decoded array, never on the file's text; the key goes when nothing is left in it.
+     *
+     * @param list<string> $names
+     */
+    public function forgetDisabledExtensions(array $names): void
+    {
+        $current = $this->global['disabledExtensions'] ?? null;
+
+        if (!is_array($current) || $names === []) {
+            return;
+        }
+
+        $kept = array_values(array_filter($current, static fn (mixed $name): bool => !in_array($name, $names, true)));
+
+        if (count($kept) === count($current)) {
+            return;
+        }
+
+        $this->global = self::withList($this->global, 'disabledExtensions', $kept);
+        $this->save();
+    }
+
+    /**
+     * @param array<string, mixed> $settings
+     * @param list<mixed> $list
+     * @return array<string, mixed> `$settings` with `$key` set to the list, or without it when empty
+     */
+    private static function withList(array $settings, string $key, array $list): array
+    {
+        if ($list === []) {
+            unset($settings[$key]);
+        } else {
+            $settings[$key] = array_values($list);
+        }
+
+        return $settings;
     }
 
     /**
@@ -1746,7 +1790,8 @@ final class Settings
             return;
         }
 
-        $json = json_encode($this->global, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        // `{}` rather than `[]` once the last key is gone: the file is an object.
+        $json = json_encode($this->global === [] ? new \stdClass() : $this->global, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
         if ($json === false || file_put_contents($this->path, $json . "\n") === false) {
             // Not fatal: someone with an unwritable home directory should still be able
@@ -1772,7 +1817,7 @@ final class Settings
             return;
         }
 
-        $json = json_encode($this->project, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $json = json_encode($this->project === [] ? new \stdClass() : $this->project, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
         if ($json === false || file_put_contents($this->projectPath, $json . "\n") === false) {
             $this->problems[] = "Could not write {$this->projectPath}";

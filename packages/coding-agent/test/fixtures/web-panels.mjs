@@ -39,6 +39,19 @@ assert.equal(blocksToHtml(undefined), '');
 assert.ok(blocksToHtml([{ type: 'meter', label: 'over', value: 7 }]).includes('width:100%'));
 assert.ok(blocksToHtml([{ type: 'text', text: 'x', tone: 'evil" onclick="' }]).includes('class="panel-text"'), 'an unknown tone is no tone');
 
+// Tabs: a bar and a pane each, the first shown and the rest hidden until chosen.
+const tabs = blocksToHtml([{ type: 'tabs', tabs: [
+  { label: 'Installed (1)', blocks: [{ type: 'text', text: 'one' }] },
+  { label: '<Market>', blocks: [{ type: 'lazy', section: 'market', placeholder: '…' }] },
+  null,
+] }]);
+assert.equal((tabs.match(/class="panel-tab[" ]/g) || []).length, 2);
+assert.ok(tabs.includes('<button class="panel-tab active" role="tab" data-tab="0">Installed (1)</button>'));
+assert.ok(tabs.includes('data-tab="1">&lt;Market&gt;</button>'));
+assert.ok(tabs.includes('<div class="panel-tab-pane" data-tab="0"><div class="panel-text">one</div></div>'));
+assert.ok(tabs.includes('<div class="panel-tab-pane" data-tab="1" hidden><div class="panel-lazy" data-section="market">'));
+assert.equal(blocksToHtml([{ type: 'tabs', tabs: [] }]), '');
+
 // A panel's commands open it: `/accounts` and the extension's own name.
 const panels = [{ id: 'antigravity.accounts', commands: ['accounts', 'antigravity.accounts'] }];
 assert.equal(panelForCommand(panels, '/accounts')?.id, 'antigravity.accounts');

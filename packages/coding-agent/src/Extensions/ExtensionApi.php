@@ -932,6 +932,16 @@ final class ExtensionApi
     }
 
     /**
+     * A panel pig itself puts in the page (the Packages panel), beside the extensions'.
+     *
+     * @internal
+     */
+    public static function putWebPanel(WebPanel $panel): void
+    {
+        self::$webPanels[$panel->id] = $panel;
+    }
+
+    /**
      * @return list<WebPanel> in the order they were registered
      * @internal
      */
