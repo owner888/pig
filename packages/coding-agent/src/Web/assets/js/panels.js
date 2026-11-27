@@ -51,7 +51,9 @@ function blockHtml(b) {
     case "meter": {
       const value = Number(b.value);
       const pct = Number.isFinite(value) ? Math.max(0, Math.min(100, Math.round(value * 100))) : 0;
-      const level = pct === 0 ? " empty" : pct < 20 ? " low" : "";
+      // Coloured by what is left, at the terminal's marks (`UsageView::barRole()`): green from half,
+      // yellow from a fifth, red below — one meter, one colour, wherever it is drawn.
+      const level = pct >= 50 ? " plenty" : pct >= 20 ? " low" : " out";
       return `<div class="panel-meter">
           <div class="panel-meter-header"><span class="panel-meter-label">${escapeText(b.label)}</span><span class="panel-meter-pct">${pct}%</span></div>
           <div class="panel-meter-bar${level}"><div style="width:${pct}%"></div></div>

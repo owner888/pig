@@ -198,7 +198,10 @@ final class UsageView
         return '[' . str_repeat('█', $filled) . str_repeat('-', $width - $filled) . ']';
     }
 
-    /** What a bar is coloured as: half or more left, a fifth or more, less than that. */
+    /**
+     * What a bar is coloured as: half or more left, a fifth or more, less than that. The web page's
+     * meters use the same marks (`panels.js`), so a meter is one colour wherever it is drawn.
+     */
     public static function barRole(float $remaining): string
     {
         return match (true) {

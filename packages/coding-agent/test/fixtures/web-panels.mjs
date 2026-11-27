@@ -29,8 +29,12 @@ assert.ok(accounts.includes('<div class="panel-lazy" data-section="usage">'));
 const usage = blocksToHtml(fixture.usage);
 assert.ok(usage.includes('<div class="panel-heading">Claude and GPT models</div>'));
 assert.ok(usage.includes('<span class="panel-meter-pct">15%</span>'));
-assert.ok(usage.includes('<div class="panel-meter-bar low"><div style="width:15%"></div></div>'));
-assert.ok(usage.includes('<div class="panel-meter-bar empty"><div style="width:0%"></div></div>'));
+assert.ok(usage.includes('<div class="panel-meter-bar out"><div style="width:15%"></div></div>'));
+assert.ok(usage.includes('<div class="panel-meter-bar out"><div style="width:0%"></div></div>'));
+
+// A meter's colour is the terminal's (`UsageView::barRole()`): green from half, yellow from a fifth.
+const level = (value) => blocksToHtml([{ type: 'meter', label: 'x', value }]).match(/panel-meter-bar (\w+)/)[1];
+assert.deepEqual([1, 0.5, 0.49, 0.2, 0.19, 0].map(level), ['plenty', 'plenty', 'low', 'low', 'out', 'out']);
 assert.ok(usage.includes('<div class="panel-meter-detail">resets in 1h 30m</div>'));
 
 // What the page does not know, or that is not a block, draws nothing rather than breaking.
