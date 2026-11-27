@@ -23,19 +23,15 @@ assert.equal((accounts.match(/data-action="remove"/g) || []).length, 2);
 assert.ok(accounts.includes('class="mini-btn panel-action danger"'));
 assert.ok(accounts.includes('data-confirm="Forget &lt;two&gt;@example.com? Its tokens are removed from this machine."'));
 
-// The quota is a section drawn later.
-assert.ok(accounts.includes('<div class="panel-lazy" data-section="usage">'));
-
-const usage = blocksToHtml(fixture.usage);
-assert.ok(usage.includes('<div class="panel-heading">Claude and GPT models</div>'));
-assert.ok(usage.includes('<span class="panel-meter-pct">15%</span>'));
-assert.ok(usage.includes('<div class="panel-meter-bar out"><div style="width:15%"></div></div>'));
-assert.ok(usage.includes('<div class="panel-meter-bar out"><div style="width:0%"></div></div>'));
+// A meter: its share as a number and a bar, and what it says under it.
+const meter = blocksToHtml([{ type: 'meter', label: 'Weekly limit', value: 0.15, detail: 'resets in 1h 30m' }]);
+assert.ok(meter.includes('<span class="panel-meter-pct">15%</span>'));
+assert.ok(meter.includes('<div class="panel-meter-bar out"><div style="width:15%"></div></div>'));
+assert.ok(meter.includes('<div class="panel-meter-detail">resets in 1h 30m</div>'));
 
 // A meter's colour is the terminal's (`UsageView::barRole()`): green from half, yellow from a fifth.
 const level = (value) => blocksToHtml([{ type: 'meter', label: 'x', value }]).match(/panel-meter-bar (\w+)/)[1];
 assert.deepEqual([1, 0.5, 0.49, 0.2, 0.19, 0].map(level), ['plenty', 'plenty', 'low', 'low', 'out', 'out']);
-assert.ok(usage.includes('<div class="panel-meter-detail">resets in 1h 30m</div>'));
 
 // What the page does not know, or that is not a block, draws nothing rather than breaking.
 assert.equal(blocksToHtml([{ type: 'chart' }, null, 'x', { type: 'lazy' }, { type: 'actions', actions: [{ label: 'no action' }] }]), '<div class="panel-actions"></div>');

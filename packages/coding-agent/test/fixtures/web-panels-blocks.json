@@ -65,40 +65,6 @@
             "type": "text",
             "text": "<b>bad</b>",
             "tone": "error"
-        },
-        {
-            "type": "heading",
-            "text": "Quota — Active Account"
-        },
-        {
-            "type": "lazy",
-            "section": "usage",
-            "placeholder": "Fetching…"
-        }
-    ],
-    "usage": [
-        {
-            "type": "text",
-            "text": "Pro",
-            "tone": "muted"
-        },
-        {
-            "type": "card",
-            "title": "Claude and GPT models",
-            "blocks": [
-                {
-                    "type": "meter",
-                    "label": "Five Hour Limit Remaining",
-                    "value": 0.15,
-                    "detail": "resets in 1h 30m"
-                },
-                {
-                    "type": "meter",
-                    "label": "Something new",
-                    "value": 0,
-                    "detail": null
-                }
-            ]
         }
     ]
 }

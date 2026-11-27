@@ -209,7 +209,7 @@ final class WebPanelsTest extends TestCase
     public function testThePageDrawsWhatAPanelDescribes(): void
     {
         // The page's own `panels.js`, under Node, drawing a real panel's blocks: an accounts list
-        // with its buttons and a quota section with its meters. The blocks are the ones
+        // with its buttons (its quota moved to the Usage panel). The blocks are the ones
         // pig-antigravity's accounts panel described when it left pig to become a package, frozen
         // in `fixtures/web-panels-blocks.json` — that package still runs this script on its live
         // blocks, and this keeps the page's half tested where the page lives.
