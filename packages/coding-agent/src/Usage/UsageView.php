@@ -18,6 +18,16 @@ final class UsageView
     public const int BAR_WIDTH = 20;
 
     /**
+     * What pig calls the usual windows, by `UsageMeter::$short`: one name for one window, whichever
+     * provider reports it (Antigravity's "Five Hour Limit Remaining" and OpenCode Go's "Rolling 5h"
+     * are the same limit).
+     */
+    private const array WINDOWS = [
+        'en' => ['5h' => '5-hour limit', 'wk' => 'Weekly limit', 'mo' => 'Monthly limit'],
+        'zh' => ['5h' => '5 小时额度', 'wk' => '每周额度', 'mo' => '每月额度'],
+    ];
+
+    /**
      * The report as lines for the transcript, coloured with `$theme` (plain without one, which is
      * what a pipe gets). With `$title`, the source's name heads it, as `/usage` lists several.
      */
@@ -59,7 +69,7 @@ final class UsageView
 
             foreach ($group->meters as $meter) {
                 $bar = $paint(self::barRole($meter->remaining), self::bar($meter->remaining));
-                $lines[] = "  {$bar} " . $paint('label', "{$meter->label}: " . self::detail($meter, $now));
+                $lines[] = "  {$bar} " . $paint('label', self::label($meter) . ': ' . self::percentLeft($meter) . ' · ' . self::detail($meter, $now));
             }
         }
 
@@ -124,34 +134,60 @@ final class UsageView
             }
 
             foreach ($group->meters as $meter) {
-                $inner[] = ['type' => 'meter', 'label' => $meter->label, 'value' => $meter->remaining, 'detail' => self::detail($meter, $now, $locale)];
+                // The bar's own figure is what is left, so the words under it are only when and how long.
+                $inner[] = ['type' => 'meter', 'label' => self::label($meter, $locale), 'value' => $meter->remaining, 'detail' => self::detail($meter, $now, $locale)];
             }
 
-            if ($group->name === '') {
-                array_push($blocks, ...$inner);
-            } else {
-                $blocks[] = ['type' => 'card', 'title' => $group->name, 'blocks' => $inner];
-            }
+            // Every group a card, named or not, so one provider's pools look like another's.
+            $blocks[] = $group->name === '' ? ['type' => 'card', 'blocks' => $inner] : ['type' => 'card', 'title' => $group->name, 'blocks' => $inner];
         }
 
         return $blocks;
     }
 
-    /** `99.2% left · resets 5d 21h`, then the meter's own detail. */
+    /** The meter's name: pig's for the usual windows (`WINDOWS`), else the provider's. */
+    public static function label(UsageMeter $meter, string $locale = 'en'): string
+    {
+        return self::WINDOWS[self::lang($locale)][$meter->short ?? ''] ?? $meter->label;
+    }
+
+    /** `99.2% left` — the terminal's figure; the page's bar carries its own. */
+    public static function percentLeft(UsageMeter $meter): string
+    {
+        return "{$meter->percentLeft()}% left";
+    }
+
+    /** `resets 5d 21h · lasts ~3d at this pace`, then the meter's own detail. */
     public static function detail(UsageMeter $meter, ?int $now = null, string $locale = 'en'): string
     {
-        $zh = str_starts_with(strtolower($locale), 'zh');
+        $zh = self::lang($locale) === 'zh';
         $reset = self::formatReset($meter->resetsAt, $now);
-        $parts = [
-            $zh ? "剩余 {$meter->percentLeft()}%" : "{$meter->percentLeft()}% left",
-            $zh ? ($reset === 'n/a' ? '重置时间未知' : ($reset === 'now' ? '即将重置' : "{$reset} 后重置")) : "resets {$reset}",
-        ];
+        $parts = [$zh ? ($reset === 'n/a' ? '重置时间未知' : ($reset === 'now' ? '即将重置' : "{$reset} 后重置")) : "resets {$reset}"];
+
+        if ($meter->daysLeft !== null) {
+            $parts[] = self::pace($meter->daysLeft, $zh);
+        }
 
         if ($meter->detail !== null && $meter->detail !== '') {
             $parts[] = $meter->detail;
         }
 
         return implode(' · ', $parts);
+    }
+
+    /** `lasts ~3d at this pace`, `lasts under a day at this pace`, `used up`. */
+    private static function pace(float $days, bool $zh): string
+    {
+        return match (true) {
+            $days <= 0 => $zh ? '已用完' : 'used up',
+            $days < 1 => $zh ? '按当前速度不到 1 天用完' : 'lasts under a day at this pace',
+            default => $zh ? '按当前速度约 ' . (int) round($days) . ' 天用完' : 'lasts ~' . (int) round($days) . 'd at this pace',
+        };
+    }
+
+    private static function lang(string $locale): string
+    {
+        return str_starts_with(strtolower($locale), 'zh') ? 'zh' : 'en';
     }
 
     /** `[████████----]`, filled by what is left. */

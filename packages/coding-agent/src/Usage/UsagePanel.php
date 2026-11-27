@@ -9,8 +9,9 @@ use Pig\CodingAgent\Extensions\WebPanel;
 use Throwable;
 
 /**
- * `pig web`'s Usage panel: every registered usage source, one lazy section each, so a slow
- * provider does not hold up the others. pig's own, registered by core the first time an extension
+ * `pig web`'s Usage panel: a tab per registered usage source, each a lazy section asked for when
+ * its tab is opened — a slow provider holds up no other, and one nobody looks at is not asked (an
+ * Antigravity refresh is three requests to Google). One source is drawn without a tab bar. pig's own, registered by core the first time an extension
  * calls `registerUsage()` — a page with no source has no empty panel. `/usage` typed in the page
  * opens it, as `/usage` in the terminal lists the same thing.
  */
@@ -38,14 +39,12 @@ final class UsagePanel
         $zh = str_starts_with(strtolower($locale), 'zh');
 
         if ($section === null) {
-            $blocks = [];
+            $tabs = array_map(static fn (UsageSource $source): array => [
+                'label' => $source->titleFor($locale),
+                'blocks' => [['type' => 'lazy', 'section' => $source->id, 'placeholder' => $zh ? '正在获取用量…' : 'Fetching usage…']],
+            ], ExtensionApi::usageSources());
 
-            foreach (ExtensionApi::usageSources() as $source) {
-                $blocks[] = ['type' => 'heading', 'text' => $source->titleFor($locale)];
-                $blocks[] = ['type' => 'lazy', 'section' => $source->id, 'placeholder' => $zh ? '正在获取用量…' : 'Fetching usage…'];
-            }
-
-            return $blocks;
+            return count($tabs) === 1 ? $tabs[0]['blocks'] : [['type' => 'tabs', 'tabs' => $tabs]];
         }
 
         $source = ExtensionApi::usageSource($section);

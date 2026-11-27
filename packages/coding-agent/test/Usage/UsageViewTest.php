@@ -21,7 +21,7 @@ final class UsageViewTest extends TestCase
 
     private const int NOW = 1_795_000_000;
 
-    public function testTheTranscriptHasAntigravitysLook(): void
+    public function testTheTranscriptHasAntigravitysLookAndPigsNamesForTheUsualWindows(): void
     {
         $text = UsageView::text($this->antigravity(), now: self::NOW);
 
@@ -30,20 +30,33 @@ final class UsageViewTest extends TestCase
 
             Gemini Models
               Models within this group: Gemini 4 Argon, Gemini 3.8 Flash
-              [████████████████████] Weekly Limit Remaining: 99.2% left · resets 5d 21h
-              [████████████████████] Five Hour Limit Remaining: 100% left · resets 5h 0m
+              [████████████████████] Weekly limit: 99.2% left · resets 5d 21h
+              [████████████████████] 5-hour limit: 100% left · resets 5h 0m
 
             Claude and GPT models
-              [██████--------------] Weekly Limit Remaining: 30% left · resets n/a
+              [██████--------------] Weekly limit: 30% left · resets n/a · lasts ~3d at this pace
             TEXT, $text);
+    }
+
+    public function testTwoProvidersNameTheSameWindowTheSame(): void
+    {
+        // Antigravity says "Five Hour Limit Remaining", OpenCode Go "Rolling 5h": one window, one name.
+        $antigravity = new UsageMeter('Five Hour Limit Remaining', 1.0, short: '5h');
+        $opencode = new UsageMeter('Rolling 5h', 0.99, short: '5h');
+
+        $this->assertSame(UsageView::label($antigravity, 'zh-CN'), UsageView::label($opencode, 'zh-CN'));
+        $this->assertSame('5 小时额度', UsageView::label($opencode, 'zh-CN'));
+        $this->assertSame('Monthly limit', UsageView::label(new UsageMeter('Monthly', 0.5, short: 'mo')));
+        // A window pig has no name for keeps the provider's.
+        $this->assertSame('Balance ($80.00 of $100.00)', UsageView::label(new UsageMeter('Balance ($80.00 of $100.00)', 0.8, short: 'balance'), 'zh-CN'));
     }
 
     public function testAGroupWithoutANameHasNoHeadingAndATitleHeadsTheReport(): void
     {
-        $report = new UsageReport([new UsageGroup([new UsageMeter('Rolling 5h', 0.05, null, '5h', '~2d left at this pace')])]);
+        $report = new UsageReport([new UsageGroup([new UsageMeter('Rolling 5h', 0.05, null, '5h', daysLeft: 0.4)])]);
 
         $this->assertSame(
-            "OpenCode Go\n\n  [█-------------------] Rolling 5h: 5% left · resets n/a · ~2d left at this pace",
+            "OpenCode Go\n\n  [█-------------------] 5-hour limit: 5% left · resets n/a · lasts under a day at this pace",
             UsageView::text($report, title: 'OpenCode Go'),
         );
     }
@@ -91,11 +104,15 @@ final class UsageViewTest extends TestCase
         $this->assertSame(['type' => 'text', 'text' => 'Google AI Ultra (g1-ultra-lite-tier)', 'tone' => 'muted'], $blocks[0]);
         $this->assertSame('card', $blocks[1]['type']);
         $this->assertSame('Gemini Models', $blocks[1]['title']);
+        // The bar carries what is left; the words under it are when, and how long at this pace.
         $this->assertSame(
-            ['type' => 'meter', 'label' => 'Weekly Limit Remaining', 'value' => 0.992, 'detail' => '剩余 99.2% · 5d 21h 后重置'],
+            ['type' => 'meter', 'label' => '每周额度', 'value' => 0.992, 'detail' => '5d 21h 后重置'],
             $blocks[1]['blocks'][1],
         );
-        $this->assertSame('剩余 30% · 重置时间未知', $blocks[2]['blocks'][0]['detail']);
+        $this->assertSame('重置时间未知 · 按当前速度约 3 天用完', $blocks[2]['blocks'][0]['detail']);
+        // A group with no name is a card too, so every provider's pools look alike.
+        $one = UsageView::blocks(new UsageReport([new UsageGroup([new UsageMeter('Rolling 5h', 1.0, short: '5h')])]), 'en');
+        $this->assertSame(['type' => 'card', 'blocks' => [['type' => 'meter', 'label' => '5-hour limit', 'value' => 1.0, 'detail' => 'resets n/a']]], $one[0]);
     }
 
     public function testResets(): void
@@ -124,7 +141,7 @@ final class UsageViewTest extends TestCase
                 new UsageMeter('Weekly Limit Remaining', 0.992, $at(5 * 86_400 + 21 * 3600), 'wk'),
                 new UsageMeter('Five Hour Limit Remaining', 1.0, $at(5 * 3600), '5h'),
             ], 'Gemini Models', 'Models within this group: Gemini 4 Argon, Gemini 3.8 Flash', 'Gemini'),
-            new UsageGroup([new UsageMeter('Weekly Limit Remaining', 0.3, null, 'wk')], 'Claude and GPT models', short: 'Claude'),
+            new UsageGroup([new UsageMeter('Weekly Limit Remaining', 0.3, null, 'wk', daysLeft: 3.2)], 'Claude and GPT models', short: 'Claude'),
         ], 'Google AI Ultra (g1-ultra-lite-tier)');
     }
 }

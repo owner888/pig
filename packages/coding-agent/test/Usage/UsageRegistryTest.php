@@ -38,12 +38,17 @@ final class UsageRegistryTest extends TestCase
         $this->assertSame(['usage'], ExtensionApi::webPanel(UsagePanel::ID)->commands);
         $this->assertCount(1, array_filter(ExtensionApi::webPanels(), static fn ($panel): bool => $panel->id === UsagePanel::ID));
 
-        $this->assertSame([
-            ['type' => 'heading', 'text' => '一'],
-            ['type' => 'lazy', 'section' => 'one', 'placeholder' => '正在获取用量…'],
-            ['type' => 'heading', 'text' => 'Two'],
-            ['type' => 'lazy', 'section' => 'two', 'placeholder' => '正在获取用量…'],
-        ], UsagePanel::render(null, 'zh-CN'));
+        // A tab per source, each asked for when its tab opens.
+        $this->assertSame([['type' => 'tabs', 'tabs' => [
+            ['label' => '一', 'blocks' => [['type' => 'lazy', 'section' => 'one', 'placeholder' => '正在获取用量…']]],
+            ['label' => 'Two', 'blocks' => [['type' => 'lazy', 'section' => 'two', 'placeholder' => '正在获取用量…']]],
+        ]]], UsagePanel::render(null, 'zh-CN'));
+        ExtensionApi::forgetUsageSources();
+        $api->registerUsage('only', 'Only', static fn (): UsageReport => new UsageReport());
+        $this->assertSame([['type' => 'lazy', 'section' => 'only', 'placeholder' => 'Fetching usage…']], UsagePanel::render(null, 'en'), 'one source needs no tab bar');
+        ExtensionApi::forgetUsageSources();
+        $api->registerUsage('one', ['en' => 'One', 'zh-CN' => '一'], static fn (): UsageReport => UsageReport::note('fine'));
+        $api->registerUsage('two', 'Two', static fn (): UsageReport => throw new RuntimeException('HTTP 503'));
         $this->assertSame([['type' => 'text', 'text' => 'fine', 'tone' => 'muted']], UsagePanel::render('one', 'en'));
         // A source that fails says so where its usage would be, and the others are drawn regardless.
         $this->assertSame([['type' => 'text', 'text' => 'HTTP 503', 'tone' => 'error']], UsagePanel::render('two', 'en'));

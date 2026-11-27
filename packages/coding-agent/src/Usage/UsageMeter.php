@@ -19,8 +19,12 @@ final readonly class UsageMeter
      * @param string $label the limit's name: `Weekly Limit Remaining`, `Rolling 5h`
      * @param float $remaining 0.0–1.0
      * @param DateTimeImmutable|null $resetsAt when it fills again; null when the provider does not say
-     * @param string|null $short the status line's name for it: `5h`, `wk`; the label without one
-     * @param string|null $detail a few more words after the reset: `~15d left at this pace`
+     * @param string|null $short `5h`, `wk` or `mo` for the usual windows — pig then names the meter
+     *        itself, the same for every provider and in the page's language; any other short is the
+     *        status line's name for it, the label without one
+     * @param string|null $detail a few more words after the reset, as the provider puts them
+     * @param float|null $daysLeft how long what is left lasts at the pace so far, in days (0 when it
+     *        is spent) — pig words it, in the page's language
      */
     public function __construct(
         public string $label,
@@ -28,6 +32,7 @@ final readonly class UsageMeter
         public ?DateTimeImmutable $resetsAt = null,
         public ?string $short = null,
         public ?string $detail = null,
+        public ?float $daysLeft = null,
     ) {
         if (!($remaining >= 0.0 && $remaining <= 1.0)) {
             throw new InvalidArgumentException("Usage meter '{$label}': remaining is a fraction from 0 to 1, not {$remaining}.");
