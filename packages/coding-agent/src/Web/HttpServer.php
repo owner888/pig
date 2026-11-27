@@ -296,23 +296,21 @@ final class HttpServer
     }
 
     /**
-     * Start the HTTP server on the async loop.
+     * The shell's copy of the extensions: what they bring the page, and pig's own Packages panel.
      *
-     * @throws \RuntimeException on socket bind failure
+     * Again after the Packages panel installs, updates or removes a package
+     * (`reloadExtensions()`), as `/reload` does in the terminal: what the previous load put in
+     * the process-wide registries goes first, so a removed package's panel, usage source, routes
+     * and provider go with it and an installed one's appear, without `pig web restart`.
      */
-    public function start(): void
+    private function loadExtensions(?\Pig\CodingAgent\Settings $settings): void
     {
-        if ($this->isRunning) {
-            return;
-        }
-
         // The extensions, for what they bring the page: HTTP routes, locales, and the providers
         // `/api/models` lists. The children each load their own for their conversation; this is
         // the shell's copy, for the shell's endpoints. A broken one is a line on standard error
         // and not a reason the page does not come up — and so is a package that cannot be
         // resolved, as `bin/pig` treats it. The installed packages' extensions are loaded too, as
         // a child loads them: a language pack is a package, and `/api/locales` is the shell's.
-        $settings = $this->auth->settings();
         [, $problems] = ExtensionLoader::load(
             $this->cwd,
             $settings?->extensions() ?? [],
@@ -333,7 +331,33 @@ final class HttpServer
         }
 
         // pig's own panel, after the extensions': installing, updating and removing packages.
-        ExtensionApi::putWebPanel((new PackagesPanel($this->cwd))->webPanel());
+        ExtensionApi::putWebPanel((new PackagesPanel($this->cwd, changed: $this->reloadExtensions(...)))->webPanel());
+    }
+
+    /** After a package change: the settings as `pig install`/`remove` left them on disk, then the load again. */
+    private function reloadExtensions(): void
+    {
+        \Pig\Ai\Extension\ProviderRegistry::forget();
+        ExtensionApi::forgetHttpRoutes();
+        ExtensionApi::forgetUsageSources();
+        ExtensionApi::forgetWebPanels();
+        ExtensionApi::forgetFlags();
+
+        $this->loadExtensions($this->auth->settings() === null ? null : \Pig\CodingAgent\Settings::load($this->cwd));
+    }
+
+    /**
+     * Start the HTTP server on the async loop.
+     *
+     * @throws \RuntimeException on socket bind failure
+     */
+    public function start(): void
+    {
+        if ($this->isRunning) {
+            return;
+        }
+
+        $this->loadExtensions($this->auth->settings());
 
         $address = "tcp://{$this->host}:{$this->port}";
         $errno = 0;

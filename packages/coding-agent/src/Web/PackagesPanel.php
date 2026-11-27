@@ -78,7 +78,7 @@ final class PackagesPanel
             'skills' => '{n} skill(s)',
             'prompts' => '{n} prompt(s)',
             'themes' => '{n} theme(s)',
-            'restart' => 'A package\'s own panels and pages appear after `pig web restart`.',
+            'restart' => 'The page picks a change up at once; open conversations with /reload.',
             'installed_heading' => 'Installed ({n})',
             'market_heading' => 'Market',
             'market_note' => 'GitHub repositories with the topic pig-package, most stars first — the list pigagent.dev/packages shows.',
@@ -105,7 +105,7 @@ final class PackagesPanel
             'skills' => '{n} 个技能',
             'prompts' => '{n} 个提示模板',
             'themes' => '{n} 个主题',
-            'restart' => '插件自己的面板和页面要在 `pig web restart` 之后才出现。',
+            'restart' => '改动对页面立即生效；已打开的对话用 /reload 加载。',
             'installed_heading' => '已安装（{n}）',
             'market_heading' => '插件市场',
             'market_note' => 'GitHub 上添加了 pig-package topic 的仓库，按 star 排序，和 pigagent.dev/packages 是同一份。',
@@ -120,12 +120,15 @@ final class PackagesPanel
      * @param (Closure(list<string>, string): array{0: int, 1: string, 2: string})|null $run runs a
      *        `bin/pig` command line in a directory: exit code, stdout, stderr — a test's seam
      * @param HttpTransport|null $http what asks GitHub for the market — another test seam
+     * @param (Closure(): void)|null $changed called after a command changed the packages, so the
+     *        page's server loads its extensions again (`HttpServer::reloadExtensions()`)
      */
     public function __construct(
         private readonly string $cwd,
         private readonly ?string $home = null,
         private readonly ?Closure $run = null,
         private readonly ?HttpTransport $http = null,
+        private readonly ?Closure $changed = null,
     ) {
     }
 
@@ -315,6 +318,12 @@ final class PackagesPanel
             $lines = array_values(array_filter(array_map(trim(...), explode("\n", self::plain($stderr)))));
 
             return $lines === [] ? 'pig ' . implode(' ', $arguments) . " failed ({$exit})." : end($lines);
+        }
+
+        // The page's own copy goes with the files: a removed package's panel and usage, an
+        // installed one's, the moment the command is done.
+        if ($this->changed !== null) {
+            ($this->changed)();
         }
 
         $ui->notify($done, 'info');

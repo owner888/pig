@@ -45,6 +45,12 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
+## Unreleased
+
+### Fixed
+
+- Removing a package from `pig web`'s Packages panel left its panels and its usage source in the page — yw123's tab stayed in Usage — until `pig web restart`: the server's copy of the extensions was loaded once, at start. A successful install, update or remove now loads it again, as `/reload` does in the terminal, after forgetting what the previous load registered (`HttpServer::reloadExtensions()`).
+
 ## [2.0.43] - 2026-11-27
 
 ### New Features

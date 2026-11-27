@@ -110,6 +110,24 @@ final class PackagesPanelTest extends TestCase
         $this->assertSame('Error: git clone failed: not found', $panel->act('remove', ['source' => 'git:x/y'], 'en', new NoticingUi()));
     }
 
+    public function testAChangeReloadsThePagesExtensionsAndAFailureDoesNot(): void
+    {
+        // A removed package's panel and usage source went on being served by the page until
+        // `pig web restart`: the server's copy of the extensions is loaded again once a command
+        // has changed the packages, and only then.
+        $reloads = 0;
+        $changed = static function () use (&$reloads): void {
+            $reloads++;
+        };
+        $ok = new PackagesPanel($this->cwd, $this->home, static fn (): array => [0, '', ''], changed: $changed);
+        $failing = new PackagesPanel($this->cwd, $this->home, static fn (): array => [1, '', "Error: no\n"], changed: $changed);
+
+        $this->assertNull(Async::run(fn (): ?string => $ok->act('remove', ['source' => 'git:github.com/owner888/pig-yw123'], 'en', new NoticingUi())));
+        $this->assertSame(1, $reloads);
+        $this->assertSame('Error: no', $failing->act('remove', ['source' => 'git:x/y'], 'en', new NoticingUi()));
+        $this->assertSame(1, $reloads);
+    }
+
     public function testTheMarketIsGitHubsTopicWithInstallOnWhatIsNotThere(): void
     {
         (new PackageManager($this->cwd, Settings::load($this->cwd, $this->home), $this->home))->addSourceToSettings('git:github.com/owner888/pig-yw123');
