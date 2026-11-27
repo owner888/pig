@@ -70,7 +70,7 @@ final class BuiltinCatalog
      * catalog server must be newer than to count (`RemoteCatalog::isNewer()`). `generate-models.php`
      * rewrites it with the rows.
      */
-    public const string GENERATED_AT = '2026-11-27T18:25:30Z';
+    public const string GENERATED_AT = '2026-11-27T18:50:37Z';
 
     /** Upstream's generator `CODEX_BASE_URL`. */
     private const string OPENAI_CODEX_BASE_URL = 'https://chatgpt.com/backend-api';
@@ -1456,7 +1456,7 @@ final class BuiltinCatalog
         'NousResearch/Hermes-3-Llama-3.1-70B' => ['Hermes 3 70B Instruct', 131_072, 16_384, false, false, 0.7, 0.7, 0.0, 0.0],
         'Qwen/Qwen2.5-Coder-32B-Instruct' => ['Qwen2.5-Coder-32B-Instruct', 32_768, 8_192, false, false, 0.66, 1.0, 0.0, 0.0],
         'Qwen/Qwen2.5-VL-72B-Instruct' => ['Qwen2.5-VL 72B Instruct', 128_000, 8_192, false, true, 0.8, 1.0, 0.0, 0.0],
-        'Qwen/Qwen3-235B-A22B-Instruct-2507' => ['Qwen3 235B-A22B Instruct 2507', 131_072, 16_384, false, false, 0.14, 0.8, 0.0, 0.0],
+        'Qwen/Qwen3-235B-A22B-Instruct-2507' => ['Qwen3 235B-A22B Instruct 2507', 262_144, 16_384, false, false, 0.15, 0.75, 0.0, 0.0],
         'Qwen/Qwen3-235B-A22B-Thinking-2507' => ['Qwen3-235B-A22B-Thinking-2507', 128_000, 81_920, true, false, 0.45, 3.5, 0.0, 0.0],
         'Qwen/Qwen3-30B-A3B' => ['Qwen3 30B A3B', 40_960, 16_384, true, false, 0.12, 0.5, 0.0, 0.0],
         'Qwen/Qwen3-30B-A3B-Instruct-2507' => ['Qwen3 30B-A3B Instruct 2507', 262_144, 16_384, false, false, 0.1, 0.3, 0.0, 0.0],
@@ -1494,7 +1494,7 @@ final class BuiltinCatalog
         'deepseek-ai/DeepSeek-V4-Flash' => ['DeepSeek V4 Flash', 1_048_576, 384_000, true, false, 0.07, 0.14, 0.0, 0.0],
         'deepseek-ai/DeepSeek-V4-Flash-0731' => ['DeepSeek V4 Flash 0731', 1_048_576, 384_000, true, false, 0.07, 0.14, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'deepseek-ai/DeepSeek-V4-Flash-Vision-Exp' => ['DeepSeek V4 Flash Vision Exp', 1_048_576, 384_000, true, true, 0.2156, 0.6468, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'deepseek-ai/DeepSeek-V4-Pro' => ['DeepSeek V4 Pro', 1_048_576, 393_216, true, false, 0.888188, 1.5082, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'deepseek-ai/DeepSeek-V4-Pro' => ['DeepSeek V4 Pro', 1_048_576, 393_216, true, false, 0.71501, 1.5228, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'deepseek-ai/DeepSeek-V4-Pro-0813' => ['DeepSeek V4 Pro 0813', 1_048_576, 384_000, true, false, 1.3, 2.6, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'deepseek-ai/DeepSeek-V4.1-Flash' => ['DeepSeek V4.1 Flash', 1_048_576, 384_000, true, true, 0.14, 0.42, 0.0, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => 'xhigh', 'max' => 'max']],
         'deepseek-ai/DeepSeek-V4.1-Flash-1017' => ['DeepSeek V4.1 Flash 1017', 1_048_576, 384_000, true, true, 0.05, 0.3, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
@@ -1513,7 +1513,7 @@ final class BuiltinCatalog
         'meta-llama/Llama-3.1-8B-Instruct' => ['Llama-3.1-8B-Instruct', 131_072, 4_096, false, false, 0.02, 0.04, 0.0, 0.0],
         'meta-llama/Llama-3.2-1B-Instruct' => ['Llama 3.2 1B Instruct', 60_000, 32_000, false, false, 0.027, 0.201, 0.0, 0.0],
         'meta-llama/Llama-3.2-3B-Instruct' => ['Llama 3.2 3B Instruct', 131_072, 131_072, false, false, 0.05, 0.33, 0.0, 0.0],
-        'meta-llama/Llama-3.3-70B-Instruct' => ['Llama-3.3-70B-Instruct', 131_072, 4_096, false, false, 0.22, 0.5, 0.0, 0.0],
+        'meta-llama/Llama-3.3-70B-Instruct' => ['Llama-3.3-70B-Instruct', 131_072, 4_096, false, false, 0.1, 0.32, 0.0, 0.0],
         'meta-llama/Llama-4-Maverick-17B-128E-Instruct' => ['Llama 4 Maverick 17B Instruct', 524_288, 16_384, false, true, 0.35, 1.0, 0.0, 0.0],
         'meta-llama/Llama-4-Scout-17B-16E-Instruct' => ['Llama 4 Scout 17B Instruct', 327_680, 16_384, false, true, 0.1, 0.3, 0.0, 0.0],
         'meta-models/Muse-Glimmer-30B' => ['Muse Glimmer 30B', 131_072, 131_072, true, true, 0.3, 1.2, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
@@ -1542,7 +1542,7 @@ final class BuiltinCatalog
         'tencent/Hy3' => ['Hy3', 262_144, 128_000, true, false, 0.14, 0.58, 0.0, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'tencent/Hy4' => ['Hy4', 1_048_576, 65_536, true, true, 0.7089, 2.12585, 0.0, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'tencent/Hy4-flash' => ['Hy4 flash', 1_048_576, 65_536, true, true, 0.07, 0.281, 0.0, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
-        'tencent/Hy4-preview' => ['Hy4 preview', 1_048_576, 65_536, true, false, 0.834, 2.501, 0.0, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
+        'tencent/Hy4-preview' => ['Hy4 preview', 1_048_576, 65_536, true, false, 1.0425, 3.12625, 0.0, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'thinkingmachines/Inkling' => ['Inkling', 1_048_576, 1_048_576, true, true, 1.0, 4.05, 0.0, 0.0, 'effortLevelMap' => ['off' => null, 'minimal' => null, 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => null]],
         'thinkingmachines/Inkling-2-Mini' => ['Inkling 2 Mini', 1_048_576, 65_536, true, true, 0.06, 0.24, 0.0, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'thinkingmachines/Inkling-2-Small' => ['Inkling 2 Small', 1_048_576, 131_072, true, true, 0.15, 0.5, 0.0, 0.0, 'effortLevelMap' => ['off' => 'none', 'minimal' => 'minimal', 'low' => 'low', 'medium' => 'medium', 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
@@ -1883,7 +1883,7 @@ final class BuiltinCatalog
         'deepseek/deepseek-v4-flash-0731' => ['DeepSeek: DeepSeek V4 Flash 0731', Api::OpenAiCompletions, 1_048_576, 943_718, true, false, 0.0456, 0.3, 0.035, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'deepseek/deepseek-v4-flash-0731:batch' => ['DeepSeek: DeepSeek V4 Flash 0731 (batch)', Api::OpenAiCompletions, 1_048_576, 384_000, true, false, 0.048, 0.144, 0.012, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'deepseek/deepseek-v4-flash-vision-exp' => ['DeepSeek: DeepSeek V4 Flash Vision Exp', Api::OpenAiCompletions, 1_048_576, 262_144, true, true, 0.2156, 0.6468, 0.00686, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
-        'deepseek/deepseek-v4-pro' => ['DeepSeek: DeepSeek V4 Pro 0423', Api::OpenAiCompletions, 1_048_576, 393_216, true, false, 0.70487, 1.544, 0.21, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
+        'deepseek/deepseek-v4-pro' => ['DeepSeek: DeepSeek V4 Pro 0423', Api::OpenAiCompletions, 1_048_576, 393_216, true, false, 0.69473, 1.544, 0.21, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => null, 'medium' => null, 'high' => 'high', 'xhigh' => 'xhigh', 'max' => null]],
         'deepseek/deepseek-v4-pro-0813' => ['DeepSeek: DeepSeek V4 Pro 0813', Api::OpenAiCompletions, 1_048_576, 393_216, true, false, 0.0999, 5.0, 0.0999, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'deepseek/deepseek-v4.1-flash' => ['DeepSeek: DeepSeek V4.1 Flash', Api::OpenAiCompletions, 1_048_576, 393_216, true, true, 0.0507, 0.2028, 0.001014, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],
         'deepseek/deepseek-v4.1-flash-1017' => ['DeepSeek: DeepSeek V4.1 Flash 1017', Api::OpenAiCompletions, 1_048_576, 393_216, true, true, 0.15, 0.6, 0.003, 0.0, 'thinkingLevelMap' => ['off' => 'none', 'minimal' => null, 'low' => 'low', 'medium' => null, 'high' => 'high', 'xhigh' => null, 'max' => 'max']],

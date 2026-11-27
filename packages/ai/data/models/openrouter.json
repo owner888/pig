@@ -2473,7 +2473,7 @@
             "text"
         ],
         "cost": {
-            "input": 0.70487,
+            "input": 0.69473,
             "output": 1.544,
             "cacheRead": 0.21,
             "cacheWrite": 0.0
