@@ -18,6 +18,37 @@ $pig->registerMarkdownTransformer(
 
 An extension has one transformer; registering again replaces it. One that throws is skipped and the next runs on what came before. It runs on every redraw, streaming updates included, so keep it cheap.
 
+### 9. Report a Plan's Usage (`registerUsage`)
+
+An extension for a subscription with limits (a 5-hour window, a weekly cap, a balance) reports what is left, and pig draws it, the same way for every extension. It shows in three places: `/usage` in the terminal, a dim line in the footer when `status: true` is set (refreshed every `refreshSeconds`, 300 by default and at least 60), and the **Usage** panel in `pig web` (the header's `⋯` menu, or `/usage` typed in the page). Each bar shows what is left and is coloured by it: green from half, yellow from a fifth, red below that.
+
+```php
+use Pig\CodingAgent\Usage\UsageGroup;
+use Pig\CodingAgent\Usage\UsageMeter;
+use Pig\CodingAgent\Usage\UsageReport;
+
+$pig->registerUsage(
+    'my-plan',
+    ['en' => 'My Plan', 'zh-CN' => '我的套餐'],
+    function (): UsageReport {
+        $quota = fetchQuota(); // your HTTP call; throw on failure, and pig shows the error
+        return new UsageReport([
+            new UsageGroup([
+                new UsageMeter('Rolling 5h', 1 - $quota['used5h'], new DateTimeImmutable($quota['reset5h']), short: '5h'),
+                new UsageMeter('Weekly', 1 - $quota['usedWeek'], null, short: 'wk'),
+            ]),
+        ], plan: 'Pro');
+    },
+    status: true,
+);
+```
+
+- `UsageMeter`: a label, the fraction **left** (0 to 1; pass `1 - used` if the provider reports what is used), when it resets (`null` if unknown), a `short` name for the footer, and an optional `detail` shown after the reset.
+- `UsageGroup`: meters that are used up together, under an optional name (`Gemini Models`) with a `note` line. A plan with one pool passes one group with no name.
+- `UsageReport::note('Not connected. Run /login …')` reports a note and nothing else.
+
+The fetch runs in a fiber and may make network calls. Registering the same id again replaces the source. Only turn on `status` when a refresh every few minutes is acceptable to the provider.
+
 ---
 
 ## Create and Load an Extension

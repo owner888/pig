@@ -302,6 +302,7 @@ An extension is a PHP file (or a folder with `index.php`) returning `function (E
 | **Flags** | `registerFlag('name', 'boolean'|'string', description, default)` declares `--name`; `getFlag()` reads it from a handler. |
 | **The session** | `getSettings()`, `isIncognito()`, `artifactsDirectory()`, `getModel()`, `setModel()`, `getThinkingLevel()`, `setThinkingLevel()`, `sendUserMessage(text, 'steer'|'followUp')`, `sendMessage()`, `setLabel()`, `getCommands()`, `exec()`. |
 | **The web UI** | `registerWebPanel(id, title, render, action, icon, commands, placement, label)` puts a panel in `pig web`'s sidebar or header (the person can move it): `render` returns blocks (text, lists with buttons, meters, cards, lazy sections) and the page draws them in its own theme; a button's `action` gets a `$ui` that asks the person like `$ctx->ui` (`confirm`, `select`, `input`, `notify`) — the Antigravity accounts panel is one. `registerHttpRoute('/api/prefix', fn (path, req) => ['status', 'body'])` answers requests of your own. |
+| **Plan usage** | `registerUsage(id, title, fn () => UsageReport, status: bool)` reports a subscription's limits — groups of meters, each the fraction left and when it resets — and pig draws them the same way for every extension: `/usage` in the terminal, a footer line with `status: true`, and the Usage panel in `pig web`. |
 | **A second credential store** | `Auth::useSecondStore(provider, read, renewed)` for a provider that keeps several accounts beside `auth.json`. |
 
 ---

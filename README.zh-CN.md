@@ -283,6 +283,7 @@ pig 会话里的一轮对话，背后是 pig 自己的工具、hooks 和扩展�
 | **命令行参数** | `registerFlag('name', 'boolean'|'string', 说明, 默认值)` 声明 `--name`；handler 里用 `getFlag()` 读。 |
 | **会话** | `getSettings()`、`isIncognito()`、`artifactsDirectory()`、`getModel()`、`setModel()`、`getThinkingLevel()`、`setThinkingLevel()`、`sendUserMessage(text, 'steer'|'followUp')`、`sendMessage()`、`setLabel()`、`getCommands()`、`exec()`。 |
 | **Web UI** | `registerWebPanel(id, title, render, action, icon, commands, placement, label)` 在 `pig web` 侧边栏或页头放一个面板（用户可以自己挪位置）：`render` 返回区块（文字、带按钮的列表、进度条、卡片、延迟加载的段落），由页面按自己的主题画出来；按钮的 `action` 会拿到一个 `$ui`，和 `$ctx->ui` 一样可以 `confirm`、`select`、`input`、`notify`——Antigravity 账号面板就是这样做的。`registerHttpRoute('/api/prefix', fn (path, req) => ['status', 'body'])` 用来应答自己的请求。 |
+| **套餐用量** | `registerUsage(id, title, fn () => UsageReport, status: bool)` 报告订阅的额度——一组组进度条，每根是剩余比例和重置时间——由 pig 统一绘制，每个扩展都一样：终端的 `/usage`、`status: true` 时底部状态栏的一行，以及 `pig web` 的「用量」面板。 |
 | **第二个凭据存储** | `Auth::useSecondStore(provider, read, renewed)`，给在 `auth.json` 旁边另存多账号的 provider 用。 |
 
 ---

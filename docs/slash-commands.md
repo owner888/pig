@@ -26,6 +26,7 @@ Extensions, prompt templates, and skills can add commands. The command menu in p
 | `/resume` | Switch to another saved session (`Tab` toggles this folder or all, `Ctrl+S` sorts, `Ctrl+N` shows named sessions only, `Ctrl+R` renames) |
 | `/name [name]` | Set the session display name, or show the current name when omitted |
 | `/session` | Show current session information and statistics |
+| `/usage [id]` | What is left of each plan's limits, as the extensions report them (`registerUsage()`); an id shows one |
 | `/tree` | Navigate the session tree |
 | `/fork` | Create a new session from an earlier user message |
 | `/label [name]` | Name the current point so `/tree` can find it; without a name, clears the label |
