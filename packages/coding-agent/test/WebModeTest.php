@@ -369,6 +369,7 @@ final class WebModeTest extends TestCase
             $seen = $this->wsCollect($ws, static fn (array $m) => $m['type'] === 'session_bound');
             $this->assertSame('one.jsonl', end($seen)['sessionFile']);
             $this->assertFalse(end($seen)['shared']);
+            $this->assertMatchesRegularExpression('/^[0-9a-f]{16}$/', end($seen)['assetVersion'] ?? '');
             $this->assertCount(1, $server->pool()->all(), 'one child');
 
             $this->wsSend($ws, ['type' => 'rpc_command', 'command' => ['type' => 'get_state', 'id' => 'q7']]);
@@ -1745,6 +1746,10 @@ final class WebModeTest extends TestCase
             $url = "http://127.0.0.1:{$port}/assets/js/app.js";
             $source = (string) file_get_contents(__DIR__ . '/../src/Web/assets/js/app.js');
 
+            $html = $http->send(new Request('GET', "http://127.0.0.1:{$port}/"));
+            $this->assertSame(200, $html->status);
+            $this->assertSame('no-cache', $html->headers['cache-control'] ?? null, 'HTML too, so an updated index.html is never read from a heuristic cache');
+
             $plain = $http->send(new Request('GET', $url));
             $this->assertSame(200, $plain->status);
             $this->assertArrayNotHasKey('content-encoding', $plain->headers, 'not gzip to a client that did not ask for it');
@@ -2076,6 +2081,85 @@ final class WebModeTest extends TestCase
                 // A theme i18n has no name for keeps its own.
                 $this->assertSame([$dark, $light, '🎨 solarized'], $out, $locale);
             }
+        } finally {
+            unlink($file);
+        }
+    }
+
+    /**
+     * When `pig web restart` brings up a server whose `assets/` changed, the reconnected socket's
+     * `session_bound.assetVersion` has a new fingerprint and the page reloads once — how a
+     * standalone desktop/home-screen PWA with no refresh button gets the new HTML, CSS and JS.
+     * Reconnecting to the same assets does not reload.
+     */
+    public function testThePageReloadsWhenAReconnectedServerHasAnotherAssetVersion(): void
+    {
+        $node = trim((string) shell_exec('command -v node'));
+        if ($node === '') {
+            $this->markTestSkipped('node is not available to run network.js');
+        }
+
+        $root = realpath(__DIR__ . '/../src/Web/assets/js');
+        $file = tempnam(sys_get_temp_dir(), 'pig-hello-') . '.mjs';
+        file_put_contents($file, <<<'JS'
+        import assert from "node:assert/strict";
+
+        let reloads = 0;
+        let sockets = [];
+        globalThis.window = { addEventListener() {} };
+        globalThis.document = { visibilityState: "visible", addEventListener() {} };
+        globalThis.sessionStorage = { getItem: () => "c1", setItem() {} };
+        globalThis.localStorage = { getItem: () => null, setItem() {} };
+        Object.defineProperty(globalThis, "navigator", { value: { language: "en" }, configurable: true });
+        globalThis.location = {
+          protocol: "http:",
+          host: "127.0.0.1:8088",
+          reload() { reloads++; },
+          replace() {},
+        };
+        globalThis.WebSocket = class {
+          static OPEN = 1;
+          static CONNECTING = 0;
+          constructor(url) {
+            this.url = url;
+            this.readyState = 1;
+            sockets.push(this);
+          }
+          send() {}
+          close() { this.readyState = 3; }
+        };
+
+        const { network } = await import(process.argv[2] + "/network.js");
+        network.connect();
+        const ws1 = sockets.at(-1);
+        ws1.onopen();
+        ws1.onmessage({ data: JSON.stringify({ type: "session_bound", tabId: "t1", assetVersion: "aaaaaaaa11111111" }) });
+        assert.equal(reloads, 0, "first bind records the version without reloading");
+        assert.equal(network.assetVersion, "aaaaaaaa11111111");
+
+        // Reconnect with the same asset version (e.g. a network blip or backend-only restart): no reload.
+        network.restart();
+        const ws2 = sockets.at(-1);
+        ws2.onopen();
+        ws2.onmessage({ data: JSON.stringify({ type: "session_bound", tabId: "t1", assetVersion: "aaaaaaaa11111111" }) });
+        assert.equal(reloads, 0, "same asset version does not reload");
+
+        // Reconnect after an update changed assets/: reloads immediately.
+        network.restart();
+        const ws3 = sockets.at(-1);
+        ws3.onopen();
+        ws3.onmessage({ data: JSON.stringify({ type: "session_bound", tabId: "t1", assetVersion: "bbbbbbbb22222222" }) });
+        assert.equal(reloads, 1, "a new asset version triggers location.reload()");
+        console.log("reloaded-once");
+        process.exit(0);
+        JS);
+
+        try {
+            $out = [];
+            $code = 0;
+            exec(escapeshellarg($node) . ' ' . escapeshellarg($file) . ' ' . escapeshellarg($root) . ' 2>&1', $out, $code);
+            $this->assertSame(0, $code, implode("\n", $out));
+            $this->assertStringContainsString('reloaded-once', implode("\n", $out));
         } finally {
             unlink($file);
         }

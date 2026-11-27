@@ -82,6 +82,12 @@ final class HttpServer
     /** @var array<string, array{0: string, 1: string}> an asset's gzip, by path: its ETag and the bytes */
     private array $gzipped = [];
 
+    /**
+     * A fingerprint of `assets/` (`assetVersion()`), carried on `session_bound` so a reconnecting
+     * page knows when a restart replaced its HTML, CSS or JS.
+     */
+    private ?string $assetVersion = null;
+
     /** @var array<int, Connection> */
     private array $connections = [];
 
@@ -702,6 +708,7 @@ final class HttpServer
             $html = is_file($htmlFile) ? (file_get_contents($htmlFile) ?: 'HTML missing') : 'PIG Web UI';
             $conn->sendResponse(200, [
                 'Content-Type' => 'text/html; charset=utf-8',
+                'Cache-Control' => 'no-cache',
             ], $html);
 
             return;
@@ -2560,6 +2567,7 @@ final class HttpServer
             'sessionFile' => $managed->sessionFile,
             'shared' => count($managed->clients) > 1,
             'incognito' => $managed->incognito ? true : null,
+            'assetVersion' => $this->assetVersion(),
         ], static fn (mixed $v): bool => $v !== null));
 
         // What the extensions put on screen before this tab was here — widgets, statuses, the
@@ -3029,5 +3037,40 @@ final class HttpServer
             'completions' => $completions,
             'commonPrefix' => $commonPrefix,
         ];
+    }
+
+    /**
+     * A fingerprint of `assets/` (path, mtime, size of every file), computed once per server run.
+     *
+     * Carried on `session_bound`: a page that reconnects after `pig web restart` compares it with
+     * the version it first bound under and reloads when the assets have changed — which is the
+     * only way a standalone desktop/home-screen PWA with no refresh button gets the new HTML, CSS
+     * and JS. A restart that touched only backend code or config keeps the same fingerprint and
+     * does not reload the page.
+     */
+    private function assetVersion(): string
+    {
+        if ($this->assetVersion !== null) {
+            return $this->assetVersion;
+        }
+
+        $root = realpath(__DIR__ . '/assets') ?: (__DIR__ . '/assets');
+        $entries = [];
+
+        if (is_dir($root)) {
+            $it = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS),
+            );
+            foreach ($it as $file) {
+                if (!$file->isFile()) {
+                    continue;
+                }
+                $rel = substr($file->getPathname(), strlen($root) + 1);
+                $entries[] = $rel . ':' . $file->getMTime() . ':' . $file->getSize();
+            }
+            sort($entries);
+        }
+
+        return $this->assetVersion = substr(hash('sha256', implode("\n", $entries)), 0, 16);
     }
 }

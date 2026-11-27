@@ -54,6 +54,10 @@ export class SharedNetwork {
     // alarming as the real one, or the real one as calm as the routine.
     this.everOpened = false;
     this.failedTries = 0;
+    // The `assets/` fingerprint the server sent on the first `session_bound` (`assetVersion`).
+    // When a reconnected server reports another, the HTML/CSS/JS on disk changed and the page
+    // reloads once so a standalone desktop/home-screen PWA without a refresh button gets them.
+    this.assetVersion = null;
     // Whether this run of failures has already asked the server who is logged in.
     this.loginChecked = false;
     this.hideStatus = () => {};
@@ -212,6 +216,14 @@ export class SharedNetwork {
         m = JSON.parse(e.data);
       } catch (err) {
         return;
+      }
+
+      if (m.type === "session_bound" && typeof m.assetVersion === "string" && m.assetVersion !== "") {
+        if (this.assetVersion !== null && this.assetVersion !== m.assetVersion) {
+          location.reload();
+          return;
+        }
+        this.assetVersion = m.assetVersion;
       }
 
       for (const listener of this.messageListeners) {
