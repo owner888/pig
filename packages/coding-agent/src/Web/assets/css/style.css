@@ -864,6 +864,18 @@
       color: var(--color-error);
       border-color: color-mix(in srgb, var(--color-error) 60%, transparent);
     }
+    /* The API keys modal's configured list: one height per row, with or without its Delete button */
+    .key-list { display: flex; flex-direction: column; }
+    .key-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 30px;
+      font-size: var(--text-base);
+    }
+    .key-row-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .key-row-state { color: var(--color-dim); font-size: var(--text-sm); }
+    .key-row .mini-btn { padding: 2px 8px; }
     /* The extensions' panels (panels.js): blocks an extension describes, drawn in the page's theme */
     .sidebar-panels { padding-top: 0; }
     .sidebar-panels .sidebar-group-title { padding: 6px 10px 4px; }

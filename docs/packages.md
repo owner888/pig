@@ -27,7 +27,7 @@ pig install ./local/path                    # loaded from where it is
 pig remove git:github.com/user/repo
 ```
 
-`install` records the source in the `packages` setting. pig supports `git:` sources, `https://` and `ssh://` git URLs, and local paths; `npm:` and `composer:` sources are rejected.
+`install` records the source in the `packages` setting. pig supports `git:` sources, `https://` and `ssh://` git URLs, `composer:vendor/name`, and local paths; `npm:` sources are rejected. `remove` takes back what the install wrote: the package's entry (and the `packages` key once it is empty) and its extensions' names in `disabledExtensions`, changed as JSON data, never as text. In `pig web`, the Packages panel in the header's `⋯` menu does the same with buttons.
 
 ### 2. Configure Extension Paths
 

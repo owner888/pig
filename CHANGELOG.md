@@ -45,7 +45,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
-## Unreleased
+## [2.0.42] - 2026-11-27
 
 ### New Features
 
@@ -59,6 +59,7 @@ Every release entry strictly follows upstream pi's format with version date and 
 
 - Usage looks the same whichever extension reports it. The usual windows get pig's names by their short (`5h`, `wk`, `mo` → `5-hour limit`, `Weekly limit`, `Monthly limit`; `5 小时额度`, `每周额度`, `每月额度`), where Antigravity said "Five Hour Limit Remaining" and OpenCode Go "Rolling 5h"; a pace estimate is passed as days (`UsageMeter::$daysLeft`) and worded by pig in the page's language; every group is a card, named or not; the web meter's words leave out the percentage its bar already shows; and the Usage panel has a tab per source, each asked for only when opened. A web panel's meter is now coloured as the terminal's bars are — green from half left, yellow from a fifth, red below — where it was the accent colour until under a fifth; this applies to every panel's meters (classes `plenty`, `low`, `out`).
 - The web panels test (`fixtures/web-panels.mjs`) checks a meter on its own rather than pig-antigravity's quota section, which that package's accounts panel no longer draws (it is the Usage panel's); `web-panels-blocks.json` keeps the accounts half.
+- The API keys modal's configured list gives every row one height, so a row with a Delete button no longer stands taller than the rows around it; the button is the compact danger one the Packages panel's Remove uses (`.key-row`).
 - `pig web`'s ⋯ menu no longer has a separate 🧩 Extensions entry, which only listed the panels to open or move: every panel is already in the ⋯ menu or the sidebar, and next to the new 🧩 Packages entry two 🧩 entries for different things were one too many. A panel now moves between the ⋯ menu and the sidebar from its own window (the button beside Refresh).
 - `pig remove` takes back everything the package left in the settings: its `packages` entry, the `packages` key once it is empty (upstream keeps `[]`), and its extensions' names in `disabledExtensions`, which nothing used to clear (`PackageManager::removeAndPersist()`, `Settings::forgetDisabledExtensions()`). All of it on the decoded settings, written back with `json_encode()`; an emptied settings file is `{}`, not `[]`.
 

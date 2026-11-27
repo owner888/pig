@@ -43,7 +43,7 @@ $pig->registerUsage(
 );
 ```
 
-- `UsageMeter`: a label, the fraction **left** (0 to 1; pass `1 - used` if the provider reports what is used), when it resets (`null` if unknown), a `short` name for the footer, and an optional `detail` shown after the reset.
+- `UsageMeter`: a label, the fraction **left** (0 to 1; pass `1 - used` if the provider reports what is used), when it resets (`null` if unknown), a `short` name for the footer, an optional `detail` shown after the reset, and `daysLeft` — how long what is left lasts at the pace so far, which pig words in the page's language. With `short` set to `5h`, `wk` or `mo` pig names the window itself (`5-hour limit`, `Weekly limit`, `Monthly limit`, translated), so the same window looks the same from every extension.
 - `UsageGroup`: meters that are used up together, under an optional name (`Gemini Models`) with a `note` line. A plan with one pool passes one group with no name.
 - `UsageReport::note('Not connected. Run /login …')` reports a note and nothing else.
 
@@ -206,7 +206,7 @@ return function (ExtensionApi $pig): void {
 
 ### 6. Register Web UI Sidebar Panels (`registerWebPanel`)
 
-Extensions can register sidebar panels in `pig web` (such as the Antigravity accounts and quota panel) via `registerWebPanel()`. The extension returns declarative blocks (cards, action lists with buttons, progress meters, lazy-loaded sections), rendered in the browser using the active theme and locale without running extension code client-side:
+Extensions can register sidebar panels in `pig web` (such as the Antigravity accounts and quota panel) via `registerWebPanel()`. The extension returns declarative blocks (cards, action lists with buttons, progress meters, tabs, lazy-loaded sections — a lazy section in a tab is fetched when the tab is opened), rendered in the browser using the active theme and locale without running extension code client-side:
 
 ```php
 $pig->registerWebPanel(

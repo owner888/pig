@@ -2779,7 +2779,7 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
             <input class="modal-input" id="key-value" type="password" autocomplete="off" placeholder="${escapeHtml(t("key_placeholder"))}">
             <div id="key-error" style="color:var(--color-error); font-size:var(--text-sm);" hidden></div>
             <div class="modal-section">${escapeHtml(t("keys_configured"))}</div>
-            <div id="key-list" style="display:flex; flex-direction:column; gap:6px;"></div>
+            <div id="key-list" class="key-list"></div>
           </div>
         `,
         confirmText: t("save"),
@@ -2821,12 +2821,13 @@ import { openCwdPicker, folderName } from "./components/CwdPicker.js";
               list.innerHTML = `<div style="color:var(--color-dim); font-size:var(--text-sm);">${escapeHtml(t("keys_empty"))}</div>`;
             }
             for (const p of configured) {
+              // Every row is one height (`.key-row`), so a row with a Delete button sits as the others do.
               const row = document.createElement("div");
-              row.style.cssText = "display:flex; align-items:center; gap:8px; font-size:var(--text-base);";
-              row.innerHTML = `<span style="flex:1; min-width:0;">${escapeHtml(p.id)} <span style="color:var(--color-dim); font-size:var(--text-sm);">${escapeHtml(stateText(p))}</span></span>`;
+              row.className = "key-row";
+              row.innerHTML = `<span class="key-row-name">${escapeHtml(p.id)} <span class="key-row-state">${escapeHtml(stateText(p))}</span></span>`;
               if (p.state === "stored") {
                 const remove = document.createElement("button");
-                remove.className = "mini-btn";
+                remove.className = "mini-btn danger";
                 remove.textContent = t("delete");
                 remove.addEventListener("click", async () => {
                   try {

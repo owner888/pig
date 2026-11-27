@@ -160,6 +160,12 @@ When a turn finishes, a scheduled run is done or fails, or something waits for y
 
 ---
 
+### 11. Packages
+
+The **Packages** entry in the header's `⋯` menu (or `/packages` typed in the page) has two tabs. **Installed** lists the packages — name, source, what each brings (extensions, skills, prompts, themes), its git tag or commit, global or this project — with **Install…**, **Update**, **Update all** and **Remove**. The **Market** tab lists every GitHub repository with the topic `pig-package` — the same list as [pigagent.dev/packages](https://pigagent.dev/packages) — most stars first, each with **Install** (or marked installed); GitHub is asked only when the tab is opened. GitHub answers a few searches a minute without a sign-in; when it says no, the panel says so. The buttons run `pig install`, `pig update` and `pig remove`, so they do exactly what the commands do: **Remove** asks first, then deletes the package's files and takes back what its install wrote to `settings.json` (its `packages` entry, and its extensions' names in `disabledExtensions`). New conversations load a change; `/reload` loads it in an open one, and a package's own panels appear after `pig web restart`. With several accounts the panel is the admin's.
+
+---
+
 ## Several Accounts, Docker & SSH
 
 With sessions kept in a database (`"storage": "sqlite:pig.db"` or a `mysql:` DSN, see [Keep sessions in a database](/docs/latest/sessions#keep-sessions-in-a-database)), one `pig web` serves several people:
