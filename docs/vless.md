@@ -6,9 +6,8 @@ It is the smallest version a phone can use, not a replacement for Xray or sing-b
 
 - **TCP or WebSocket (`vless.wsPath`).** The VLESS `UDP` and `MUX` commands close the connection. Shadowrocket falls back to direct for UDP when the proxy declines it, which is fine for a phone.
 - **One UUID**, made for you on first load.
-- **TLS when you give it a certificate**, plain when you do not.
+- **Pure-PHP REALITY + XTLS Vision (`vless.reality` / `/vless keygen`)**, **TLS when you give it a certificate**, or plain when you do not.
 - **Non-blocking DNS** through `Pig\Async\Dns`.
-- No REALITY, Vision, XHTTP, flow control or multi-user. If you need those, run Xray.
 
 ---
 
@@ -36,6 +35,7 @@ Nothing listens until you ask. From the prompt:
 /vless status     # configuration, whether it is listening, open sockets, and the share link
 /vless stop       # close the port and every relayed connection
 /vless restart    # stop, then start
+/vless keygen     # generate an X25519 key pair + shortId and enable REALITY + XTLS Vision
 /vless            # same as status
 ```
 
@@ -52,6 +52,32 @@ vless://7a3f1c2e-9b4d-4e6f-8a1b-2c3d4e5f6a7b@<this machine's address>:10086?encr
 ```
 
 Replace `<this machine's address>` with the address the phone reaches the machine at — its LAN IP, or its Tailscale address — and paste the link into the client, or make a QR code of it. For the phone to reach the port the machine's firewall has to allow it; macOS asks once on first start.
+
+---
+
+## REALITY + XTLS Vision
+
+Run `/vless keygen` to generate an X25519 key pair and `shortId` in `settings.json`, or configure `vless.reality` directly (no domain or certificate needed):
+
+```json
+{
+  "vless": {
+    "listen": "0.0.0.0:443",
+    "uuid": "…",
+    "reality": {
+      "privateKey": "…",
+      "publicKey": "…",
+      "dest": "www.apple.com:443",
+      "serverNames": ["www.apple.com"],
+      "shortIds": ["a1b2c3d4"],
+      "fingerprint": "chrome",
+      "flow": "xtls-rprx-vision"
+    }
+  }
+}
+```
+
+The share link then includes `security=reality&flow=xtls-rprx-vision&sni=www.apple.com&fp=chrome&pbk=…&sid=…`. Unauthorized probes or browsers are transparently forwarded to `dest`; authorized inner TLS 1.3 traffic automatically switches to zero-copy direct splice (`CommandPaddingDirect = 2`).
 
 ---
 
@@ -80,6 +106,7 @@ The share link then says `security=tls`. Set the client's SNI to the certificate
 |---|---|---|
 | `vless.listen` | `0.0.0.0:10086` | Address and port to listen on; written on first load when absent |
 | `vless.uuid` | generated | The one key the phone must present; written on first load when absent |
+| `vless.reality` | — | Object (`privateKey`, `publicKey`, `dest`, `serverNames`, `shortIds`, `fingerprint`, `flow`); enables pure-PHP REALITY + XTLS Vision (`/vless keygen` populates it) |
 | `vless.cert` | — | PEM certificate; with `key`, turns the listener into TLS |
 | `vless.key` | — | PEM private key |
 | `vless.wsPath` | — | When set (e.g. `"/vless"`), serves VLESS over WebSocket (`type=ws&path=%2Fvless`, RFC 6455 binary frames + `Sec-WebSocket-Protocol` 0-RTT early data) instead of raw TCP |
