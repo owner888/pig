@@ -45,11 +45,15 @@ Every release entry strictly follows upstream pi's format with version date and 
 - **Sections**: Only include sections that have entries (`### New Features`, `### Added`, `### Changed`, `### Fixed`).
 - **Items**: Each bullet starts with a verb or clear subject (`Added ...`, `Changed ...`, `Fixed ...`), describing both the symptom and the resolution.
 
-## Unreleased
+## [2.0.40] - 2026-11-27
 
 ### Added
 
 - Added automatic page reload when `pig web restart` replaces any file under `Web/assets/`, for standalone desktop and Home Screen PWAs that have no browser refresh button (`HttpServer::assetVersion()`, `network.js`). `session_bound` carries an `assetVersion` fingerprint of every asset's relative path, modification time, and byte size, and `/` (`index.html`) is served with `Cache-Control: no-cache` alongside `/assets/*` and `/theme.css`; when a reconnecting WebSocket receives a fingerprint different from the one the page first bound under, the page calls `location.reload()` once against the already-listening server, while backend-only restarts and network reconnects keep the same fingerprint and do not reload.
+
+### Fixed
+
+- Fixed `Socket::lookupInChild()` attempting to spawn a DNS helper subprocess when `PHP_BINARY` is empty or `proc_open` is unavailable in embedded/mobile runtimes, falling back cleanly to `gethostbyname()`.
 
 ## [2.0.39] - 2026-11-26
 
